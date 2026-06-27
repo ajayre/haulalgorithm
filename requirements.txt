@@ -1,0 +1,8 @@
+numpy>=1.23
+Pillow>=9.0
+# Optional: SciPy provides a fast sparse solver for the Poisson flow field (§9.1).
+# If absent, a NumPy iterative fallback is used.
+scipy>=1.9
+# Optional: networkx enables transport-mode=mincostflow (§9.2). If absent, the
+# tool falls back to the Poisson flow field with a warning.
+networkx>=2.8
