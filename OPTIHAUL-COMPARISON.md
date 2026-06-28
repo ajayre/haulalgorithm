@@ -70,15 +70,60 @@ python -m landlevel.cli --agd TheShop2_2ft.agd --out out/shop2_85.png \
 ## Reading the table
 
 - **OptiHaul vs. our core model.** Both run on a coarse 15 ft calculation grid
-  with no turning and no grade pass. They differ only in how loading/dumping
-  distance is computed: OptiHaul derives it from a scraper-width formula
-  (`vol ÷ (depth × width)`), while our core model sums the actual swept length of
-  each pass's cut/fill cells. Our core total (158.5 hr) is lower mainly because
-  our sequencer cuts the empty return distance (386.6 mi vs OptiHaul's 434.8 mi).
+  with no turning and no grade pass. They differ in how loading/dumping distance
+  is computed: OptiHaul derives it from a scraper-**width** formula
+  (`vol ÷ (depth × width)`), while our core model sums the swept length of each
+  pass's cut/fill **cells** (a function of grid size, not blade). At an 8.5 ft
+  blade on a 15 ft grid this makes our core read lower — see
+  [Why we matched OptiHaul at a 15 ft blade but now read lower](#why-we-matched-optihaul-at-a-15-ft-blade-but-now-read-lower-same-grid)
+  below for the full explanation and the apples-to-apples fix.
 - **Our core vs. our guidance.** The guidance column is the **realistic, drivable**
   plan: the real 8.5 ft blade (so loading/dumping cover more lane distance), the
   mandatory **grade/compact return pass**, and **turning time** on the 45 ft
   turning circle at 4 mph. These are the operations OptiHaul does not model.
+
+## Why we matched OptiHaul at a 15 ft blade but now read lower (same grid)
+
+A natural question: when OptiHaul used a 15 ft blade our core model matched it,
+but now that OptiHaul uses a more accurate 8.5 ft blade (still on a 15 ft grid)
+our core reads **lower** — even though the grid size is unchanged. The reason is a
+**modeling distinction in what each model ties the loading/dumping distance to**:
+
+- **OptiHaul ties load/dump distance to the BLADE width:**
+  `distance = volume ÷ (depth × blade_width)`.
+- **Our core model ties load/dump distance to the GRID cell size:** it sums the
+  swept length of the cut/fill *cells*, which depends on grid resolution and
+  **not on blade width at all**.
+
+Everything else is the same formula — both compute
+`returning = loading + hauling + dumping` (OptiHaul's 434.8 mi = 176.2 + 107.2 +
+151.3; our core's 386.6 = 82.5 + 230.6 + 73.6).
+
+The two load/dump distances only agree when **blade width ≈ grid size**:
+
+| Config | OptiHaul (blade-based) | Our core, 15 ft grid (blade-blind) | Result |
+|---|---|---|---|
+| 15 ft blade | load 99.9 / dump 85.8 mi | load 82.5 / dump 73.6 mi | close → totals matched (147.8 vs 158.5) |
+| 8.5 ft blade | load 176.2 / dump 151.3 mi | load 82.5 / dump 73.6 mi | diverge (199.5 vs 158.5) |
+
+When OptiHaul ran a **15 ft blade on a 15 ft grid**, its blade-based sweep length
+roughly equaled our grid-based sweep length, so the totals lined up. Switching to
+an **8.5 ft blade** (keeping the 15 ft grid) scaled OptiHaul's load/dump distance
+up by `15 ÷ 8.5 = 1.76×` (a narrower blade drives farther to cover the same area).
+**Our core didn't move**, because it never reads the blade — it is still measuring
+sweeps on the 15 ft grid. Same grid; one model responds to the blade, the other
+does not.
+
+**Honest caveat — this is a coarse-grid artifact, not a real efficiency gain.** A
+15 ft grid under-resolves the true sweep length of an 8.5 ft blade. Our core also
+scales with resolution: run it on a **7.5 ft grid** (≈ the 8.5 ft blade) and our
+loading jumps to **≈ 173 mi**, essentially matching OptiHaul's blade-based 176 mi.
+In our model the **grid** plays the role the **blade** plays in OptiHaul, so to
+compare apples-to-apples the grid should be set near the blade width. The
+genuinely blade-accurate figure is our **8.5 ft guidance run (231.3 hr)**. Where we
+are *legitimately* better than OptiHaul is the **deadhead** — direction-aware
+sequencing cuts the empty return to 270.8 mi vs OptiHaul's 434.8 mi — not the
+load/dump distance.
 
 ## Why OptiHaul's 199.5 hr is a floor, not the real time
 
