@@ -330,6 +330,7 @@ def render_single_pair_png(
     blade_width_m: float = 2.271,
     pixels_per_bin: int = 26,
     pad_cells: int = 4,
+    show_route: bool = True,
 ) -> None:
     """Render ONE pass's guidance (cut strip -> haul leg -> fill strip), cropped.
 
@@ -337,7 +338,10 @@ def render_single_pair_png(
     pass. The cut strip is drawn red, the fill strip blue (both at blade width),
     and the haul leg as a black arrow from the cut-segment end to the fill-segment
     start. Start/end of each segment are marked so the cut->haul->fill flow is
-    obvious. The image is cropped to the pass plus a few cells of padding.
+    obvious. When ``show_route`` is set, the exact GPS route the operator follows
+    is overlaid as a thin line with a dot at every waypoint (the cut sweep, the
+    haul, the fill sweep and the grade return, in drive order). The image is
+    cropped to the pass plus a few cells of padding.
     """
     ppb = pixels_per_bin
     base = diff_to_image(grid.delta, grid.valid, ppb).convert("RGBA")
@@ -374,6 +378,32 @@ def render_single_pair_png(
             draw.line([(round(b[0]), round(b[1])),
                        (round(b[0] + ah * math.cos(ang + da)), round(b[1] + ah * math.sin(ang + da)))],
                       fill=(0, 0, 0, 255), width=max(2, blade_px // 2))
+
+    # GPS route: the exact track through every waypoint in drive order (cut sweep
+    # -> haul -> fill sweep -> grade return). The guidance track is already
+    # smoothed to a drivable curve upstream (see ``build_guidance``), so this
+    # draws it faithfully as a thin line with breadcrumb dots spaced evenly along
+    # the path - the line the operator follows in-cab.
+    if show_route and len(pts) >= 2:
+        route_xy = [px(p) for p in pts]
+        lw = max(1, blade_px // 8)
+        draw.line([(round(x), round(y)) for x, y in route_xy],
+                  fill=(35, 35, 35, 255), width=lw, joint="curve")
+        # Breadcrumb dots every ~2 cells along the route.
+        dr = max(2, blade_px // 6)
+        step_px = max(1.0, 2.0 * ppb)
+        acc = step_px
+        prev = route_xy[0]
+        draw.ellipse((prev[0] - dr, prev[1] - dr, prev[0] + dr, prev[1] + dr),
+                     fill=(255, 235, 0, 255), outline=(35, 35, 35, 255))
+        for cur in route_xy[1:]:
+            d = math.hypot(cur[0] - prev[0], cur[1] - prev[1])
+            acc += d
+            if acc >= step_px:
+                acc = 0.0
+                draw.ellipse((cur[0] - dr, cur[1] - dr, cur[0] + dr, cur[1] + dr),
+                             fill=(255, 235, 0, 255), outline=(35, 35, 35, 255))
+            prev = cur
 
     def dot(p, color, r):
         x, y = px(p)

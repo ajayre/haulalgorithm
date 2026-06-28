@@ -132,6 +132,48 @@ def _find_ridges(grid: Grid, phi: np.ndarray, max_seeds: int) -> List[Tuple[int,
     return seed_cells[:max_seeds]
 
 
+def flow_direction_field(grid: Grid, flow: FlowField, smooth_passes: int = 12):
+    """Smoothed unit flow-direction arrays ``(fx_s, fy_s)`` in grid axes.
+
+    ``fx_s`` is the east (+bx) component and ``fy_s`` the north (+by) component
+    of the down-flow direction ``-grad(phi)`` after mask-aware smoothing (the
+    same field the streamline tracer integrates). Vectors are unit-normalized
+    where there is flow and zero where the field is flat. Exposed so the pass
+    generator can grow each load's cut/fill strip *along the local flow* and
+    follow a streamline from a cut into the deficit it feeds.
+    """
+    valid = grid.valid
+    phi_s = _smooth_potential(flow.phi, valid, passes=smooth_passes)
+    return _gradient_from_phi(phi_s, valid)
+
+
+def streamline_to(fx_s, fy_s, valid, x: float, y: float, predicate,
+                  step: float = 0.5, max_steps: int = 4000):
+    """Integrate downstream from fractional grid coords until ``predicate`` holds.
+
+    ``x``/``y`` are in cell-index space (a cell ``(bx, by)`` centre is at
+    ``bx + 0.5, by + 0.5``). Follows the (smoothed) flow direction with bilinear
+    interpolation and returns the first cell ``(bx, by)`` where
+    ``predicate(bx, by)`` is true (e.g. the cell still needs fill), or ``None``
+    if the streamline leaves the field or stalls first.
+    """
+    h, w = valid.shape
+    for _ in range(max_steps):
+        bx, by = int(np.floor(x)), int(np.floor(y))
+        if not (0 <= bx < w and 0 <= by < h) or not valid[by, bx]:
+            return None
+        if predicate(bx, by):
+            return (bx, by)
+        ux = _bilinear(fx_s, valid, x, y)
+        uy = _bilinear(fy_s, valid, x, y)
+        norm = (ux * ux + uy * uy) ** 0.5
+        if norm < 1e-6:
+            return None
+        x += step * ux / norm
+        y += step * uy / norm
+    return None
+
+
 def trace_strips(
     grid: Grid,
     flow: FlowField,

@@ -4,9 +4,12 @@ Reference implementation of **LAND-LEVELING-SPEC.md**: a Python pipeline that
 reads an OptiSurface-style **AGD** field file, plans a sequence of
 cut–haul–fill **passes** that bring the field to its target grade with minimum
 haul distance and time, and renders a **PNG** of the cut/fill map with overlaid
-haul-direction arrows. It also produces an OptiHaul-style time report and a
-range of optional outputs (zone work order, per-pass CSVs, a haul "heat map",
-a leveling animation, and a **blade-scale operator guidance** track with a
+haul-direction arrows. By default each load's cut and fill follow the local
+**transport flow** (curved, with-the-grain lanes); `--no-flow-aligned` reverts to
+straight lanes along a single global heading. It also produces an OptiHaul-style
+time report and a range of optional outputs (zone work order, per-pass CSVs, a
+haul "heat map", a leveling animation, and a **blade-scale operator guidance**
+track — turn-by-turn waypoints on a **smoothed, drivable GPS route** — with a
 realistic drivable time that counts turning and the grade/compact pass).
 
 ## Install
@@ -65,7 +68,16 @@ python -m landlevel.cli --agd TheShop2_2ft.agd --out plan.png \
   --animate-gif --animate-mode topology
 ```
 
-Pin the haul heading to a known slope direction (e.g. due west = 270°):
+Revert to straight strips along a single global heading (e.g. due west = 270°)
+instead of the default flow-aligned, curved lanes:
+
+```bash
+python -m landlevel.cli --agd TheShop2_2ft.agd --out plan.png \
+  --no-flow-aligned --heading-deg 270
+```
+
+Pin the haul heading to a known slope direction (used as the global strip heading
+under `--no-flow-aligned`, and as a fallback where the flow is flat):
 
 ```bash
 python -m landlevel.cli --agd TheShop2_2ft.agd --out plan.png --heading-deg 270
@@ -109,7 +121,8 @@ from spec §6.2–§6.4.
 
 | Option | Default | Meaning |
 |---|---|---|
-| `--heading-deg` | auto | haul bearing (compass deg, 0=N, 90=E); default = the design surface's main down-slope |
+| `--no-flow-aligned` | off | grow every cut/fill strip along one global `--heading-deg` instead of the local flow. By default soil follows the flow: each load's cut/fill grows along the local transport direction (curved, with-the-grain lanes) |
+| `--heading-deg` | auto | haul bearing (compass deg, 0=N, 90=E); default = the design surface's main down-slope. Used as the single global heading only with `--no-flow-aligned` (and as a fallback where the flow is flat) |
 | `--heading-strength` | 0.5 | 0–0.95: how strongly fill selection follows the heading (0 disables heading bias) |
 | `--transport-mode` | `poisson` | flow field: `poisson` (L²) or `mincostflow` (L¹, needs networkx) |
 | `--balance-mode` | `check` | `check` (warn on imbalance) or `adjust` (re-level the target to balance) |
@@ -138,6 +151,7 @@ grade/compact return pass, and the turn-aware sequencing.
 | `--turning-circle-ft` | 45 | tractor + scraper turning circle (diameter); sets the turn-arc length in the guidance time |
 | `--turn-threshold-deg` | 60 | heading changes below this are gentle bends driven in stride (no slowdown); only sharper turns cost turn time |
 | `--no-grade-return` | off | do **not** add a grade/compact return pass over each fill |
+| `--no-route-smoothing` | off | emit raw grid-stepped guidance waypoints instead of smoothing each cut/fill sweep's displayed line into a drivable curve (corner radius tied to the turning circle). Smoothing is display-only: it never changes distance/turn/time |
 | `--no-direction-aware` | off | disable direction-aware sequencing (turn-into-cut penalty); fall back to pure deadhead-distance ordering + 2-opt |
 | `--lane-overlap` | 0.0 | 0–0.9: fractional overlap between adjacent blade lanes (0 = lanes butt edge-to-edge) |
 | `--guidance-csv [PATH]` | off | write the blade-scale operator guidance track (turn-by-turn waypoints with depth/heading/instruction); pass the flag **alone** for `<out>_guidance.csv` |
@@ -248,8 +262,12 @@ AGD file ─► [1] Parse + grid (7.5 ft)         agd.py, grid.py   §6, §7
 ```
 
 The cut/fill PNG depends only on stages [1]–[3]; the pass list and time are
-additive (`--no-plan` produces the PNG without them). The blade-scale guidance
-track (stage [8]) is built on request via `--guidance-csv` / `--guidance-png`.
+additive (`--no-plan` produces the PNG without them). In the default
+**flow-aligned** mode the pass grower (stage [5]) also reads the flow field
+(stage [3]) to grow lanes along the local streamlines; under `--no-flow-aligned`
+the passes are computed from the cut/fill geometry alone and the flow field/strips
+are visualization-only. The blade-scale guidance track (stage [8]) is built on
+request via `--guidance-csv` / `--guidance-png`.
 
 ## Notes on the model
 
@@ -264,25 +282,33 @@ track (stage [8]) is built on request via `--guidance-csv` / `--guidance-png`.
   ridges and low at the fill sinks; `F = −grad(φ)` therefore flows from cut to
   fill. The arrows in the PNG converge from the cut ring into the fill basin.
 - **Passes.** The plan is a shortest-haul-first patch matcher: the cut cell
-  whose nearest fill is closest anchors each pass, a compact **contiguous** cut
-  patch is region-grown to a full scraper load (≈ 15.4 BCY) under the 61 mm
-  layer cap, and the load is deposited into a compact contiguous fill patch.
-  Keeping both patches contiguous keeps the loading/dumping sweeps near minimum;
-  the haul is the true transit leg (cut-end → fill-start). Volume is conserved
-  exactly. An optional **heading** (default = the design surface's main slope)
-  biases fill selection to move soil down-slope, emulating OptiSurface's
-  lane-oriented hauling.
+  whose nearest fill is closest anchors each pass, a **contiguous** cut patch is
+  region-grown to a full scraper load (≈ 15.4 BCY) under the 61 mm layer cap, and
+  the load is deposited into a contiguous fill patch. Keeping both patches
+  contiguous keeps the loading/dumping sweeps near minimum; the haul is the true
+  transit leg (cut-end → fill-start). Volume is conserved exactly.
+- **Flow-aligned passes (default).** By default each load's cut and fill grow
+  **along the local transport flow** rather than a fixed compass heading: the cut
+  is grown *upstream* along the flow streamline (toward the ridge it draws from)
+  and the fill *downstream* (into the sink it feeds), so cuts, hauls and fills are
+  long, curved, **with-the-grain lanes** the operator follows on the in-cab map.
+  `--no-flow-aligned` reverts to the classic single-heading mode, where an
+  optional **heading** (default = the design surface's main slope) biases fill
+  selection down-slope and `--strip-bias` grows each load as one straight
+  blade-wide lane — emulating OptiSurface's lane-oriented hauling.
 - **Time model (OptiHaul-matched).** Loading/dumping run at constant speed;
   hauling/returning use a trapezoidal speed profile so acceleration/deceleration
   *reduce the average speed*. The return distance equals the
   loading + hauling + dumping distance, and a field-efficiency factor (80%) adds
   "Other" (non-productive) time.
-- **Strips & multi-drop (drivability).** Each load's cut and fill are grown as a
-  single long **blade-wide lane** along the heading (`--strip-bias`) instead of a
-  compact blob, so the operator drives straight lines rather than weaving. When a
-  pass would end part-full, **multi-drop** lets the scraper hop (blade up) to a
-  nearby pocket within `--max-drop-hop-ft` to keep loading/spreading the same
-  load, cutting the number of near-empty "crumb" passes.
+- **Strips & multi-drop (drivability).** In flow-aligned mode each load's cut and
+  fill are single long lanes traced along the flow streamline; in single-heading
+  mode (`--no-flow-aligned`) they are grown as a straight **blade-wide lane** along
+  the heading (`--strip-bias`) instead of a compact blob. Either way the operator
+  drives long continuous lanes rather than weaving. When a pass would end
+  part-full, **multi-drop** lets the scraper hop (blade up) to a nearby pocket
+  within `--max-drop-hop-ft` to keep loading/spreading the same load, cutting the
+  number of near-empty "crumb" passes.
 - **Direction-aware sequencing.** The sequencer orders passes by a *time* cost
   that combines the empty deadhead drive with the **turn arc** needed to leave one
   pass and swing into the next cut (same 45 ft circle / turn-speed model as the
@@ -296,6 +322,15 @@ track (stage [8]) is built on request via `--guidance-csv` / `--guidance-png`.
   (turn circle at turn speed, only for turns sharper than `--turn-threshold-deg`),
   a **grade/compact return pass** over every fill (`--grade-speed-mph`, disable
   with `--no-grade-return`), and **multi-drop repositioning** between pockets.
+- **Route smoothing (display only).** The raw waypoints sit on grid-cell centers,
+  so a flow lane steps in 45/90° jogs no tractor+scraper can track. By default the
+  guidance smooths each sweep's **displayed coordinates** into a drivable curve
+  whose corner radius respects the turning circle, giving the smooth GPS route the
+  operator follows in-cab (`--no-route-smoothing` keeps the raw steps). Crucially
+  this is **steering only**: all distance, turning and time are charged on the raw
+  coverage geometry, because the narrow blade must still cover the full cell band —
+  loading distance is bounded below by `volume ÷ (max_depth × blade_width)`, and a
+  shorter "smoothed" sweep would silently under-cut the field.
 
 ## Tests
 

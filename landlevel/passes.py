@@ -22,8 +22,9 @@ from typing import List, Optional, Tuple
 import numpy as np
 
 from . import DEFAULT_MAX_DROP_HOP_FT, FEET_TO_METERS, M3_TO_CY
+from .flowfield import FlowField
 from .grid import Grid
-from .strips import Strip
+from .strips import Strip, _bilinear, flow_direction_field, streamline_to
 
 Cell = Tuple[int, int]
 
@@ -40,6 +41,11 @@ class Pass:
     cut_end_xy: Tuple[float, float]
     fill_start_xy: Tuple[float, float]
     fill_end_xy: Tuple[float, float]
+    # Local haul-flow bearing (compass deg) the cut/fill strip was grown along;
+    # ``None`` in single-heading mode. Guidance tiles each patch's blade lanes
+    # along these so the lanes follow the flow rather than one global heading.
+    cut_heading_deg: Optional[float] = None
+    fill_heading_deg: Optional[float] = None
 
 
 class _Ledger:
@@ -116,15 +122,30 @@ def generate_passes(
     heading_strength: float = 0.5,
     strip_bias: float = 50.0,
     max_drop_hop_m: float = DEFAULT_MAX_DROP_HOP_FT * FEET_TO_METERS,
+    flow: Optional[FlowField] = None,
+    flow_aligned: bool = False,
 ) -> PassResult:
     """Generate cut-haul-fill passes packed to ``max_load_bcy`` (spec §11).
 
     Each pass cuts a compact, *contiguous* patch of cut cells (region grown from
     an anchor) and deposits into a compact, contiguous fill patch, so the swept
-    loading/dumping distances stay near their minimum. When ``heading_deg`` is
-    given, fill selection is biased to move soil down that bearing (the field's
-    main slope), emulating OptiSurface's lane-oriented hauling. ``strips`` is
-    accepted for API/spec continuity (streamlines inform the visualization).
+    loading/dumping distances stay near their minimum.
+
+    Two ways the cut->fill direction is chosen:
+
+    * **Single heading** (``flow_aligned=False``): every cut/fill strip is grown
+      along the one global ``heading_deg`` (the field's main slope) and fill
+      selection is biased down that bearing - lane-oriented hauling as OptiSurface
+      does. Simplest to drive (parallel lanes) but can push soil across the grain
+      of the optimal transport when that runs diagonal to the heading.
+    * **Flow-aligned** (``flow_aligned=True`` with a ``flow`` field): each load's
+      cut strip is grown along the *local* flow direction (``-grad(phi)``) at its
+      anchor, the fill is found by following the streamline downstream from the
+      cut into the deficit it feeds, and the fill strip is grown along the local
+      flow there. Soil moves with the grain (shorter, with-flow hauls); the
+      resulting lanes curve across the field. The per-pass cut/fill bearings are
+      recorded on each :class:`Pass` so the guidance builder tiles blade lanes
+      along the flow rather than one global heading.
     """
     tol_m = tolerance_mm / 1000.0
     led = _Ledger(grid, tol_m)
@@ -141,6 +162,30 @@ def generate_passes(
     if heading_deg is not None and strip_bias > 1.0:
         r = math.radians(heading_deg)
         strip_uv = (math.sin(r), math.cos(r))  # (east, north) = (bx, by)
+
+    # Flow-aligned mode: precompute the smoothed unit flow-direction field once.
+    fxs = fys = None
+    if flow_aligned and flow is not None:
+        fxs, fys = flow_direction_field(grid, flow)
+
+    def _flow_heading_for_cells(cells):
+        """Dominant flow bearing (compass deg) over a patch, or None if flat/off."""
+        if fxs is None:
+            return None
+        sx = sum(float(fxs[c[1], c[0]]) for c, _d in cells)
+        sy = sum(float(fys[c[1], c[0]]) for c, _d in cells)
+        if sx * sx + sy * sy < 1e-12:
+            return None
+        return math.degrees(math.atan2(sx, sy)) % 360.0
+
+    def _streamline_fill_seed(cut_centroid):
+        """Cell with remaining fill found by following the flow down from the cut."""
+        if fxs is None:
+            return None
+        xf = (cut_centroid[0] - grid.min_x) / grid.grid_size_m
+        yf = (cut_centroid[1] - grid.min_y) / grid.grid_size_m
+        return streamline_to(fxs, fys, grid.valid, xf, yf,
+                             lambda bx, by: led.remaining_fill[by, bx] > tol_m)
 
     centers = _cell_centers(grid)
     passes: List[Pass] = []
@@ -188,9 +233,14 @@ def generate_passes(
         load = 0.0
         seed = anchor
         while load < load_cap - 1e-9:
-            cells, got = _grow_region(led.remaining_cut, led.max_depth_m, tol_m,
-                                      seed, load_cap - load, cut_per_m, W, H,
-                                      heading_uv=strip_uv, strip_bias=strip_bias)
+            if fxs is not None:
+                cells, got = _grow_flow_tube(led.remaining_cut, led.max_depth_m, tol_m,
+                                             seed, load_cap - load, cut_per_m, W, H,
+                                             fxs, fys, grid.valid, signs=(-1.0,))
+            else:
+                cells, got = _grow_region(led.remaining_cut, led.max_depth_m, tol_m,
+                                          seed, load_cap - load, cut_per_m, W, H,
+                                          heading_uv=strip_uv, strip_bias=strip_bias)
             if cells:
                 cut_cells.extend(cells)
                 load += got
@@ -213,11 +263,21 @@ def generate_passes(
         # drive there (still loaded, blade up) and keep dumping until empty.
         fill_cells: List[Tuple[Cell, float]] = []
         placed = 0.0
-        fseed = _choose_fill_seed(fill_xy, fill_idx, cut_centroid, hvec, k_head, have_kd)
+        # Flow-aligned: seed the fill where the streamline from the cut first
+        # reaches a deficit (haul follows the flow). Otherwise pick the nearest /
+        # down-heading fill as before.
+        fseed = _streamline_fill_seed(cut_centroid)
+        if fseed is None:
+            fseed = _choose_fill_seed(fill_xy, fill_idx, cut_centroid, hvec, k_head, have_kd)
         while placed < load - 1e-9:
-            cells, got = _grow_region(led.remaining_fill, led.max_depth_m, tol_m,
-                                      fseed, load - placed, fill_per_m, W, H,
-                                      heading_uv=strip_uv, strip_bias=strip_bias)
+            if fxs is not None:
+                cells, got = _grow_flow_tube(led.remaining_fill, led.max_depth_m, tol_m,
+                                             fseed, load - placed, fill_per_m, W, H,
+                                             fxs, fys, grid.valid, signs=(1.0,))
+            else:
+                cells, got = _grow_region(led.remaining_fill, led.max_depth_m, tol_m,
+                                          fseed, load - placed, fill_per_m, W, H,
+                                          heading_uv=strip_uv, strip_bias=strip_bias)
             if cells:
                 fill_cells.extend(cells)
                 placed += got
@@ -258,7 +318,11 @@ def generate_passes(
         if not cut_cells:
             continue
 
-        passes.append(_build_pass(grid, cut_cells, fill_cells, placed))
+        pass_obj = _build_pass(grid, cut_cells, fill_cells, placed,
+                               ordered=fxs is not None)
+        pass_obj.cut_heading_deg = _flow_heading_for_cells(cut_cells)
+        pass_obj.fill_heading_deg = _flow_heading_for_cells(fill_cells)
+        passes.append(pass_obj)
 
     unmatched_cut = float(led.remaining_cut[led.remaining_cut > tol_m].sum()) * cut_per_m
     unmatched_fill = float(led.remaining_fill[led.remaining_fill > tol_m].sum()) * fill_per_m
@@ -422,6 +486,90 @@ def _grow_region(remaining, max_depth, tol, seed_cell, target_bcy, per_m, width,
     return used, acc
 
 
+def _grow_flow_tube(remaining, max_depth, tol, seed_cell, target_bcy, per_m,
+                    width, height, fxs, fys, valid, step: float = 0.5,
+                    max_steps: int = 4000, miss_gap: int = 4,
+                    signs: Tuple[float, ...] = (1.0, -1.0)):
+    """Consume one load along the *curving streamline* through ``seed_cell``.
+
+    Integrates the smoothed flow, taking one ``max_depth`` layer from each cell
+    that still holds material, giving one long continuous blade-wide lane that
+    re-steers with the curving flow - the natural continuous pass for a scraper
+    working with the grain.
+
+    ``signs`` selects which way(s) to follow the streamline from the seed:
+
+    * ``(-1.0,)`` upstream only, toward the ridge - used for **cuts** (the anchor
+      sits near the fill; we collect high ground back toward the ridge and end
+      the cut near the fill). Avoids curling into the convergence zone downstream.
+    * ``(1.0,)`` downstream only, into the sink - used for **fills** (start near
+      the haul arrival, spread outward down the flow).
+    * ``(1.0, -1.0)`` both directions (default).
+
+    Tracing a direction stops after ``miss_gap`` consecutive empty cells (run past
+    the material), the load is full, the flow goes flat, or the path leaves the
+    field. Returns the cells as one monotonic streamline-ordered run (ridge end ->
+    seed -> fill end), so the guidance follows them directly without
+    nearest-neighbour re-chaining. Assumes the grid is ~one blade wide.
+    """
+    sx, sy = seed_cell
+    consumed: set = set()
+    acc = 0.0
+
+    def consume(bx: int, by: int, bucket: List[Tuple[Cell, float]]) -> bool:
+        nonlocal acc
+        if (bx, by) in consumed:
+            return False
+        rem = remaining[by, bx]
+        if rem <= tol:
+            return False
+        depth = min(max_depth, rem)
+        bcy = depth * per_m
+        if acc + bcy > target_bcy:
+            bcy = target_bcy - acc
+            depth = bcy / per_m if per_m > 0 else 0.0
+            if depth <= 1e-12:
+                return False
+        remaining[by, bx] -= depth
+        acc += bcy
+        bucket.append(((bx, by), depth))
+        consumed.add((bx, by))
+        return True
+
+    seed_entry: List[Tuple[Cell, float]] = []
+    consume(sx, sy, seed_entry)
+
+    def _trace(sign: float) -> List[Tuple[Cell, float]]:
+        out: List[Tuple[Cell, float]] = []
+        x, y = sx + 0.5, sy + 0.5
+        misses = 0
+        for _ in range(max_steps):
+            if acc >= target_bcy - 1e-9:
+                break
+            ux = _bilinear(fxs, valid, x, y)
+            uy = _bilinear(fys, valid, x, y)
+            norm = (ux * ux + uy * uy) ** 0.5
+            if norm < 1e-6:
+                break
+            x += sign * step * ux / norm
+            y += sign * step * uy / norm
+            bx, by = int(math.floor(x)), int(math.floor(y))
+            if not (0 <= bx < width and 0 <= by < height) or not valid[by, bx]:
+                break
+            if consume(bx, by, out):
+                misses = 0
+            elif (bx, by) not in consumed:
+                misses += 1
+                if misses >= miss_gap and out:
+                    break
+        return out
+
+    down = _trace(1.0) if 1.0 in signs else []    # toward the fill (with the flow)
+    up = _trace(-1.0) if -1.0 in signs else []     # toward the ridge (against flow)
+    ordered = list(reversed(up)) + seed_entry + down
+    return ordered, acc
+
+
 def _centroid(points) -> Tuple[float, float]:
     n = len(points)
     return (sum(p[0] for p in points) / n, sum(p[1] for p in points) / n)
@@ -446,21 +594,38 @@ def _nn_chain(cells, grid: Grid, start_idx: int = 0):
     return [cells[m] for m in order]
 
 
-def _build_pass(grid: Grid, cut_cells, fill_cells, load_bcy) -> Pass:
+def _build_pass(grid: Grid, cut_cells, fill_cells, load_bcy, ordered: bool = False) -> Pass:
     # Order the cut sweep to *end* near the fill patch and the fill sweep to
     # *start* near where the cut ended, so the haul is the true transit leg
     # (cut end -> fill start) and not double-counted against the sweeps.
     fill_c = _centroid([grid.cell_center_xy(*c) for c, _ in fill_cells])
-    cut_pts = [grid.cell_center_xy(*c) for c, _ in cut_cells]
-    cut_start_idx = max(range(len(cut_pts)),
-                        key=lambda m: (cut_pts[m][0] - fill_c[0]) ** 2 + (cut_pts[m][1] - fill_c[1]) ** 2)
-    cut_cells = _nn_chain(cut_cells, grid, cut_start_idx)
-    cut_end = grid.cell_center_xy(*cut_cells[-1][0])
+    if ordered:
+        # Flow-tube cells are already in streamline order (one flowing run); keep
+        # that order and only flip whole sweeps so the cut ends toward the fill
+        # and the fill starts toward the cut end. No nearest-neighbour re-chaining
+        # (which is what introduced the zig-zag).
+        cut_pts = [grid.cell_center_xy(*c) for c, _ in cut_cells]
+        if (len(cut_pts) >= 2
+                and ((cut_pts[0][0] - fill_c[0]) ** 2 + (cut_pts[0][1] - fill_c[1]) ** 2)
+                < ((cut_pts[-1][0] - fill_c[0]) ** 2 + (cut_pts[-1][1] - fill_c[1]) ** 2)):
+            cut_cells = list(reversed(cut_cells))
+        cut_end = grid.cell_center_xy(*cut_cells[-1][0])
+        fill_pts = [grid.cell_center_xy(*c) for c, _ in fill_cells]
+        if (len(fill_pts) >= 2
+                and ((fill_pts[-1][0] - cut_end[0]) ** 2 + (fill_pts[-1][1] - cut_end[1]) ** 2)
+                < ((fill_pts[0][0] - cut_end[0]) ** 2 + (fill_pts[0][1] - cut_end[1]) ** 2)):
+            fill_cells = list(reversed(fill_cells))
+    else:
+        cut_pts = [grid.cell_center_xy(*c) for c, _ in cut_cells]
+        cut_start_idx = max(range(len(cut_pts)),
+                            key=lambda m: (cut_pts[m][0] - fill_c[0]) ** 2 + (cut_pts[m][1] - fill_c[1]) ** 2)
+        cut_cells = _nn_chain(cut_cells, grid, cut_start_idx)
+        cut_end = grid.cell_center_xy(*cut_cells[-1][0])
 
-    fill_pts = [grid.cell_center_xy(*c) for c, _ in fill_cells]
-    fill_start_idx = min(range(len(fill_pts)),
-                         key=lambda m: (fill_pts[m][0] - cut_end[0]) ** 2 + (fill_pts[m][1] - cut_end[1]) ** 2)
-    fill_cells = _nn_chain(fill_cells, grid, fill_start_idx)
+        fill_pts = [grid.cell_center_xy(*c) for c, _ in fill_cells]
+        fill_start_idx = min(range(len(fill_pts)),
+                             key=lambda m: (fill_pts[m][0] - cut_end[0]) ** 2 + (fill_pts[m][1] - cut_end[1]) ** 2)
+        fill_cells = _nn_chain(fill_cells, grid, fill_start_idx)
 
     cut_start = grid.cell_center_xy(*cut_cells[0][0])
     fill_start = grid.cell_center_xy(*fill_cells[0][0])

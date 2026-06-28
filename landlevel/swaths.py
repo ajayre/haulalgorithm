@@ -36,6 +36,7 @@ import math
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
+from . import DEFAULT_TURNING_CIRCLE_FT, FEET_TO_METERS
 from .agd import AgdField, latlon_from_utm
 from .grid import Grid
 from .routing import Route
@@ -63,14 +64,18 @@ class GuidancePoint:
     pass_no: int           # 1-based pass index in the optimized route
     action: str            # START | RETURN | HAUL | CUT | FILL
     blade: str             # "UP" | "DOWN"
-    x: float               # world easting (m)
-    y: float               # world northing (m)
+    x: float               # world easting (m) - drivable (smoothed) steering point
+    y: float               # world northing (m) - drivable (smoothed) steering point
     lat: float
     lon: float
     depth_mm: float        # target cut/fill depth at this point (magnitude); 0 if blade up
     heading_deg: float     # compass bearing to the NEXT waypoint (0=N, 90=E)
-    seg_dist_m: float      # distance travelled from the previous waypoint
-    cum_dist_m: float      # cumulative distance from the start
+    seg_dist_m: float      # blade-coverage travel from the previous waypoint (NOT
+                           # the straight-line gap between smoothed points: the
+                           # blade must cover the full cell band, so distance/time
+                           # are charged on the raw coverage path, not the shorter
+                           # smoothed steering line)
+    cum_dist_m: float      # cumulative coverage distance from the start
     instruction: str       # plain-language, idiot-proof cue
 
 
@@ -141,6 +146,76 @@ def _centroid(points: List[XY]) -> XY:
 
 def _seg_length(points: List[XY]) -> float:
     return sum(math.dist(points[k], points[k + 1]) for k in range(len(points) - 1))
+
+
+def _smooth_run_xy(xys: List[XY], sigma_idx: float) -> List[XY]:
+    """Gaussian-smooth a single drivable run, keeping the same waypoint count.
+
+    The grid lays cut/fill waypoints on cell centres, so a streamline that drifts
+    off-axis steps in 45/90 deg jogs that no tractor+scraper can physically track.
+    A discrete Gaussian over the waypoint sequence (sigma in *waypoints*, ~one per
+    cell) rounds those jogs into the curve the machine actually drives. The first
+    and last waypoint are pinned so the haul leg / deadhead junctions they feed are
+    left exactly as the optimizer placed them.
+    """
+    n = len(xys)
+    if n < 3 or sigma_idx <= 0.0:
+        return list(xys)
+    rad = min(max(1, int(round(3.0 * sigma_idx))), n - 1)
+    ks = list(range(-rad, rad + 1))
+    w = [math.exp(-(k * k) / (2.0 * sigma_idx * sigma_idx)) for k in ks]
+    sw = sum(w)
+    w = [v / sw for v in w]
+    out: List[XY] = []
+    for i in range(n):
+        sx = sy = 0.0
+        for k, wk in zip(ks, w):
+            j = i + k
+            if j < 0:               # reflect at the ends to avoid shrinking inward
+                j = -j
+            elif j >= n:
+                j = 2 * (n - 1) - j
+            j = min(max(j, 0), n - 1)
+            sx += wk * xys[j][0]
+            sy += wk * xys[j][1]
+        out.append((sx, sy))
+    out[0] = xys[0]
+    out[-1] = xys[-1]
+    return out
+
+
+def _smooth_lane(
+    lane: List[Tuple[float, float, float]],
+    sigma_idx: float,
+    hop_thresh: float,
+) -> List[Tuple[float, float, float]]:
+    """Smooth a lane's geometry within each contiguous run, preserving depths.
+
+    The lane is split at multi-drop hops (jumps > ``hop_thresh``, which become
+    blade-up MOVE repositions) so smoothing never bridges two separate pockets;
+    each contiguous run is rounded with :func:`_smooth_run_xy`. Depths and the
+    waypoint count are untouched, so actions/instructions map 1:1 as before.
+    """
+    if sigma_idx <= 0.0 or len(lane) < 3:
+        return lane
+    runs: List[List[int]] = []
+    cur = [0]
+    for i in range(1, len(lane)):
+        if math.dist((lane[i - 1][0], lane[i - 1][1]), (lane[i][0], lane[i][1])) > hop_thresh:
+            runs.append(cur)
+            cur = [i]
+        else:
+            cur.append(i)
+    runs.append(cur)
+
+    out = list(lane)
+    for run in runs:
+        if len(run) < 3:
+            continue
+        sm = _smooth_run_xy([(lane[i][0], lane[i][1]) for i in run], sigma_idx)
+        for k, i in enumerate(run):
+            out[i] = (sm[k][0], sm[k][1], lane[i][2])
+    return out
 
 
 def _lanes_for_patch(
@@ -261,6 +336,74 @@ def _connected_pockets(cell_list: List[Tuple[Cell, float]]) -> List[List[Tuple[C
     return [[(c, d) for c, d in cell_list if c in comp] for comp in comps]
 
 
+def _ordered_runs(cell_list: List[Tuple[Cell, float]]) -> List[List[Tuple[Cell, float]]]:
+    """Split a flow strip into maximal runs of consecutive 8-adjacent cells.
+
+    The flow-tube grower returns cells in true streamline order (one flowing run
+    per pocket); a multi-drop hop shows up as a break to a non-adjacent cell.
+    Splitting on those breaks - while *preserving the order within each run* -
+    gives long flowing lanes with no nearest-neighbour doubling back.
+    """
+    runs: List[List[Tuple[Cell, float]]] = []
+    cur: List[Tuple[Cell, float]] = []
+    prev: Optional[Cell] = None
+    for c, d in cell_list:
+        if prev is None or (abs(c[0] - prev[0]) <= 1 and abs(c[1] - prev[1]) <= 1):
+            cur.append((c, d))
+        else:
+            runs.append(cur)
+            cur = [(c, d)]
+        prev = c
+    if cur:
+        runs.append(cur)
+    return runs
+
+
+def _lanes_flow(
+    cell_list: List[Tuple[Cell, float]],
+    grid: Grid,
+    orient_start_xy: Optional[XY] = None,
+    orient_end_xy: Optional[XY] = None,
+) -> List[Tuple[float, float, float]]:
+    """Flow-following lane builder: drive each flow run along its streamline order.
+
+    Cells arrive already in streamline order; this keeps that order (no
+    re-chaining) and only flips whole runs so the cut side finishes at the run
+    nearest the fill (``orient_end_xy``) and the fill side starts at the run
+    nearest the haul arrival (``orient_start_xy``). The result is long, flowing
+    cut/fill lanes that curve with the flow.
+    """
+    runs = _ordered_runs(cell_list)
+    segs: List[List[Tuple[float, float, float]]] = []
+    for r in runs:
+        if r:
+            segs.append([(grid.cell_center_xy(*c)[0], grid.cell_center_xy(*c)[1], d)
+                         for c, d in r])
+    if not segs:
+        return []
+    cents = [_centroid([(p[0], p[1]) for p in s]) for s in segs]
+
+    pts: List[Tuple[float, float, float]] = []
+    if orient_end_xy is not None:
+        order = sorted(range(len(segs)), key=lambda i: -_d2(cents[i], orient_end_xy))
+        for rank, i in enumerate(order):
+            tgt = orient_end_xy if rank == len(order) - 1 else cents[order[rank + 1]]
+            s = segs[i]
+            if len(s) >= 2 and _d2((s[0][0], s[0][1]), tgt) < _d2((s[-1][0], s[-1][1]), tgt):
+                s = list(reversed(s))
+            pts += s
+    else:
+        src = orient_start_xy if orient_start_xy is not None else cents[0]
+        order = sorted(range(len(segs)), key=lambda i: _d2(cents[i], src))
+        for rank, i in enumerate(order):
+            st = src if rank == 0 else cents[order[rank - 1]]
+            s = segs[i]
+            if len(s) >= 2 and _d2((s[-1][0], s[-1][1]), st) < _d2((s[0][0], s[0][1]), st):
+                s = list(reversed(s))
+            pts += s
+    return pts
+
+
 def _lanes_multi(
     cell_list: List[Tuple[Cell, float]],
     grid: Grid,
@@ -317,6 +460,9 @@ def build_guidance(
     lane_overlap: float = 0.0,
     grade_return: bool = True,
     turn_threshold_deg: float = 60.0,
+    smooth_route: bool = True,
+    turn_radius_m: Optional[float] = None,
+    smooth_scale: float = 0.7,
 ) -> GuidanceResult:
     """Build the blade-scale operator guidance track from the optimized route.
 
@@ -326,42 +472,84 @@ def build_guidance(
     over the fill to grade and compact it. The resulting waypoints are emitted as
     a single ordered track with per-point actions, target depths, next-bearings,
     and instructions.
+
+    When ``smooth_route`` is set (default), the emitted waypoint *coordinates* of
+    each cut/fill sweep are smoothed into a drivable curve whose corner radius
+    respects the machine turning radius (``turn_radius_m``; default half the
+    turning circle), since the raw grid waypoints step in 45/90 deg jogs no
+    tractor+scraper can track. This is purely the steering line drawn in-cab:
+    sweep endpoints are pinned (the optimized haul/return junctions are
+    untouched), and **all distance, turn and time accounting stays on the raw
+    coverage geometry**. Smoothing must not shorten the productive sweep, because
+    the narrow blade still has to cover the full cell band - the coverage length
+    is bounded below by ``volume / (max_depth x blade_width)`` and a shorter
+    "smoothed" sweep would silently under-cut the field.
     """
     blade_m = blade_width_mm / 1000.0
     zone, north = field.zone, field.is_northern
+
+    # Multi-drop hop threshold (blade-up reposition between pockets) and the route
+    # smoothing width, both constant for the job. The smoother rounds the grid
+    # staircase into a path drivable within the machine turning radius (half the
+    # turning circle), expressed in waypoints (~one per cell).
+    hop_thresh = max(3.0 * grid.grid_size_m, 2.0 * blade_m)
+    if turn_radius_m is None:
+        turn_radius_m = DEFAULT_TURNING_CIRCLE_FT * 0.5 * FEET_TO_METERS
+    sigma_idx = (turn_radius_m / grid.grid_size_m) * smooth_scale if smooth_route else 0.0
 
     points: List[GuidancePoint] = []
     return_d = haul_d = cut_d = fill_d = grade_d = reposition_d = 0.0
     planned_cut_d = planned_fill_d = route_haul_d = 0.0
 
-    prev_xy: Optional[XY] = None       # end of the previous waypoint
+    prev_xy: Optional[XY] = None       # end of the previous waypoint (raw coverage)
     seq = 0
 
-    # Raw records first (x, y, depth_m, action, pass_no); distances/bearings after.
-    raw: List[Tuple[float, float, float, str, int]] = []
+    # Raw records first; distances/bearings after. Each record carries both the
+    # raw coverage point (xr, yr - used for all distance/turn/time accounting,
+    # because the blade must cover the full cell band) and the smoothed steering
+    # point (xs, ys - what the operator follows on the in-cab map). Smoothing only
+    # changes the displayed line; it never shortens the coverage the blade does.
+    raw: List[Tuple[float, float, float, str, int, float, float]] = []
 
     for pass_no, p in enumerate(route.ordered_passes, start=1):
         route_haul_d += p.haul_distance_m
         planned_cut_d += _seg_length([grid.cell_center_xy(*c) for c, _d in p.cut_cells])
         planned_fill_d += _seg_length([grid.cell_center_xy(*c) for c, _d in p.fill_cells])
 
+        # Tile each patch's blade lanes along the direction the soil actually
+        # moves there: the pass's local flow bearing when flow-aligned, else the
+        # single global heading. This makes the lanes follow the flow (curved
+        # across the field) instead of one fixed direction.
+        flow_pass = p.cut_heading_deg is not None or p.fill_heading_deg is not None
+        cut_h = p.cut_heading_deg if p.cut_heading_deg is not None else heading_deg
+        fill_h = p.fill_heading_deg if p.fill_heading_deg is not None else heading_deg
+
         # Orient the cut sweep to end at the optimized haul target (where dumping
-        # begins) so the per-pass haul leg stays the optimizer's transit.
-        cut_lane = _lanes_multi(
-            p.cut_cells, grid, blade_m, heading_deg, lane_overlap,
-            orient_end_xy=p.fill_start_xy,
-        )
+        # begins) so the per-pass haul leg stays the optimizer's transit. Flow
+        # strips are driven along their (curved) spine; single-heading patches are
+        # tiled into straight blade lanes.
+        if flow_pass:
+            cut_lane = _lanes_flow(p.cut_cells, grid, orient_end_xy=p.fill_start_xy)
+        else:
+            cut_lane = _lanes_multi(p.cut_cells, grid, blade_m, cut_h, lane_overlap,
+                                    orient_end_xy=p.fill_start_xy)
         cut_end_xy = (cut_lane[-1][0], cut_lane[-1][1]) if cut_lane else p.cut_end_xy
-        fill_lane = _lanes_multi(
-            p.fill_cells, grid, blade_m, heading_deg, lane_overlap,
-            orient_start_xy=cut_end_xy,
-        )
+        if flow_pass:
+            fill_lane = _lanes_flow(p.fill_cells, grid, orient_start_xy=cut_end_xy)
+        else:
+            fill_lane = _lanes_multi(p.fill_cells, grid, blade_m, fill_h, lane_overlap,
+                                     orient_start_xy=cut_end_xy)
+
+        # Drivable steering line: smooth each sweep's *shape* (endpoints pinned, so
+        # the haul/return junctions are untouched). This is what the operator
+        # follows on the map; the raw lane below still drives all distance/time.
+        cut_disp = _smooth_lane(cut_lane, sigma_idx, hop_thresh)
+        fill_disp = _smooth_lane(fill_lane, sigma_idx, hop_thresh)
 
         # A multi-drop pass may span several pockets; the blade-up drive between
         # two pockets shows up as an unusually long step within a sweep. Emit
         # those gaps as HAUL repositions (blade up) instead of cutting/filling
-        # across empty ground.
-        hop_thresh = max(3.0 * grid.grid_size_m, 2.0 * blade_m)
+        # across empty ground. Hops are detected on the raw lane.
         for i, (x, y, d) in enumerate(cut_lane):
             if i == 0:
                 action = START if pass_no == 1 else RETURN
@@ -369,7 +557,7 @@ def build_guidance(
                 action = MOVE
             else:
                 action = CUT
-            raw.append((x, y, d, action, pass_no))
+            raw.append((x, y, d, action, pass_no, cut_disp[i][0], cut_disp[i][1]))
         for i, (x, y, d) in enumerate(fill_lane):
             if i == 0:
                 action = HAUL
@@ -377,22 +565,25 @@ def build_guidance(
                 action = MOVE
             else:
                 action = FILL
-            raw.append((x, y, d, action, pass_no))
+            raw.append((x, y, d, action, pass_no, fill_disp[i][0], fill_disp[i][1]))
         # Grade/compact: turn at the fill end and drive back over the fill. The
         # return retraces the fill lane in reverse (blade down, no new material);
         # inter-pocket hops are blade-up repositions, not graded ground.
         if grade_return and len(fill_lane) >= 2:
             rev = list(reversed(fill_lane))
+            rev_disp = list(reversed(fill_disp))
             for i, (x, y, _d) in enumerate(rev):
                 if i > 0 and math.dist((rev[i - 1][0], rev[i - 1][1]), (x, y)) > hop_thresh:
-                    raw.append((x, y, 0.0, MOVE, pass_no))
+                    raw.append((x, y, 0.0, MOVE, pass_no, rev_disp[i][0], rev_disp[i][1]))
                 else:
-                    raw.append((x, y, 0.0, GRADE, pass_no))
+                    raw.append((x, y, 0.0, GRADE, pass_no, rev_disp[i][0], rev_disp[i][1]))
 
-    # Second pass: distances, bearings, instructions.
+    # Second pass: distances, bearings, instructions. Distances/time are charged
+    # on the RAW coverage geometry (xr, yr); the emitted point coordinates and the
+    # steering bearing use the SMOOTHED display geometry (xs, ys).
     cum = 0.0
-    for idx, (x, y, depth_m, action, pass_no) in enumerate(raw):
-        xy = (x, y)
+    for idx, (xr, yr, depth_m, action, pass_no, xs_, ys_) in enumerate(raw):
+        xy = (xr, yr)
         seg = math.dist(prev_xy, xy) if prev_xy is not None else 0.0
         if action in (START,):
             seg = 0.0  # no travel attributed before the very first waypoint
@@ -411,7 +602,7 @@ def build_guidance(
         cum += seg
 
         nxt = raw[idx + 1] if idx + 1 < len(raw) else None
-        heading = _bearing_deg(xy, (nxt[0], nxt[1])) if nxt is not None else 0.0
+        heading = _bearing_deg((xs_, ys_), (nxt[5], nxt[6])) if nxt is not None else 0.0
 
         # ``blade`` is the state on the inbound leg (UP while repositioning). Every
         # waypoint sits on a real cut/fill cell, so each carries its own target
@@ -419,18 +610,19 @@ def build_guidance(
         # blade-up reposition but is still cut/filled to depth once the blade drops.
         blade = "UP" if action in _BLADE_UP else "DOWN"
         depth_mm = abs(depth_m) * 1000.0
-        lat, lon = latlon_from_utm(x, y, zone, north)
+        lat, lon = latlon_from_utm(xs_, ys_, zone, north)
 
         seq += 1
         points.append(GuidancePoint(
             seq=seq, pass_no=pass_no, action=action, blade=blade,
-            x=x, y=y, lat=lat, lon=lon, depth_mm=depth_mm,
+            x=xs_, y=ys_, lat=lat, lon=lon, depth_mm=depth_mm,
             heading_deg=heading, seg_dist_m=seg, cum_dist_m=cum,
             instruction=_instruction(action, depth_mm),
         ))
         prev_xy = xy
 
-    n_turns, turn_angle = _turn_metrics(points, grid.grid_size_m, blade_m,
+    n_turns, turn_angle = _turn_metrics([r[0] for r in raw], [r[1] for r in raw],
+                                        grid.grid_size_m, blade_m,
                                         turn_threshold_deg=turn_threshold_deg)
 
     return GuidanceResult(
@@ -493,7 +685,8 @@ def _rdp_keep(xs: List[float], ys: List[float], tol: float) -> List[int]:
 
 
 def _turn_metrics(
-    points: List[GuidancePoint],
+    xs: List[float],
+    ys: List[float],
     grid_size_m: float,
     blade_m: float,
     turn_threshold_deg: float = 60.0,
@@ -507,11 +700,12 @@ def _turn_metrics(
     taken in stride at travel speed (no slowdown, not counted); only changes at or
     above the threshold are genuine tight turns that force a slowdown and an arc,
     so only those are counted and summed into the turn-time angle.
+
+    Measured on the *raw coverage* path (not the smoothed steering line) so the
+    turn count/time is unaffected by display smoothing.
     """
-    if len(points) < 3:
+    if len(xs) < 3:
         return 0, 0.0
-    xs = [p.x for p in points]
-    ys = [p.y for p in points]
     tol = max(blade_m, grid_size_m) * 1.5
     idx = _rdp_keep(xs, ys, tol)
     bearings: List[float] = []

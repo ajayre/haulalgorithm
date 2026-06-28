@@ -70,7 +70,17 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--blade-width-mm", type=float, default=DEFAULT_BLADE_WIDTH_MM)
     p.add_argument("--heading-deg", type=float, default=None,
                    help="haul heading / grid direction (compass deg, 0=N, 90=E). "
-                        "Default: auto-detected main slope of the design surface.")
+                        "Default: auto-detected main slope of the design surface. "
+                        "Used as the single global heading only when "
+                        "--no-flow-aligned is set (and as a fallback where the "
+                        "flow is flat).")
+    p.add_argument("--no-flow-aligned", action="store_true",
+                   help="grow every cut/fill strip along one global heading "
+                        "instead of the local flow. By default soil follows the "
+                        "flow: each load's cut/fill is grown along the local "
+                        "transport direction and the haul follows the streamline "
+                        "into the deficit it feeds (curved, with-the-grain lanes; "
+                        "the operator follows the route on the in-cab map).")
     p.add_argument("--heading-strength", type=float, default=0.5,
                    help="0-0.95: how strongly fill selection follows the heading "
                         "(0 disables heading bias)")
@@ -136,6 +146,10 @@ def build_parser() -> argparse.ArgumentParser:
                         "(default %(default)g)")
     p.add_argument("--no-grade-return", action="store_true",
                    help="do not add a grade/compact return pass over each fill")
+    p.add_argument("--no-route-smoothing", action="store_true",
+                   help="emit raw grid-stepped guidance waypoints instead of "
+                        "smoothing each cut/fill sweep into a drivable curve "
+                        "(corner radius tied to the turning circle)")
     p.add_argument("--no-direction-aware", action="store_true",
                    help="disable direction-aware sequencing (penalising the turn "
                         "needed to leave a pass and enter the next cut); falls back "
@@ -211,11 +225,18 @@ def main(argv: list[str] | None = None) -> int:
         f"INFO: scraper capacity {args.scraper_capacity_lcy:g} LCY = {scraper_bcy:.2f} BCY/pass\n"
     )
     heading_deg = args.heading_deg if args.heading_deg is not None else estimate_slope_heading(grid)
-    sys.stderr.write(
-        f"INFO: haul heading {heading_deg:.1f} deg "
-        f"({'auto slope' if args.heading_deg is None else 'user'}), "
-        f"strength {args.heading_strength:g}\n"
-    )
+    flow_aligned = not args.no_flow_aligned
+    if flow_aligned:
+        sys.stderr.write(
+            "INFO: flow-aligned passes (soil follows the local transport flow; "
+            f"global heading {heading_deg:.1f} deg used only as fallback)\n"
+        )
+    else:
+        sys.stderr.write(
+            f"INFO: single-heading passes {heading_deg:.1f} deg "
+            f"({'auto slope' if args.heading_deg is None else 'user'}), "
+            f"strength {args.heading_strength:g}\n"
+        )
     pass_result = generate_passes(
         grid, strips,
         tolerance_mm=args.tolerance_mm,
@@ -224,6 +245,8 @@ def main(argv: list[str] | None = None) -> int:
         heading_strength=args.heading_strength,
         strip_bias=args.strip_bias,
         max_drop_hop_m=args.max_drop_hop_ft * FEET_TO_METERS,
+        flow=flow,
+        flow_aligned=flow_aligned,
     )
     sys.stderr.write(
         f"INFO: {len(pass_result.passes)} passes in {pass_result.rounds} rounds "
@@ -279,7 +302,8 @@ def main(argv: list[str] | None = None) -> int:
     print(f"  Move Rate (BCY/hr):     {move_rate:,.0f}")
     print(f"  Area Rate (ac/hr):      {area_ac / total_h if total_h else 0:,.3f}")
     print(f"  Ave. Move Dist. (yd):   {avg_move_yd:,.0f}")
-    print(f"  Haul heading (deg):     {heading_deg:,.1f}")
+    print(f"  Haul heading (deg):     "
+          f"{'flow-aligned (per-pass local flow)' if flow_aligned else f'{heading_deg:,.1f}'}")
     print(f"  Passes:                 {len(pass_result.passes)}")
     print("-" * 56)
     print("Distances                       Speeds")
@@ -341,6 +365,8 @@ def main(argv: list[str] | None = None) -> int:
             lane_overlap=args.lane_overlap,
             grade_return=not args.no_grade_return,
             turn_threshold_deg=args.turn_threshold_deg,
+            smooth_route=not args.no_route_smoothing,
+            turn_radius_m=args.turning_circle_ft * 0.5 * FEET_TO_METERS,
         )
         gtime = estimate_guidance_time(
             guidance,
