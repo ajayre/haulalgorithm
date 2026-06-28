@@ -14,15 +14,21 @@ from . import (
     DEFAULT_DECEL_TIME_S,
     DEFAULT_DUMPING_SPEED_MPH,
     DEFAULT_FIELD_EFFICIENCY,
+    DEFAULT_GRADE_SPEED_MPH,
     DEFAULT_GRID_SIZE_FT,
     DEFAULT_HAUL_SPEED_MPH,
     DEFAULT_LOADING_SPEED_MPH,
     DEFAULT_MAX_DEPTH_MM,
+    DEFAULT_MAX_DROP_HOP_FT,
     DEFAULT_PIXELS_PER_BIN,
+    FEET_TO_METERS,
     DEFAULT_RETURN_SPEED_MPH,
     DEFAULT_SCRAPER_CAPACITY_LCY,
     DEFAULT_SWELL_FACTOR,
     DEFAULT_TOLERANCE_MM,
+    DEFAULT_TURN_SPEED_MPH,
+    DEFAULT_TURN_THRESHOLD_DEG,
+    DEFAULT_TURNING_CIRCLE_FT,
     __version__,
 )
 from .agd import parse_agd_file
@@ -31,9 +37,15 @@ from .flowfield import compute_flow_field
 from .grid import build_grid
 from .passes import estimate_slope_heading, generate_passes
 from .animate import animate_leveling
-from .render import overlay_zone_waypoints, render_pass_pairs_png, render_png
+from .render import (
+    overlay_zone_waypoints,
+    render_guidance_png,
+    render_pass_pairs_png,
+    render_png,
+)
 from .routing import sequence_passes
 from .sequence import sequence_cut_zones, write_pass_pairs_csv, write_sequence_csv
+from .swaths import build_guidance, estimate_guidance_time, write_guidance_csv
 from .strips import trace_strips
 from .timemodel import TimeParams, estimate_time
 
@@ -62,6 +74,18 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--heading-strength", type=float, default=0.5,
                    help="0-0.95: how strongly fill selection follows the heading "
                         "(0 disables heading bias)")
+    p.add_argument("--strip-bias", type=float, default=50.0,
+                   help="grow each load's cut/fill as one long blade-wide lane "
+                        "along the heading. Value ~= the lane length (in cells) the "
+                        "grower chases before stepping sideways; set it above a "
+                        "full load's cell count for a single continuous line "
+                        "(1 = compact blob).")
+    p.add_argument("--max-drop-hop-ft", type=float, default=DEFAULT_MAX_DROP_HOP_FT,
+                   help="multi-drop: how far the scraper will drive (blade up) to "
+                        "the next cut/fill pocket to keep loading/spreading the same "
+                        "load, instead of ending a pass partially full (default "
+                        "%(default)g ft). Larger = fewer, fuller passes but longer "
+                        "in-pass repositioning; 0 disables multi-drop.")
     p.add_argument("--field-efficiency", type=float, default=DEFAULT_FIELD_EFFICIENCY,
                    help="fraction of productive time (0-1); 0.8 = 80%%")
     p.add_argument("--loading-speed-mph", type=float, default=DEFAULT_LOADING_SPEED_MPH)
@@ -87,6 +111,35 @@ def build_parser() -> argparse.ArgumentParser:
                    help="write a cut/fill PNG overlaid with one semi-transparent "
                         "line per cut-fill pair (heat-map look); pass the flag "
                         "alone for <out>_cut_fill_pairs.png")
+    p.add_argument("--guidance-csv", nargs="?", const="__AUTO__", default=None,
+                   help="write the blade-scale operator guidance track (turn-by-turn "
+                        "waypoints with depth/heading/instruction) to this CSV; pass "
+                        "the flag alone for <out>_guidance.csv")
+    p.add_argument("--guidance-png", nargs="?", const="__AUTO__", default=None,
+                   help="render the blade-scale guidance lanes over the cut/fill map; "
+                        "pass the flag alone for <out>_guidance.png")
+    p.add_argument("--lane-overlap", type=float, default=0.0,
+                   help="0-0.9: fractional overlap between adjacent blade lanes "
+                        "(0 = lanes butt edge-to-edge)")
+    p.add_argument("--turn-speed-mph", type=float, default=DEFAULT_TURN_SPEED_MPH,
+                   help="speed through a turn (the machine slows to turn); used by "
+                        "the turn-aware guidance time")
+    p.add_argument("--grade-speed-mph", type=float, default=DEFAULT_GRADE_SPEED_MPH,
+                   help="speed of the return grade/compact pass driven back over "
+                        "each fill (default %(default)g MPH)")
+    p.add_argument("--turning-circle-ft", type=float, default=DEFAULT_TURNING_CIRCLE_FT,
+                   help="tractor+scraper turning circle (diameter, ft); sets the "
+                        "turn arc length in the guidance time")
+    p.add_argument("--turn-threshold-deg", type=float, default=DEFAULT_TURN_THRESHOLD_DEG,
+                   help="heading changes below this (deg) are gentle bends driven "
+                        "in stride (no slowdown); only sharper turns cost turn time "
+                        "(default %(default)g)")
+    p.add_argument("--no-grade-return", action="store_true",
+                   help="do not add a grade/compact return pass over each fill")
+    p.add_argument("--no-direction-aware", action="store_true",
+                   help="disable direction-aware sequencing (penalising the turn "
+                        "needed to leave a pass and enter the next cut); falls back "
+                        "to pure deadhead-distance ordering + 2-opt")
     p.add_argument("--animate-dir", type=Path, default=None,
                    help="write a cut/fill PNG frame per stride of applied passes "
                         "into this directory (leveling simulation)")
@@ -169,6 +222,8 @@ def main(argv: list[str] | None = None) -> int:
         max_load_bcy=scraper_bcy,
         heading_deg=heading_deg,
         heading_strength=args.heading_strength,
+        strip_bias=args.strip_bias,
+        max_drop_hop_m=args.max_drop_hop_ft * FEET_TO_METERS,
     )
     sys.stderr.write(
         f"INFO: {len(pass_result.passes)} passes in {pass_result.rounds} rounds "
@@ -176,7 +231,14 @@ def main(argv: list[str] | None = None) -> int:
         f"fill {pass_result.unmatched_fill_bcy:.1f} BCY)\n"
     )
 
-    route = sequence_passes(pass_result.passes)
+    route = sequence_passes(
+        pass_result.passes,
+        grade_return=not args.no_grade_return,
+        direction_aware=not args.no_direction_aware,
+        return_speed_mph=args.return_speed_mph,
+        turn_speed_mph=args.turn_speed_mph,
+        turning_circle_ft=args.turning_circle_ft,
+    )
 
     zone_steps = []
     if args.zones and args.zones > 0:
@@ -268,6 +330,70 @@ def main(argv: list[str] | None = None) -> int:
         render_pass_pairs_png(grid, route.ordered_passes, pairs_png,
                               pixels_per_bin=args.pixels_per_bin)
         print(f"Cut/fill pairs PNG: {pairs_png} ({len(route.ordered_passes)} lines)")
+        print("=" * 56)
+
+    if args.guidance_csv is not None or args.guidance_png is not None:
+        sys.stderr.write("INFO: building blade-scale guidance track\n")
+        guidance = build_guidance(
+            grid, field, route,
+            blade_width_mm=args.blade_width_mm,
+            heading_deg=heading_deg,
+            lane_overlap=args.lane_overlap,
+            grade_return=not args.no_grade_return,
+            turn_threshold_deg=args.turn_threshold_deg,
+        )
+        gtime = estimate_guidance_time(
+            guidance,
+            loading_speed_mph=args.loading_speed_mph,
+            haul_speed_mph=args.haul_speed_mph,
+            dumping_speed_mph=args.dumping_speed_mph,
+            return_speed_mph=args.return_speed_mph,
+            grade_speed_mph=args.grade_speed_mph,
+            turn_speed_mph=args.turn_speed_mph,
+            turning_circle_ft=args.turning_circle_ft,
+            accel_time_s=args.accel_time_s,
+            decel_time_s=args.decel_time_s,
+            field_efficiency=args.field_efficiency,
+        )
+        cov = guidance.coverage_factor()
+        print(f"Blade-scale guidance ({len(guidance.points)} waypoints, "
+              f"blade {args.blade_width_mm:g} mm on {args.grid_size_ft:g} ft grid)")
+        print(f"  Haul (optimized, preserved):  {guidance.haul_dist_m / M:,.1f} mi "
+              f"(route {guidance.route_haul_dist_m / M:,.1f} mi)")
+        print(f"  Loading sweep:  planned {guidance.planned_cut_dist_m / M:,.1f} mi "
+              f"-> blade-scale {guidance.cut_dist_m / M:,.1f} mi")
+        print(f"  Dumping sweep:  planned {guidance.planned_fill_dist_m / M:,.1f} mi "
+              f"-> blade-scale {guidance.fill_dist_m / M:,.1f} mi")
+        print(f"  Grade/compact return:  {guidance.grade_dist_m / M:,.1f} mi")
+        print(f"  Multi-drop repositioning:  {guidance.reposition_dist_m / M:,.1f} mi "
+              f"(blade-up hops <= {args.max_drop_hop_ft:g} ft between pockets)")
+        print(f"  Coverage factor: {cov:,.2f}x  (blade width / cell width = "
+              f"{guidance.blade_width_m / guidance.grid_size_m:,.2f})")
+        print(f"  Turns: {guidance.n_turns:,} tight (>= {args.turn_threshold_deg:g} deg)  "
+              f"(turn circle {args.turning_circle_ft:g} ft @ {args.turn_speed_mph:g} mph; "
+              f"gentler bends driven in stride)")
+        seq_mode = ("off (deadhead distance + 2-opt)" if args.no_direction_aware
+                    else "on (deadhead time + turn-into-cut penalty)")
+        print(f"  Sequencing: direction-aware {seq_mode}; "
+              f"deadhead {route.total_deadhead_m / M:,.1f} mi")
+        print("  Drivable time (hr): "
+              f"load {gtime.loading_s / 3600:,.1f}  haul {gtime.hauling_s / 3600:,.1f}  "
+              f"dump {gtime.dumping_s / 3600:,.1f}  grade {gtime.grading_s / 3600:,.1f}  "
+              f"return {gtime.returning_s / 3600:,.1f}  turn {gtime.turning_s / 3600:,.1f}")
+        print(f"  Drivable TOTAL: {gtime.total_s / 3600:,.1f} hr "
+              f"(incl. turns + grade/compact; field eff. {args.field_efficiency:.0%})")
+        if args.guidance_csv is not None:
+            gpath = (args.out.with_name(args.out.stem + "_guidance.csv")
+                     if args.guidance_csv == "__AUTO__" else Path(args.guidance_csv))
+            write_guidance_csv(guidance, gpath)
+            print(f"Guidance CSV: {gpath}")
+        if args.guidance_png is not None:
+            gpng = (args.out.with_name(args.out.stem + "_guidance.png")
+                    if args.guidance_png == "__AUTO__" else Path(args.guidance_png))
+            render_guidance_png(grid, guidance.points, gpng,
+                                pixels_per_bin=args.pixels_per_bin,
+                                blade_width_m=guidance.blade_width_m)
+            print(f"Guidance PNG: {gpng}")
         print("=" * 56)
 
     if args.animate_dir is not None or args.animate_gif is not None:

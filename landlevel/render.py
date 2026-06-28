@@ -269,6 +269,302 @@ def render_pass_pairs_png(
     out.save(Path(out_path))
 
 
+def render_guidance_png(
+    grid: Grid,
+    points,
+    out_path: Path,
+    pixels_per_bin: int = 50,
+    blade_width_m: float = 2.271,
+    base_dim: float = 0.30,
+    draw_travel: bool = True,
+) -> None:
+    """Draw the blade-scale guidance track over a faded cut/fill map.
+
+    ``points`` is the ordered list of :class:`landlevel.swaths.GuidancePoint`.
+    Each leg into a point is coloured by that point's action: CUT lanes red,
+    FILL lanes blue (drawn at the blade width so coverage is visible), HAUL legs
+    faint magenta, RETURN legs faint grey. This is a visual check that the lanes
+    tile the field at blade scale; it does not change the plan.
+    """
+    ppb = max(1, min(pixels_per_bin, 16))
+    base = diff_to_image(grid.delta, grid.valid, ppb).convert("RGBA")
+    if 0.0 <= base_dim < 1.0:
+        arr = np.asarray(base).astype(float)
+        white = np.array([255, 255, 255], dtype=float)
+        arr[..., :3] = arr[..., :3] * base_dim + white * (1.0 - base_dim)
+        base = Image.fromarray(arr.astype(np.uint8), "RGBA")
+
+    draw = ImageDraw.Draw(base)
+    blade_px = max(1, round(blade_width_m / grid.grid_size_m * ppb))
+    colors = {
+        "CUT": (200, 0, 0, 255),
+        "FILL": (0, 90, 220, 255),
+        "GRADE": (40, 160, 40, 200),
+        "HAUL": (200, 0, 200, 90),
+        "MOVE": (255, 140, 0, 120),
+        "RETURN": (120, 120, 120, 70),
+        "START": (120, 120, 120, 70),
+    }
+    prev = None
+    for pt in points:
+        cur = _world_to_pixel(grid, pt.x, pt.y, ppb)
+        if prev is not None:
+            action = pt.action
+            if action in ("HAUL", "MOVE", "RETURN", "START") and not draw_travel:
+                prev = cur
+                continue
+            width = blade_px if action in ("CUT", "FILL", "GRADE") else 1
+            draw.line(
+                [(round(prev[0]), round(prev[1])), (round(cur[0]), round(cur[1]))],
+                fill=colors.get(action, (0, 0, 0, 255)), width=width,
+            )
+        prev = cur
+
+    base.save(Path(out_path))
+
+
+def render_single_pair_png(
+    grid: Grid,
+    pts,
+    out_path: Path,
+    blade_width_m: float = 2.271,
+    pixels_per_bin: int = 26,
+    pad_cells: int = 4,
+) -> None:
+    """Render ONE pass's guidance (cut strip -> haul leg -> fill strip), cropped.
+
+    ``pts`` is the list of :class:`landlevel.swaths.GuidancePoint` for a single
+    pass. The cut strip is drawn red, the fill strip blue (both at blade width),
+    and the haul leg as a black arrow from the cut-segment end to the fill-segment
+    start. Start/end of each segment are marked so the cut->haul->fill flow is
+    obvious. The image is cropped to the pass plus a few cells of padding.
+    """
+    ppb = pixels_per_bin
+    base = diff_to_image(grid.delta, grid.valid, ppb).convert("RGBA")
+    arr = np.asarray(base).astype(float)
+    white = np.array([255, 255, 255], dtype=float)
+    arr[..., :3] = arr[..., :3] * 0.45 + white * 0.55  # fade the map
+    base = Image.fromarray(arr.astype(np.uint8), "RGBA")
+    draw = ImageDraw.Draw(base)
+
+    blade_px = max(3, round(blade_width_m / grid.grid_size_m * ppb))
+    cut_pts = [p for p in pts if p.action in ("START", "RETURN", "CUT")]
+    fill_pts = [p for p in pts if p.action in ("HAUL", "FILL")]
+
+    def px(p):
+        return _world_to_pixel(grid, p.x, p.y, ppb)
+
+    if len(cut_pts) >= 2:
+        draw.line([(round(x), round(y)) for x, y in (px(p) for p in cut_pts)],
+                  fill=(200, 0, 0, 255), width=blade_px, joint="curve")
+    if len(fill_pts) >= 2:
+        draw.line([(round(x), round(y)) for x, y in (px(p) for p in fill_pts)],
+                  fill=(0, 90, 220, 255), width=blade_px, joint="curve")
+
+    # Haul leg: cut-segment end -> fill-segment start (the true transit).
+    if cut_pts and fill_pts:
+        a = px(cut_pts[-1])
+        b = px(fill_pts[0])
+        draw.line([(round(a[0]), round(a[1])), (round(b[0]), round(b[1]))],
+                  fill=(0, 0, 0, 255), width=max(2, blade_px // 2))
+        # Arrowhead at the fill end of the haul.
+        ang = math.atan2(b[1] - a[1], b[0] - a[0])
+        ah = max(8, blade_px * 1.6)
+        for da in (math.radians(150), math.radians(-150)):
+            draw.line([(round(b[0]), round(b[1])),
+                       (round(b[0] + ah * math.cos(ang + da)), round(b[1] + ah * math.sin(ang + da)))],
+                      fill=(0, 0, 0, 255), width=max(2, blade_px // 2))
+
+    def dot(p, color, r):
+        x, y = px(p)
+        draw.ellipse((x - r, y - r, x + r, y + r), fill=color, outline=(0, 0, 0, 255), width=2)
+
+    rr = max(5, blade_px)
+    if cut_pts:
+        dot(cut_pts[0], (0, 200, 0, 255), rr)      # cut start (green)
+        dot(cut_pts[-1], (255, 140, 0, 255), rr)   # cut end / haul start (orange)
+    if fill_pts:
+        dot(fill_pts[0], (0, 220, 255, 255), rr)   # fill start / haul end (cyan)
+        dot(fill_pts[-1], (160, 0, 200, 255), rr)  # fill end (purple)
+
+    # Crop to the pass bounding box + padding.
+    xy = [px(p) for p in pts]
+    xs = [p[0] for p in xy]
+    ys = [p[1] for p in xy]
+    pad = pad_cells * ppb
+    x0 = max(0, int(min(xs) - pad))
+    y0 = max(0, int(min(ys) - pad))
+    x1 = min(base.size[0], int(max(xs) + pad))
+    y1 = min(base.size[1], int(max(ys) + pad))
+    base.crop((x0, y0, x1, y1)).save(Path(out_path))
+
+
+def _arrowhead(draw, a, b, color, width, size):
+    """Draw an arrowhead at point ``b`` for a segment pointing a -> b."""
+    ang = math.atan2(b[1] - a[1], b[0] - a[0])
+    for da in (math.radians(150), math.radians(-150)):
+        draw.line([(round(b[0]), round(b[1])),
+                   (round(b[0] + size * math.cos(ang + da)),
+                    round(b[1] + size * math.sin(ang + da)))],
+                  fill=color, width=width)
+
+
+def render_pair_sequence_png(
+    grid: Grid,
+    pts,
+    out_path: Path,
+    blade_width_m: float = 2.271,
+    pixels_per_bin: int = 26,
+    pad_cells: int = 4,
+) -> None:
+    """Render several consecutive passes as a connected operator track.
+
+    ``pts`` is the ordered list of :class:`landlevel.swaths.GuidancePoint` for two
+    or more back-to-back passes. Each leg is coloured by action: CUT red, FILL
+    blue, the **grade/compact return green** (the marked pass), HAUL black with an
+    arrowhead, and the deadhead RETURN dashed grey. Per-pass transition dots and a
+    legend make the cut -> haul -> fill -> grade -> next-cut flow explicit.
+    """
+    from collections import OrderedDict
+
+    ppb = pixels_per_bin
+    base = diff_to_image(grid.delta, grid.valid, ppb).convert("RGBA")
+    arr = np.asarray(base).astype(float)
+    white = np.array([255, 255, 255], dtype=float)
+    arr[..., :3] = arr[..., :3] * 0.4 + white * 0.6
+    base = Image.fromarray(arr.astype(np.uint8), "RGBA")
+    draw = ImageDraw.Draw(base)
+
+    blade_px = max(3, round(blade_width_m / grid.grid_size_m * ppb))
+    colors = {
+        "CUT": (200, 0, 0, 255),
+        "FILL": (0, 90, 220, 255),
+        "GRADE": (30, 160, 30, 255),
+        "HAUL": (0, 0, 0, 255),
+        "MOVE": (255, 140, 0, 255),
+        "RETURN": (110, 110, 110, 255),
+        "START": (110, 110, 110, 255),
+    }
+
+    def px(p):
+        return _world_to_pixel(grid, p.x, p.y, ppb)
+
+    # Draw each leg coloured by the action of the point being entered.
+    prev = None
+    for pt in pts:
+        cur = px(pt)
+        if prev is not None:
+            act = pt.action
+            col = colors.get(act, (0, 0, 0, 255))
+            if act in ("CUT", "FILL", "GRADE"):
+                w = blade_px
+            else:
+                w = max(2, blade_px // 3)
+            a = (round(prev[0]), round(prev[1]))
+            b = (round(cur[0]), round(cur[1]))
+            if act in ("RETURN", "START", "MOVE"):
+                _dashed_line(draw, a, b, col, w, dash=max(6, blade_px))
+            elif act == "GRADE":
+                # Dashed green over the (already-drawn) blue fill lane, so both the
+                # fill and its grade/compact return pass are visible on the figure.
+                _dashed_line(draw, a, b, col, max(2, blade_px // 2), dash=max(6, blade_px))
+            else:
+                draw.line([a, b], fill=col, width=w, joint="curve")
+            if act == "HAUL":
+                _arrowhead(draw, prev, cur, col, max(2, blade_px // 2), max(10, blade_px * 1.8))
+        prev = cur
+
+    # Group points by pass (preserve order) for transition markers + labels.
+    by_pass = OrderedDict()
+    for p in pts:
+        by_pass.setdefault(p.pass_no, []).append(p)
+
+    def dot(p, color, r):
+        x, y = px(p)
+        draw.ellipse((x - r, y - r, x + r, y + r), fill=color, outline=(0, 0, 0, 255), width=2)
+
+    rr = max(5, blade_px)
+    try:
+        from PIL import ImageFont
+        font = ImageFont.load_default(size=max(13, blade_px * 2))
+    except Exception:  # pragma: no cover
+        from PIL import ImageFont
+        font = ImageFont.load_default()
+
+    grade_label_xy = []
+    for pno, pp in by_pass.items():
+        cut = [p for p in pp if p.action in ("START", "RETURN", "CUT")]
+        fill = [p for p in pp if p.action in ("HAUL", "FILL")]
+        grade = [p for p in pp if p.action == "GRADE"]
+        if cut:
+            dot(cut[0], (0, 200, 0, 255), rr)       # cut start
+            dot(cut[-1], (255, 140, 0, 255), rr)    # cut end / haul start
+        if fill:
+            dot(fill[0], (0, 220, 255, 255), rr)    # fill start
+            dot(fill[-1], (160, 0, 200, 255), rr)   # fill end
+        if grade:
+            grade_label_xy.append((pno, px(grade[len(grade) // 2])))
+
+    # Crop to the bounding box of all points + padding.
+    xy = [px(p) for p in pts]
+    xs = [p[0] for p in xy]
+    ys = [p[1] for p in xy]
+    pad = pad_cells * ppb
+    x0 = max(0, int(min(xs) - pad))
+    y0 = max(0, int(min(ys) - pad))
+    x1 = min(base.size[0], int(max(xs) + pad))
+    y1 = min(base.size[1], int(max(ys) + pad))
+    cropped = base.crop((x0, y0, x1, y1))
+
+    # Legend (drawn in cropped-image coordinates).
+    legend = [
+        ("Cut (load)", colors["CUT"]),
+        ("Haul (loaded)", colors["HAUL"]),
+        ("Fill (spread)", colors["FILL"]),
+        ("Grade/compact return", colors["GRADE"]),
+        ("Reposition (multi-drop hop)", colors["MOVE"]),
+        ("Return (deadhead)", colors["RETURN"]),
+    ]
+    ld = ImageDraw.Draw(cropped)
+    sw = max(18, blade_px * 3)
+    lh = max(18, blade_px * 2)
+    pad_l = 8
+    box_w = sw + 12 + 220
+    box_h = pad_l * 2 + lh * len(legend)
+    ld.rectangle((6, 6, 6 + box_w, 6 + box_h), fill=(255, 255, 255, 230), outline=(0, 0, 0, 255))
+    for i, (label, col) in enumerate(legend):
+        yy = 6 + pad_l + i * lh
+        ld.line([(14, yy + lh // 2), (14 + sw, yy + lh // 2)], fill=col, width=max(3, blade_px))
+        ld.text((14 + sw + 8, yy), label, fill=(0, 0, 0, 255), font=font)
+
+    # Grade-pass callouts, clamped so the text stays inside the cropped image.
+    cw, ch = cropped.size
+    for pno, (gx, gy) in grade_label_xy:
+        text = f"grade/compact (pass {pno})"
+        tw = ld.textlength(text, font=font)
+        lx = min(max(4, gx - x0 + rr), cw - tw - 4)
+        ly = min(max(4, gy - y0 - rr - lh), ch - lh - 2)
+        ld.text((lx, ly), text, fill=(0, 90, 0, 255), font=font)
+
+    cropped.save(Path(out_path))
+
+
+def _dashed_line(draw, a, b, color, width, dash=10):
+    """Draw a dashed line from a to b."""
+    x0, y0 = a
+    x1, y1 = b
+    dist = math.hypot(x1 - x0, y1 - y0)
+    if dist < 1e-6:
+        return
+    ux, uy = (x1 - x0) / dist, (y1 - y0) / dist
+    n = int(dist // dash)
+    for i in range(0, n + 1, 2):
+        s = i * dash
+        e = min((i + 1) * dash, dist)
+        draw.line([(round(x0 + ux * s), round(y0 + uy * s)),
+                   (round(x0 + ux * e), round(y0 + uy * e))], fill=color, width=width)
+
+
 def overlay_zone_waypoints(
     in_out_path: Path,
     grid: Grid,

@@ -2,7 +2,7 @@
 
 **[0.0.2]** This document is the authoritative specification (revision 2) for the **land leveling haul algorithm**: a Python program that reads an OptiSurface-style **AGD** field file, plans a sequence of cut–haul–fill operations that bring the field to its target grade with minimum haul distance and time, and renders a **PNG** of the cut/fill map with haul-direction arrows, plus optional sequencing CSVs, a haul "heat map" PNG, and a leveling animation.
 
-**[0.0.3]** This v2 supersedes **LAND-LEVELING-SPEC.md** (v0.0.1). It folds in the optimizations and outputs added during implementation: a **15 ft** default grid, **contiguous region-grown** cut/fill patches, the **true transit haul leg** (cut-end → fill-start), an optional **haul heading** bias, an **OptiHaul-matched** time model, **zone-level work sequencing**, per-pass **lat/lon CSV** export, a **pass-pairs heat-map** PNG, and a frame-by-frame **leveling animation**. Where v1 and the code disagreed, the code is treated as authoritative and this document is updated to match.
+**[0.0.3]** This v2 supersedes **LAND-LEVELING-SPEC.md** (v0.0.1). It folds in the optimizations and outputs added during implementation: a **7.5 ft** default grid (≈ one blade width), **contiguous region-grown** cut/fill patches grown as long **blade-wide strips**, **multi-drop** cuts/fills across nearby pockets, the **true transit haul leg** (cut-end → fill-start), an optional **haul heading** bias (snapped to the nearest cardinal axis), an **OptiHaul-matched** time model, **direction-aware** turn-minimizing sequencing, a **blade-scale operator guidance** track (turn-by-turn waypoints, a grade/compact return pass, and a realistic drivable time that counts turning), **zone-level work sequencing**, per-pass **lat/lon CSV** export, a **pass-pairs heat-map** PNG, and a frame-by-frame **leveling animation**. Where v1 and the code disagreed, the code is treated as authoritative and this document is updated to match.
 
 **[0.0.4]** The problem background and physical model are described in **LAND_LEVELING_PROBLEM.md**; this specification turns that description into an implementation-complete contract.
 
@@ -22,6 +22,7 @@
 | **0.0.1** | 2026-06-26 | Initial draft: inputs, grid model, six-stage algorithm, PNG output, CLI. |
 | **2.0.0** | 2026-06-27 | v2: 15 ft default grid; LCY/BCY clarified; region-grown contiguous passes; true transit haul leg; optional haul heading bias; OptiHaul-matched time model (trapezoidal haul/return, return = forward, field efficiency); zone work-order sequencing + CSV + waypoint overlay; per-pass lat/lon pairs CSV; pass-pairs heat-map PNG; leveling animation (cutfill/topology). |
 | **2.1.0** | 2026-06-27 | Self-containment patch for the core route algorithm: specified grid gap-fill (iterative 8-neighbour averaging, §7.2.1a); stated explicitly that the route plan is independent of the flow field/strips (§5.0.3a, §9.0.2, §11.0.1); added the matcher state and normative region-growing, sweep-ordering/haul-leg, and fill-seed/heading procedures (§11.0.1a–§11.0.3b); pinned routing construction + bounded 2-opt parameters (§12.0.4). |
+| **2.2.0** | 2026-06-27 | Blade-scale execution layer. Default grid **15 → 7.5 ft** (≈ one blade width, §7.2). Strip-biased region growing so each load is one long blade-wide lane (§11.0.2b). Multi-drop cuts/fills across nearby pockets within an economical hop (§11.0.3c). Heading snapped to the nearest cardinal axis when within tolerance (§11.0.3b). Direction-aware, grade-aware sequencing that minimizes turning, not just distance (§12.0.5). New **Stage 7 — blade-scale operator guidance** (§13.1–§13.6): turn-by-turn waypoints, a grade/compact return pass over every fill, a turning model (45 ft circle, turn speed, turn threshold), multi-drop `MOVE` repositioning, and a realistic drivable time. Tandem 7 ft + 10 ft scrapers modeled as one ≈ 8.5 ft effective blade (§6.2). New CLI flags in §15. |
 
 **[0.1.2]** This document follows [semantic versioning](https://semver.org/): **MAJOR** = incompatible normative change, **MINOR** = backward-compatible addition, **PATCH** = clarification.
 
@@ -44,7 +45,7 @@
 
 **[2.0.2]** 1. Deterministic, reproducible output for a given AGD file and parameter set (**§16.4**).
 **[2.0.3]** 2. A single-file AGD reader that mirrors the parsing rules of the existing tools (**§6.1**).
-**[2.0.4]** 3. A grid model derived from the AGD points (default **15 ft** areas), decoupled from blade width (**§7**).
+**[2.0.4]** 3. A grid model derived from the AGD points (default **7.5 ft** areas, ≈ one blade width), decoupled from blade width (**§7**).
 **[2.0.5]** 4. Volume accounting in **banked cubic yards (BCY)** for cut supply, fill demand, and transported volume; swell applies only when converting scraper **LCY** capacity to a bank load limit; compaction via the cut/fill ratio (**§7.3**).
 **[2.0.6]** 5. A global haul **flow field** computed by optimal transport, for haul arrows and strip visualization (**§9**).
 **[2.0.7]** 6. **Strips** traced as streamlines of the flow field, from ridges to the cut/fill transition (**§10**).
@@ -54,6 +55,7 @@
 **[2.0.11]** 10. A **PNG renderer** whose cut/fill palette, arrow glyphs, and image geometry match the existing AgGrade tools (**§14**).
 **[2.0.12]** 11. Optional **zone work-order sequencing**, **per-pass lat/lon CSV**, a **pass-pairs heat-map PNG**, and a **leveling animation** (**§12.1**, **§14.4**–**§14.6**).
 **[2.0.13]** 12. A documented **command-line interface** (**§15**).
+**[2.0.14]** 13. A **blade-scale operator guidance** track that turns the optimized passes into turn-by-turn waypoints (action, blade up/down, target depth, next bearing, instruction) plus a **realistic drivable time** that — unlike the OptiHaul-matched core model — counts **turning** and a **grade/compact return pass** over every fill (**§13.1**–**§13.6**). The guidance shall not worsen the optimized passes' haul/time; it realizes them at blade scale.
 
 ## 3. Non-goals
 
@@ -61,7 +63,7 @@
 
 **[3.0.2]** 1. Choosing or optimizing the **target surface** (plane fitting, slope/heading solve). The target is read from the AGD proposed elevations; see **§8** for the only permitted exception. (The haul **heading** in **§11.0.3b** biases *fill selection* only; it does not alter the target surface.)
 **[3.0.3]** 2. Multi-machine fleet scheduling.
-**[3.0.4]** 3. Modeling machine turning radius, traction, or fuel.
+**[3.0.4]** 3. Modeling machine traction or fuel. (The **turning circle** *is* modeled — but only in the blade-scale guidance time and the direction-aware sequencer, **§13.1**, **§12.0.5** — not in the core OptiHaul-matched time of **§13.0**.)
 **[3.0.5]** 4. Reading any input from a database; the AGD path replaces the legacy SQLite path.
 **[3.0.6]** 5. Producing GIS/shapefile or 3D outputs.
 
@@ -71,7 +73,7 @@
 
 ### 4.1 Area (cell, bin)
 
-**[4.1.1]** An **area** is one square grid cell of the field. The default cell is **15 ft × 15 ft** (**§7.2**); it is configurable. Each area carries one existing and one target elevation and is the atomic unit of cut, fill, and haul.
+**[4.1.1]** An **area** is one square grid cell of the field. The default cell is **7.5 ft × 7.5 ft** (≈ one blade width) (**§7.2**); it is configurable. Each area carries one existing and one target elevation and is the atomic unit of cut, fill, and haul.
 
 ### 4.2 Cut and fill
 
@@ -113,6 +115,26 @@
 
 **[4.10.1]** A **zone** is a spatial cluster of cut work used only for the human-readable rough **work order** (**§12.1**). Zones are a reporting summary of the per-pass route, not a separate operational constraint.
 
+### 4.11 Strip bias and blade-wide lane
+
+**[4.11.1]** **Strip bias** is the anisotropy applied during region growing (**§11.0.2b**) so a load's cut (or fill) patch grows as one long, **single-blade-wide lane** along the heading rather than a compact blob. A **lane** is the resulting near-1-cell-wide run the operator drives in a straight line, minimizing weaving and turns.
+
+### 4.12 Pocket and multi-drop
+
+**[4.12.1]** A **pocket** is a connected island of remaining cut (or fill) material. **Multi-drop** is the behavior whereby, when a load cannot be filled (or emptied) within one pocket, the machine drives **blade up** to the next pocket within an **economical hop** (`max_drop_hop`, **§6.4**) and continues loading (or spreading) the same load, instead of ending the pass part-full and paying for a whole separate cut–haul–fill cycle later.
+
+### 4.13 Grade/compact return pass
+
+**[4.13.1]** A **grade/compact return pass** is one return traverse back over a just-placed fill (blade down) to grade and compact it (**§13.2**). It is required finishing work; the core OptiHaul-matched time (**§13.0**) does not include it, the blade-scale guidance time (**§13.1**) does.
+
+### 4.14 Turning circle and turn threshold
+
+**[4.14.1]** The **turning circle** is the tractor + scraper turn diameter (default 45 ft); its radius sets the arc length `R·θ` travelled at the reduced **turn speed** during a heading change of `θ`. A heading change below the **turn threshold** (default 60°) is a gentle bend driven in stride at travel speed (no slowdown); only sharper turns cost turn time (**§13.1**).
+
+### 4.15 Guidance track and waypoint
+
+**[4.15.1]** The **guidance track** is the ordered list of blade-scale **waypoints** produced by Stage 7 (**§13.3**). Each waypoint carries an **action** (`START`, `CUT`, `HAUL`, `MOVE`, `FILL`, `GRADE`, `RETURN`), a blade up/down state, world coordinates, a target depth, the bearing to the next waypoint, and a human instruction.
+
 ---
 ## 5. High-level architecture
 
@@ -121,15 +143,17 @@
 **[5.0.2]**
 
 ```text
-AGD file ──► [1] Parse + grid (15 ft)          agd.py, grid.py   §6, §7
+AGD file ──► [1] Parse + grid (7.5 ft)         agd.py, grid.py   §6, §7
           ──► [2] Volume balance (check/adjust)  balance.py        §8
           ──► [3] Flow field (optimal transport) flowfield.py      §9
           ──► [4] Strips (streamlines)           strips.py         §10
           ──► [5] Passes (≈15.4 BCY / 61 mm)     passes.py         §11
           ──► [6] Sequence + route               routing.py        §12
           ──► [7] Time estimate                  timemodel.py      §13
+          ──► [8] Blade-scale guidance (opt.)    swaths.py         §13.1–§13.6
           ──► PNG: cut/fill map + haul arrows    render.py         §14
           ──► (optional) zones / CSVs / heat map sequence.py, render.py  §12.1, §14.4–14.5
+          ──► (optional) guidance CSV / PNG      swaths.py, render.py  §13.6
           ──► (optional) leveling animation      animate.py        §14.6
 ```
 
@@ -191,10 +215,16 @@ Latitude (deg), Longitude (deg), Elevation Existing(m), Elevation Proposed(m), C
 | **Swell factor** | 1.3 | `LCY = BCY × 1.3` (`BCY = LCY ÷ 1.3`). |
 | **Cut/fill ratio** | 1.2 | Bank cut soil delivered per bank cubic yard of fill space (compaction). Alias: `--compaction`. |
 | **Max depth per pass** | 61 mm | Maximum cut or fill depth in one area for one pass (0.2 ft). |
-| **Blade width** | 2271 mm | Cutting/filling blade width (informative; not the grid size). |
+| **Blade width** | 2271 mm | Cutting/filling blade width (informative; not the grid size). The real machine pulls **two scrapers in tandem** (front 7 ft / 8 LCY, rear 10 ft / 12 LCY), filled sequentially; its volume-weighted effective width is **≈ 8.5 ft** (`1/W = 0.4/7 + 0.6/10 ⇒ 8.54 ft`), modeled by passing `--blade-width-mm 2590.8`. |
 | **Blade height control** | 10 Hz | Blade height update rate (informative). |
-| **Haul heading** | auto | Compass bearing soil is hauled along; default is the design surface's main down-slope. Biases fill selection (**§11.0.3b**). |
+| **Turning circle** | 45 ft | Tractor + scraper turn diameter; radius sets the turn-arc length in the guidance time and sequencer (**§13.1**, **§12.0.5**). |
+| **Turn speed** | 4 MPH | Speed through a turn (the machine slows to turn). |
+| **Grade speed** | 8 MPH | Speed of the grade/compact return pass over a fill (**§13.2**). |
+| **Turn threshold** | 60° | Heading changes below this are gentle bends driven in stride (no slowdown); only sharper turns cost turn time (**§13.1**). |
+| **Haul heading** | auto | Compass bearing soil is hauled along; default is the design surface's main down-slope, **snapped to the nearest cardinal axis** when within tolerance. Biases fill selection (**§11.0.3b**). |
 | **Heading strength** | 0.5 | 0–0.95; how strongly fill selection follows the heading (0 = off). |
+| **Strip bias** | 50 | Anisotropy of region growing: grow each load as one long blade-wide lane along the heading (**§11.0.2b**); 1 = compact blob. |
+| **Multi-drop hop** | 100 ft | Max blade-up drive to the next pocket to keep loading/spreading the same load (**§11.0.3c**); 0 disables multi-drop. |
 
 ### 6.3 Time and motion parameters (normative)
 
@@ -214,7 +244,8 @@ Latitude (deg), Longitude (deg), Elevation Existing(m), Elevation Proposed(m), C
 
 **[6.4.1]** | Parameter | Default | Meaning |
 |---|---|---|
-| **Grid size** | 15 ft | Edge length of each square area (**§7.2**). |
+| **Grid size** | 7.5 ft | Edge length of each square area (**§7.2**); ≈ one blade width so each load is one blade-wide lane. Use 15 ft to match an OptiHaul coarse calculation grid. |
+| **Lane overlap** | 0.0 | 0–0.9 fractional overlap between adjacent blade lanes in the guidance (**§13.3**); 0 = lanes butt edge-to-edge. |
 | **Tolerance** | 10 mm | Finished-area elevation tolerance (**§4.8**). |
 | **Pixels per bin** | 50 | PNG pixels per area edge for the main plan PNG (**§14.3**). |
 | **Arrow stride** | 2 | Draw a haul arrow every N areas (0 disables). |
@@ -223,7 +254,7 @@ Latitude (deg), Longitude (deg), Elevation Existing(m), Elevation Proposed(m), C
 | **Zones** | 8 | Number of cut zones for the rough work order (0 disables) (**§12.1**). |
 | **Seed** | 1234 | Random seed for deterministic zone clustering (**§16.4**). |
 
-**[6.4.2]** The optional output toggles (sequence CSV, pairs CSV, pairs PNG, animation directory/GIF, animation mode/stride/pixels-per-bin) are defined with the CLI in **§15** and the outputs in **§12.1** and **§14.4**–**§14.6**.
+**[6.4.2]** The optional output toggles (sequence CSV, pairs CSV, pairs PNG, **guidance CSV/PNG**, animation directory/GIF, animation mode/stride/pixels-per-bin) are defined with the CLI in **§15** and the outputs in **§12.1**, **§13.6**, and **§14.4**–**§14.6**. The maneuvering parameters (turn speed, grade speed, turning circle, turn threshold) and the strip-bias / multi-drop / lane-overlap controls are listed in **§6.2** and exposed in **§15**.
 
 ---
 
@@ -237,7 +268,7 @@ Latitude (deg), Longitude (deg), Elevation Existing(m), Elevation Proposed(m), C
 
 ### 7.2 Binning to the grid
 
-**[7.2.1]** The field bounding rectangle shall be partitioned into square areas of edge **`grid_size`** (default 15 ft = 4.572 m). The 15 ft default balances resolution against speed; the grid size is configurable (**§6.4**) and coarser grids (e.g. 30 ft) run faster. Each AGD interior point is assigned to its containing area (floor of `(coord − min) / grid_size`, clamped to the grid); an area's existing and target elevations are the **mean** of the points it contains. Areas outside the mask are invalid.
+**[7.2.1]** The field bounding rectangle shall be partitioned into square areas of edge **`grid_size`** (default **7.5 ft = 2.286 m**). The 7.5 ft default is chosen so a cell is ≈ one blade width (2271 mm), making each scraper load **one continuous blade-wide lane** rather than a multi-lane patch that would force tight turns (**§11.0.2b**, **§13.3**); the grid size is configurable (**§6.4**) and coarser grids (e.g. 15 ft to match an OptiHaul calculation grid, or 30 ft) run faster. Each AGD interior point is assigned to its containing area (floor of `(coord − min) / grid_size`, clamped to the grid); an area's existing and target elevations are the **mean** of the points it contains. Areas outside the mask are invalid.
 
 **[7.2.1a]** *Gap filling (normative).* Areas that are inside the field mask but contain no points shall be filled by **iterative nearest-neighbour averaging**, applied to the existing and target grids in parallel:
 
@@ -371,6 +402,16 @@ while frontier not empty and acc < target_bcy:
 
 Because empty cells are not expanded through, the consumed set stays a single connected blob around the seed, which keeps the swept loading/dumping length near its minimum. `used` (cells with depths) and the achieved `acc` (BCY) are returned. The cut patch and depths define the **cut segment**.
 
+**[11.0.2b]** *Strip bias (normative).* When a haul **heading** is supplied (or auto-detected) and `strip_bias > 1`, the growth priority key in **§11.0.2a** is replaced by an **anisotropic** key so the patch grows as one long, single-blade-wide **lane** along the heading instead of a compact blob (which would force the operator to weave). Let `(ux, uy)` be the heading unit vector and `(vx, vy)` its perpendicular; for a candidate cell at offset `(ddx, ddy)` from the seed:
+
+```text
+along = ddx*ux + ddy*uy          # distance along the heading
+perp  = ddx*vx + ddy*vy          # distance across the heading
+key   = abs(along) + strip_bias * perp^2
+```
+
+The along term is **linear** (cheap) while the perpendicular term is quadratic and scaled by `strip_bias` (expensive), so a load fills one blade-wide line end-to-end before the frontier ever steps sideways; the lane only widens when it runs out of material along its length. `strip_bias` is roughly the lane length (in cells) the grower will chase before stepping over. Default **50** (set above a full load's cell count to keep each load a single continuous line); `strip_bias = 1` restores the isotropic compact-blob growth of **§11.0.2a**.
+
 **[11.0.3]** *Fill patch and haul leg.* The carried load (`acc` from the cut grow) is deposited into a compact, contiguous **fill patch** region-grown by **§11.0.2a** from a fill seed (**§11.0.3b**), with `target_bcy = carried load` and the fill ledger/rate. If no fill cell can be grown, the cut depths shall be returned to `remaining_cut` and the loop terminates. Any **placed < carried** shortfall (`leftover`) shall be returned to the most-recently-consumed cut cells (iterate the cut `used` list in reverse, refunding `min(leftover, depth·cut_bcy_per_m)` to each) so **volume is conserved exactly**.
 
 **[11.0.3a]** *Sweep ordering and haul leg (normative).* The two segments shall be ordered so the haul is the true transit between them, via the nearest-neighbour chain `_nn_chain` (start at a chosen cell, repeatedly append the nearest not-yet-used cell):
@@ -389,6 +430,10 @@ Centroid-to-centroid haul (which double-counts the sweeps) shall **not** be used
 
 **[11.0.3b]** *Fill-seed selection and heading (optional, §6.2).* Without a heading (or `strength = 0`), the fill seed is simply the fill cell nearest the cut-patch centroid. When a haul **heading** is supplied (or auto-detected as the design surface's main down-slope — `estimate_slope_heading`: the bearing of `−∇target` averaged over valid areas, as a compass bearing 0 = N, 90 = E), the seed is chosen from the **200 nearest** fill cells to the cut centroid (or all fill cells if fewer), re-ranked by the anisotropic cost `dist × (1 − strength × cos θ)`, where `θ` is the angle between the cut→candidate direction and the heading unit vector and `strength ∈ [0, 0.95]`. The minimum-cost candidate is the seed. This emulates the lane-oriented hauling of tools such as OptiSurface. The realised haul distance can never fall below the field's optimal-transport minimum; heading mainly organises the work and trims sweep/haul overhead rather than beating the transport lower bound.
 
+**[11.0.3b-i]** *Cardinal snapping (normative).* Because the grid is axis-aligned (N/S/E/W), a heading even a degree or two off an axis makes strips (**§11.0.2b**) grow diagonally across cells and fragment into many small pockets (more multi-drop hops, **§11.0.3c**). `estimate_slope_heading` therefore **snaps** the auto-estimated bearing to the nearest of {0, 90, 180, 270}° when it is within `snap_tol_deg` (default **12°**) of that axis; otherwise the raw bearing is returned. An explicit `--heading-deg` is used as given (not snapped).
+
+**[11.0.3c]** *Multi-drop cuts and fills (normative).* A single pocket often cannot fill the scraper (cut side) or fully absorb the load (fill side), which would leave many near-empty "crumb" passes. When `max_drop_hop > 0`, after growing a patch (**§11.0.2b**) the matcher checks whether the load is still short of `load_cap` (cut) or whether material remains carried (fill); if so it finds the **nearest remaining cell of the same kind** (`_nearest_remaining`, KD-tree when SciPy is present, else brute force) from the current sweep end. If that cell is within `max_drop_hop` metres, the machine drives there **blade up** and grows another patch from it into the same load, repeating until the load is full/empty or the next pocket exceeds the hop. The blade-up drive between pockets is a `MOVE` segment in the guidance (**§13.4**), distinct from the optimized `HAUL` leg. Continuing one load across nearby pockets is cheaper than a whole separate cut–haul–fill–grade cycle, so multi-drop materially raises load fullness and cuts pass count. `max_drop_hop = 0` disables it (one pocket per cut and per fill).
+
 **[11.0.4]** *Layering.* Because 61 mm caps per-area depth, deep cuts/fills need multiple passes: a cell needing depth `d` contributes about `ceil(d / 61 mm)` passes over successive layers, with the transition receding as boundary cells reach grade. The final layer of an area may be a partial pass (**§7.3**).
 
 **[11.0.5]** Each pass shall record: ordered cut cells with depths, ordered fill cells with depths, load in BCY, the haul distance, and the cut-segment start/end and fill-segment start/end world coordinates (used by sequencing, the time model, and the CSV/heat-map outputs).
@@ -398,13 +443,26 @@ Centroid-to-centroid haul (which double-counts the sweeps) shall **not** be used
 ---
 ## 12. Stage 5 — Sequencing and routing
 
-**[12.0.1]** The passes from **§11** form a set; the implementation shall order them to minimize total **non-productive (deadhead) return travel** — the distance from the end of one pass's fill segment to the start of the next pass's cut segment.
+**[12.0.1]** The passes from **§11** form a set; the implementation shall order them to minimize total **non-productive (deadhead) return travel** — the distance from where one pass ends (the fill end, or the grade-return end `fill_start` when the grade pass is on, **§12.0.5**) to the start of the next pass's cut segment. By default this is generalised to a **direction-aware time** that also charges the turn into the next cut (**§12.0.5**).
 
 **[12.0.2]** Sequencing shall respect **layer ordering**: a deeper layer of an area shall not be worked before the shallower layer above it. Because passes are generated layer-by-layer (shallower first), this holds by construction.
 
 **[12.0.3]** *Anti-dam ordering (informative).* Ordering should favor completing downhill flow first to avoid transient berms that could pond water; this is a soft preference, not a hard constraint in this version.
 
-**[12.0.4]** The ordering shall be a constructive heuristic followed by bounded local improvement. The deadhead metric between an earlier pass `a` and a later pass `b` is `deadhead(a, b) = euclidean(a.fill_end, b.cut_start)`. Construction is **nearest-neighbour starting from pass index 0** (deterministic): repeatedly append the unvisited pass minimizing `deadhead(current, ·)`. Then a **bounded 2-opt** pass improves the order: it is applied **only when the pass count ≤ 1500** (above that the construction order is kept, to stay fast and deterministic), runs at most **30 sweeps**, and accepts a segment reversal only when it strictly reduces the summed deadhead (improvement threshold `1e-6` m), taking the first improving move in each sweep. Exact optimization is not required. The route shall expose the ordered passes, the original indices, and the total deadhead distance.
+**[12.0.4]** The ordering shall be a constructive heuristic followed by bounded local improvement. The deadhead metric between an earlier pass `a` and a later pass `b` is `deadhead(a, b) = euclidean(exit_xy(a), b.cut_start)` (for `exit_xy` see **§12.0.5**). Construction is **nearest-neighbour starting from pass index 0** (deterministic): repeatedly append the unvisited pass minimizing the transition cost from `current`. Then a **bounded 2-opt** pass improves the order: it is applied **only when direction-aware sequencing is off (§12.0.5) and the pass count ≤ 1500** (above either, the construction order is kept, to stay fast and deterministic), runs at most **30 sweeps**, and accepts a segment reversal only when it strictly reduces the summed deadhead (improvement threshold `1e-6` m), taking the first improving move in each sweep. Exact optimization is not required. The route shall expose the ordered passes, the original indices, and the total deadhead distance.
+
+**[12.0.5]** *Direction-aware, grade-aware transition cost (normative, default on).* The next cut should be cheap to **drive to and turn into**, not merely close. The transition cost from `a` to `b` is a **time** that combines the deadhead drive with the turn arcs, using the same turning-circle model as the guidance (**§13.1**):
+
+```text
+exit_xy(a)  = a.fill_start  if grade_return else a.fill_end   # where the machine ends
+dist        = euclidean(exit_xy(a), b.cut_start)
+drive_t     = dist / return_speed
+angle       = turn(exit_dir(a) → deadhead_dir) + turn(deadhead_dir → cut_dir(b))
+turn_t      = (turning_circle/2) * angle / turn_speed
+cost(a, b)  = drive_t + turn_t
+```
+
+where `exit_dir(a)` is the machine's heading as it finishes `a` (the grade-return direction `fill_end → fill_start` when the grade pass is on, else the spread direction), `cut_dir(b)` is `b`'s cut heading, and `deadhead_dir` is the unit vector of the deadhead leg. **Grade-aware exit:** with the grade/compact pass on (**§13.2**) the machine ends at `fill_start` (the cut-side edge of the fill), so the grade return doubles as travel toward the next cut instead of being a detour. Because these costs are **asymmetric** (a reversed segment flips every interior heading), 2-opt segment reversal is **not** applied in this mode (**§12.0.4**); the turn-aware nearest-neighbour construction already orders passes against the time objective. Setting `--no-direction-aware` reverts the cost to plain deadhead distance and re-enables bounded 2-opt.
 
 ### 12.1 Zone work-order sequencing (optional output)
 
@@ -420,7 +478,9 @@ Centroid-to-centroid haul (which double-counts the sweeps) shall **not** be used
 
 ---
 
-## 13. Stage 6 — Time model (OptiHaul-matched)
+## 13. Stage 6 — Time model (OptiHaul-matched) & Stage 7 — blade-scale guidance
+
+**[13.0.0]** This section has two parts. **§13.0** is the **core OptiHaul-matched** time model (four motions, no turning, no grade pass) used for direct comparison with OptiSurface OptiHaul. **§13.1**–**§13.6** are the optional **blade-scale operator guidance** (Stage 7): a drivable realization of the same passes that additionally counts **turning** and a **grade/compact return pass**, and emits turn-by-turn waypoints. Both consume the routed passes of **§12**; the guidance never changes the passes or their optimized haul, it only realizes them at blade scale.
 
 **[13.0.1]** Each pass comprises four motions — **loading** (cutting), **hauling**, **dumping** (filling), and **returning** — using **§6.3** parameters. The model matches the OptiSurface OptiHaul methodology.
 
@@ -444,6 +504,38 @@ The return time is computed by applying this profile to each forward segment len
 **[13.0.4]** Speeds shall be converted MPH → m/s. Loading/dumping travel times (`distance / speed`) inherently include cutting/placing time; there is no separate per-BCY term.
 
 **[13.0.5]** *Field efficiency.* Productive time = loading + hauling + dumping + returning. **Total time = productive ÷ field_efficiency**; the remainder is reported as **"Other"** time. The implementation shall report total time, the four distances, the achieved average haul and return speeds, and the moved volume (BCY).
+
+### 13.1 Stage 7 — blade-scale guidance overview
+
+**[13.1.1]** On request (**§13.6**), the implementation shall build a **guidance track** (`swaths.py`, `build_guidance`) that tiles each routed pass's cut and fill patches into **blade-width lanes** and emits an ordered list of **waypoints** (**§4.15**, **§13.3**). This realizes the optimized passes at the scale the operator actually drives, without re-planning soil movement: the per-pass haul leg is preserved as the optimizer's transit (the cut sweep is oriented to *end* at the haul target and the fill sweep to *start* there).
+
+**[13.1.2]** *Turning model.* A heading change of `θ` at a point in the track costs arc travel `R·θ` at the **turn speed**, where `R = turning_circle / 2`. Turn metrics are computed on each sub-path **after Ramer–Douglas–Peucker simplification** (so cell-to-cell stair-stepping is not miscounted as turns): the path is simplified, the interior vertex angles are measured, and only those **≥ `turn_threshold_deg`** (default 60°) are counted as **tight turns** and summed into the total turn angle. Gentler bends are driven in stride at travel speed (no slowdown). The track reports the tight-turn **count** and the summed turn **angle**.
+
+### 13.2 Grade/compact return pass
+
+**[13.2.1]** Unless `--no-grade-return` is set, each fill shall be followed by **one return pass back over the fill** (blade down) to grade and compact it, retracing the fill lane in reverse. Its distance equals the fill sweep length and it is driven at the **grade speed** (default 8 MPH). With the grade pass on, the machine **ends each pass at the fill's cut-side edge** (`fill_start`), which the sequencer exploits so the grade return doubles as travel toward the next cut (**§12.0.5**). The core model (**§13.0**) does **not** include this pass; the guidance time (**§13.5**) does.
+
+### 13.3 Guidance waypoints and lane building
+
+**[13.3.1]** Each patch shall be split into 8-connected **pockets** (**§4.12**) and the pockets ordered to optimize the haul leg: the **cut** sweep is ordered to finish nearest the fill start, the **fill** sweep to start nearest the haul arrival. Within a pocket, the cells are tiled into serpentine **blade-width lanes** spaced by `blade_width × (1 − lane_overlap)`; a second lane is added only when the patch is genuinely wider than one blade (guarding against spurious second lanes for slightly off-axis strips).
+
+**[13.3.2]** Each waypoint shall carry: an **action** ∈ {`START`, `CUT`, `HAUL`, `MOVE`, `FILL`, `GRADE`, `RETURN`}, a **blade state** (down for `CUT`/`FILL`/`GRADE`; up for `START`/`RETURN`/`HAUL`/`MOVE`), world coordinates (and lat/lon), the **target depth** (mm) at that point, the **bearing** to the next waypoint, and a human-readable **instruction**.
+
+### 13.4 Multi-drop repositioning (`MOVE`)
+
+**[13.4.1]** A multi-drop pass (**§11.0.3c**) spans several pockets; the blade-up drive between two pockets within a sweep shall be emitted as a **`MOVE`** segment (blade up), distinct from the optimized **`HAUL`** leg. `MOVE` distance is accumulated separately (`reposition_dist_m`) and shall **not** inflate the reported haul distance, though it is timed as travel (**§13.5**).
+
+### 13.5 Guidance time estimate
+
+**[13.5.1]** `estimate_guidance_time` shall sum, over the track: `CUT` length ÷ loading speed; `FILL` ÷ dumping speed; `GRADE` ÷ grade speed; `HAUL` and `MOVE` via the trapezoidal profile (**§13.0.3**) at haul max speed; `RETURN`/`START` via the trapezoidal profile at return max speed; and the **turning** time `R · total_turn_angle / turn_speed` (**§13.1.2**). Productive = the sum of those; **total = productive ÷ field_efficiency**, the remainder reported as "Other". The breakdown (`GuidanceTime`) shall expose loading, dumping, grading, hauling (incl. `MOVE`), returning, turning, other, and total seconds, plus the tight-turn count.
+
+**[13.5.2]** *Relationship to the core model.* The guidance total is normally **higher** than the core OptiHaul-matched total (**§13.0**) because it adds turning and the grade/compact pass, partly offset by direction-aware sequencing reducing the empty return. This is expected and is the realistic, drivable field time. The guidance shall **not** increase the optimized per-pass haul distance.
+
+### 13.6 Guidance outputs
+
+**[13.6.1]** *Guidance CSV* (`--guidance-csv`, default `<out>_guidance.csv`): one row per waypoint in track order with the sequence index, pass number, action, blade state, lat/lon (and easting/northing), target depth, next-bearing, segment distance, and instruction.
+
+**[13.6.2]** *Guidance PNG* (`--guidance-png`, default `<out>_guidance.png`): the cut/fill map overlaid with the blade lanes coloured by action — cut, fill, the `GRADE` return (dashed, over the fill), and `MOVE`/`HAUL`/`RETURN` blade-up travel — so the drivable plan is visually inspectable. On printing the guidance the report shall also state the preserved haul, blade-scale loading/dumping/grade/reposition distances, the coverage factor (blade width ÷ cell width), the tight-turn count, the sequencing mode, and the drivable time breakdown and total.
 
 ---
 ## 14. Outputs
@@ -514,16 +606,18 @@ diff >   0.80  ->  dark red   #B40000
 --out PATH                 (required) output PNG path (base name for derived outputs)
 
 # Field model & volumes
---grid-size-ft FLOAT          default 15
+--grid-size-ft FLOAT          default 7.5   (~ one blade width; use 15 for an OptiHaul grid)
 --tolerance-mm FLOAT          default 10
 --scraper-capacity-lcy FLOAT  default 20    (bank limit = value / swell)
 --swell-factor FLOAT          default 1.3   (LCY = BCY * swell)
 --cutfill-ratio FLOAT         default 1.2   (alias: --compaction)
 --max-depth-mm FLOAT          default 61
---blade-width-mm FLOAT        default 2271
+--blade-width-mm FLOAT        default 2271  (tandem 7+10 ft -> use 2590.8 for ~8.5 ft)
+--strip-bias FLOAT            default 50    (grow each load as one blade-wide lane; 1 = blob)
+--max-drop-hop-ft FLOAT       default 100   (multi-drop hop to next pocket; 0 disables)
 
 # Haul behaviour
---heading-deg FLOAT           default auto  (design-surface main slope)
+--heading-deg FLOAT           default auto  (design-surface main slope, cardinal-snapped)
 --heading-strength FLOAT      default 0.5   (0 disables heading bias)
 --transport-mode {poisson,mincostflow}   default poisson
 --balance-mode {check,adjust}            default check
@@ -536,6 +630,17 @@ diff >   0.80  ->  dark red   #B40000
 --return-speed-mph FLOAT      default 13
 --accel-time-s FLOAT          default 12
 --decel-time-s FLOAT          default 12
+
+# Maneuvering & blade-scale guidance (Stage 7)
+--turn-speed-mph FLOAT        default 4     (speed through a turn)
+--grade-speed-mph FLOAT       default 8     (grade/compact return pass speed)
+--turning-circle-ft FLOAT     default 45    (turn diameter; sets turn-arc length)
+--turn-threshold-deg FLOAT    default 60    (gentler bends below this cost no turn time)
+--no-grade-return             do not add a grade/compact return pass over each fill
+--no-direction-aware          revert to deadhead-distance ordering + 2-opt (no turn penalty)
+--lane-overlap FLOAT          default 0.0   (0-0.9 overlap between adjacent blade lanes)
+--guidance-csv [PATH]         turn-by-turn waypoints; flag alone -> <out>_guidance.csv
+--guidance-png [PATH]         blade lanes over the map; flag alone -> <out>_guidance.png
 
 # PNG rendering
 --pixels-per-bin INT          default 50
@@ -562,7 +667,7 @@ diff >   0.80  ->  dark red   #B40000
 
 **[15.0.3]** On success the program shall print an **OptiHaul-style report** (moved volume, pass count, haul heading, the four distances and achieved speeds, and the time breakdown incl. "Other" and TOTAL), write the plan PNG, and write any requested CSV/PNG/animation outputs, reporting each path. Invalid arguments shall produce a clear error and a non-zero exit code.
 
-**[15.0.4]** Flags that derive a path from `--out` (`--pairs-csv`, `--pairs-png`, `--animate-gif`, and `--sequence-csv` when zones are on) shall, when passed without an explicit path, name the file from the `--out` stem.
+**[15.0.4]** Flags that derive a path from `--out` (`--pairs-csv`, `--pairs-png`, `--guidance-csv`, `--guidance-png`, `--animate-gif`, and `--sequence-csv` when zones are on) shall, when passed without an explicit path, name the file from the `--out` stem.
 
 ---
 
@@ -582,11 +687,12 @@ landlevel/
   balance.py      # §8 volume balance
   flowfield.py    # §9 optimal transport (poisson + mincostflow)
   strips.py       # §10 streamline tracing
-  passes.py       # §11 contiguous patch matcher, heading, 61 mm layering
-  routing.py      # §12 sequencing (NN + bounded 2-opt)
+  passes.py       # §11 contiguous patch matcher, strip bias, multi-drop, heading snap, 61 mm layering
+  routing.py      # §12 sequencing (NN + bounded 2-opt; direction-aware/grade-aware transition cost)
   sequence.py     # §12.1 zone work order + CSV exports
-  timemodel.py    # §13 OptiHaul-matched time model
-  render.py       # §14 PNG (cut/fill + arrows), zone overlay, heat map, frame renderers
+  timemodel.py    # §13.0 OptiHaul-matched core time model
+  swaths.py       # §13.1–§13.6 Stage 7 blade-scale guidance (lanes, grade pass, turns, guidance time, CSV)
+  render.py       # §14 PNG (cut/fill + arrows), zone overlay, heat map, guidance lanes, frame renderers
   animate.py      # §14.6 leveling animation
   cli.py          # §15 command-line entry point
 tools/
@@ -636,14 +742,15 @@ tools/
 ## 19. Implementation checklist
 
 **[19.0.1]** - ☑ AGD reader per **§6.1**, incl. `delta` recomputation and inverse projection.
-**[19.0.2]** - ☑ UTM projection and 15 ft binning per **§7.1**–**§7.2**.
+**[19.0.2]** - ☑ UTM projection and 7.5 ft binning (default) per **§7.1**–**§7.2**.
 **[19.0.3]** - ☑ BCY conversions and 61 mm layering per **§7.3**.
 **[19.0.4]** - ☑ Volume balance check (and optional offset adjust) per **§8**.
 **[19.0.5]** - ☑ Poisson flow field per **§9.1**; min-cost-flow mode per **§9.2**.
 **[19.0.6]** - ☑ Streamline strips per **§10**.
-**[19.0.7]** - ☑ Contiguous patch passes (≈ 15.4 BCY / 61 mm), true haul leg, heading bias per **§11**.
-**[19.0.8]** - ☑ Sequencing (NN + bounded 2-opt) per **§12**; zone work order + CSV per **§12.1**.
-**[19.0.9]** - ☑ OptiHaul-matched time model per **§13**.
+**[19.0.7]** - ☑ Contiguous patch passes (≈ 15.4 BCY / 61 mm), true haul leg, heading bias, **strip-biased lanes (§11.0.2b)**, **multi-drop (§11.0.3c)**, **cardinal heading snap (§11.0.3b-i)** per **§11**.
+**[19.0.8]** - ☑ Sequencing (NN + bounded 2-opt) and **direction-aware, grade-aware transition cost (§12.0.5)** per **§12**; zone work order + CSV per **§12.1**.
+**[19.0.9]** - ☑ OptiHaul-matched core time model per **§13.0**.
+**[19.0.9a]** - ☑ Stage 7 blade-scale guidance per **§13.1**–**§13.6**: lanes, grade/compact pass, turning model, multi-drop `MOVE`, guidance time, guidance CSV/PNG.
 **[19.0.10]** - ☑ PNG cut/fill, arrows, zone overlay, heat map, animation per **§14**.
 **[19.0.11]** - ☑ CLI per **§15**.
 **[19.0.12]** - ☑ Tests per **§17**; deterministic output per **§16.4**.
@@ -653,4 +760,4 @@ tools/
 
 ## 20. Summary
 
-**[20.0.1]** This v2 specification defines a Python program that turns an AGD field file plus equipment and time parameters into a haul plan, a rendered PNG, and optional sequencing/CSV/heat-map/animation outputs. The field is modeled on a **15 ft** grid (configurable); volumes are tracked in **BCY**, with **swell** applied only to convert the scraper's **LCY** capacity to a bank load limit (20 LCY ÷ 1.3 ≈ 15.4 BCY) and a **cut/fill ratio** for compaction. Haul directions come from an optimal-transport flow field traced into curving strips; the volume plan is produced by a shortest-haul-first matcher that cuts and fills **compact, contiguous patches**, with the per-pass **haul leg measured as the true transit** (cut-end → fill-start) and an optional **heading** that biases fill selection down the field's main slope. Passes are sequenced to minimize deadhead return travel and costed with an **OptiHaul-matched** time model (trapezoidal haul/return speeds, return distance = forward distance, field-efficiency "Other" time). Optional outputs summarise the plan as a **zone work order** (with CSV and numbered PNG waypoints), export **per-pass lat/lon pairs** to CSV, render a **haul heat map**, and produce a frame-by-frame **leveling animation** in cut/fill or topology mode. The PNG reuses the existing AgGrade palette, arrow glyph, and image geometry so output is directly comparable to the current tools.
+**[20.0.1]** This v2 specification defines a Python program that turns an AGD field file plus equipment and time parameters into a haul plan, a rendered PNG, and optional sequencing/CSV/heat-map/animation/guidance outputs. The field is modeled on a **7.5 ft** grid (≈ one blade width; configurable, e.g. 15 ft to match an OptiHaul calculation grid); volumes are tracked in **BCY**, with **swell** applied only to convert the scraper's **LCY** capacity to a bank load limit (20 LCY ÷ 1.3 ≈ 15.4 BCY) and a **cut/fill ratio** for compaction. Haul directions come from an optimal-transport flow field traced into curving strips; the volume plan is produced by a shortest-haul-first matcher that grows each load as a long **blade-wide strip** (strip bias), keeps loading/spreading across nearby pockets via **multi-drop**, measures the per-pass **haul leg as the true transit** (cut-end → fill-start), and biases fill selection down the field's main slope (heading, **cardinal-snapped**). Passes are sequenced to minimize non-productive travel using a **direction-aware, grade-aware** transition cost that trades deadhead drive against turning, and costed with an **OptiHaul-matched** core time model. On request, a **blade-scale operator guidance** track (Stage 7) realizes the passes as turn-by-turn waypoints with a **grade/compact return pass** over every fill and a **realistic drivable time** that counts **turning** on the 45 ft circle — giving the honest field time, distinct from the OptiHaul-matched core figure. Optional outputs also summarise the plan as a **zone work order** (with CSV and numbered PNG waypoints), export **per-pass lat/lon pairs** to CSV, render a **haul heat map** and the **guidance lanes**, and produce a frame-by-frame **leveling animation** in cut/fill or topology mode. The PNG reuses the existing AgGrade palette, arrow glyph, and image geometry so output is directly comparable to the current tools.

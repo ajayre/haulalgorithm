@@ -20,6 +20,8 @@ from landlevel.grid import build_grid, demand_bcy, layers_for_depth, supply_bcy
 from landlevel.passes import generate_passes
 from landlevel.render import cutfill_color
 from landlevel.strips import trace_strips
+from landlevel.routing import sequence_passes
+from landlevel.swaths import build_guidance
 
 
 # ---------------------------------------------------------------------------
@@ -149,7 +151,8 @@ def test_flow_points_from_ridge_to_valley(tmp_path):
     agd = tmp_path / "ridge.agd"
     _write_agd(agd, _ramp_field(with_boundary=False), with_boundary=False)
     field = parse_agd_file(agd)
-    grid = build_grid(field)
+    # Pin to 15 ft: the tiny synthetic ramp is degenerate at the finer default.
+    grid = build_grid(field, grid_size_ft=15.0)
     flow = compute_flow_field(grid, mode="poisson")
     # East (high bx) is cut (high existing), west is fill: soil flows from the cut
     # ridge toward the fill, i.e. west (negative east-component fx) on average.
@@ -177,6 +180,113 @@ def test_pass_limits(tmp_path):
             assert depth <= max_depth_m
         for _c, depth in p.fill_cells:
             assert depth <= max_depth_m
+
+
+# ---------------------------------------------------------------------------
+# Blade-scale swath builder (operator guidance)
+# ---------------------------------------------------------------------------
+
+def _guidance_for_ramp(tmp_path, blade_width_mm=2271.0, grid_size_ft=15.0):
+    agd = tmp_path / "sw.agd"
+    _write_agd(agd, _ramp_field(with_boundary=False), with_boundary=False)
+    field = parse_agd_file(agd)
+    grid = build_grid(field, grid_size_ft=grid_size_ft)
+    flow = compute_flow_field(grid, mode="poisson")
+    strips = trace_strips(grid, flow)
+    result = generate_passes(grid, strips, tolerance_mm=10.0, max_load_bcy=15.38,
+                             heading_deg=90.0, heading_strength=0.5)
+    route = sequence_passes(result.passes)
+    guidance = build_guidance(grid, field, route, blade_width_mm=blade_width_mm,
+                              heading_deg=90.0)
+    return grid, route, guidance
+
+
+def test_guidance_preserves_haul_and_depth_caps(tmp_path):
+    grid, route, g = _guidance_for_ramp(tmp_path)
+    assert g.points, "expected guidance waypoints"
+    # The blade-scale guidance haul tracks the optimizer's route haul. It is not
+    # identical: lane endpoints land at patch corners, so allow modest slack.
+    assert g.haul_dist_m == pytest.approx(g.route_haul_dist_m, rel=0.15, abs=2.0)
+    # Blade coverage never lowers the sweep below the planned centerline.
+    assert g.cut_dist_m >= g.planned_cut_dist_m - 1e-6
+    assert g.fill_dist_m >= g.planned_fill_dist_m - 1e-6
+    # Per-point depth never exceeds the 61 mm layer cap.
+    cap = grid.max_depth_mm + 1e-6
+    for pt in g.points:
+        assert pt.depth_mm <= cap
+        assert 0.0 <= pt.heading_deg <= 360.0
+        assert pt.blade in ("UP", "DOWN")
+
+
+def test_strips_haul_stays_bounded(tmp_path):
+    """Strip growth trades a little haul for drivable long passes; guard that the
+    trade stays bounded (and on many fields is neutral or better)."""
+    agd = tmp_path / "sb.agd"
+    _write_agd(agd, _ramp_field(with_boundary=False), with_boundary=False)
+    field = parse_agd_file(agd)
+    grid = build_grid(field, grid_size_ft=15.0)
+    flow = compute_flow_field(grid, mode="poisson")
+    strips = trace_strips(grid, flow)
+
+    def total_haul(strip_bias):
+        res = generate_passes(grid, strips, tolerance_mm=10.0, max_load_bcy=15.38,
+                              heading_deg=90.0, heading_strength=0.5, strip_bias=strip_bias)
+        route = sequence_passes(res.passes)
+        return sum(p.haul_distance_m for p in route.ordered_passes)
+
+    # Full blade-wide strips (the default) should not worsen haul vs the blob; on
+    # many fields they improve it because each load is one continuous line.
+    haul_blob = total_haul(1.0)
+    haul_strip = total_haul(50.0)
+    assert haul_strip <= haul_blob * 1.12 + 1.0
+
+
+def test_strip_growth_makes_long_runs(tmp_path):
+    """A strip-grown cut sweep should have long straight runs (few heading
+    changes) rather than the per-cell zig-zag of a tiled blob."""
+    _grid, _route, g = _guidance_for_ramp(tmp_path)
+    cut = [p for p in g.points if p.action == "CUT"]
+    if len(cut) < 10:
+        pytest.skip("not enough cut waypoints to assess runs")
+    # Count heading reversals between consecutive cut waypoints; strips should
+    # keep this well below one-per-step.
+    turns = sum(1 for a, b in zip(cut, cut[1:]) if abs(((a.heading_deg - b.heading_deg + 180) % 360) - 180) > 80)
+    assert turns < 0.6 * len(cut)
+
+
+def test_guidance_actions_and_blade_state(tmp_path):
+    _grid, _route, g = _guidance_for_ramp(tmp_path)
+    actions = {pt.action for pt in g.points}
+    assert {"CUT", "FILL", "HAUL"} <= actions
+    for pt in g.points:
+        up = pt.action in ("START", "RETURN", "HAUL", "MOVE")
+        assert pt.blade == ("UP" if up else "DOWN")
+
+
+def test_guidance_deterministic(tmp_path):
+    agd = tmp_path / "det.agd"
+    _write_agd(agd, _ramp_field(with_boundary=False), with_boundary=False)
+    field = parse_agd_file(agd)
+    grid = build_grid(field)
+    flow = compute_flow_field(grid, mode="poisson")
+    strips = trace_strips(grid, flow)
+    res = generate_passes(grid, strips, tolerance_mm=10.0, max_load_bcy=15.38,
+                          heading_deg=90.0, heading_strength=0.5)
+    route = sequence_passes(res.passes)
+    g1 = build_guidance(grid, field, route, blade_width_mm=2271.0, heading_deg=90.0)
+    g2 = build_guidance(grid, field, route, blade_width_mm=2271.0, heading_deg=90.0)
+    sig1 = [(p.seq, p.action, round(p.x, 6), round(p.y, 6), round(p.depth_mm)) for p in g1.points]
+    sig2 = [(p.seq, p.action, round(p.x, 6), round(p.y, 6), round(p.depth_mm)) for p in g2.points]
+    assert sig1 == sig2
+
+
+def test_narrow_blade_increases_coverage(tmp_path):
+    # On a 15 ft grid, a 7.45 ft blade needs ~2 lanes per cell row, so the
+    # blade-scale sweep is longer than the centerline (coverage > 1).
+    _g, _r, wide = _guidance_for_ramp(tmp_path, blade_width_mm=4572.0)   # ~= one cell
+    _g2, _r2, narrow = _guidance_for_ramp(tmp_path, blade_width_mm=2271.0)
+    assert narrow.coverage_factor() >= wide.coverage_factor() - 1e-6
+    assert narrow.coverage_factor() > 1.0
 
 
 # ---------------------------------------------------------------------------

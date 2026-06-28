@@ -21,7 +21,7 @@ from typing import List, Optional, Tuple
 
 import numpy as np
 
-from . import M3_TO_CY
+from . import DEFAULT_MAX_DROP_HOP_FT, FEET_TO_METERS, M3_TO_CY
 from .grid import Grid
 from .strips import Strip
 
@@ -73,11 +73,19 @@ class PassResult:
     unmatched_fill_bcy: float
 
 
-def estimate_slope_heading(grid: Grid) -> float:
+def estimate_slope_heading(grid: Grid, snap_tol_deg: float = 12.0) -> float:
     """Compass bearing (deg, 0=N, 90=E) of the target surface's main down-slope.
 
     Soil on a sloped design surface is moved down-slope; this is used as the
     default haul heading when one is not supplied.
+
+    The calculation grid is built axis-aligned (N/S/E/W), and both strip growth
+    and the blade-lane tiling are cleanest when the haul heading lies *on* a grid
+    axis (this is how OptiHaul works - its grid is aligned to the haul
+    direction). A heading a few degrees off-axis pushes strips diagonally across
+    cells, fragmenting them into extra pockets and inflating repositioning/haul.
+    So when the estimated slope is within ``snap_tol_deg`` of a grid axis we snap
+    to it; pronounced diagonal slopes are left as-is.
     """
     t = np.where(grid.valid, grid.target, np.nan)
     gy, gx = np.gradient(t)  # gx along +x (east), gy along +y (north)
@@ -85,7 +93,11 @@ def estimate_slope_heading(grid: Grid) -> float:
     n = -np.nanmean(gy)
     if not np.isfinite(e) or not np.isfinite(n) or (abs(e) < 1e-12 and abs(n) < 1e-12):
         return 0.0
-    return math.degrees(math.atan2(e, n)) % 360.0
+    bearing = math.degrees(math.atan2(e, n)) % 360.0
+    nearest_axis = round(bearing / 90.0) * 90.0
+    if abs(((bearing - nearest_axis + 180.0) % 360.0) - 180.0) <= snap_tol_deg:
+        return nearest_axis % 360.0
+    return bearing
 
 
 def _heading_vector(heading_deg: float) -> Tuple[float, float]:
@@ -102,6 +114,8 @@ def generate_passes(
     max_rounds: int = 0,  # unused; kept for API compatibility
     heading_deg: Optional[float] = None,
     heading_strength: float = 0.5,
+    strip_bias: float = 50.0,
+    max_drop_hop_m: float = DEFAULT_MAX_DROP_HOP_FT * FEET_TO_METERS,
 ) -> PassResult:
     """Generate cut-haul-fill passes packed to ``max_load_bcy`` (spec §11).
 
@@ -120,6 +134,13 @@ def generate_passes(
 
     hvec = _heading_vector(heading_deg) if heading_deg is not None else None
     k_head = max(0.0, min(0.95, heading_strength)) if hvec is not None else 0.0
+
+    # Heading unit vector in grid (east=bx, north=by) space, used to grow cut/fill
+    # patches as long strips along the haul heading instead of compact blobs.
+    strip_uv = None
+    if heading_deg is not None and strip_bias > 1.0:
+        r = math.radians(heading_deg)
+        strip_uv = (math.sin(r), math.cos(r))  # (east, north) = (bx, by)
 
     centers = _cell_centers(grid)
     passes: List[Pass] = []
@@ -147,40 +168,95 @@ def generate_passes(
         if load_cap <= 1e-9:
             break
 
+        ftree = cKDTree(fill_xy) if have_kd else None
+        ctree = cKDTree(cut_xy) if have_kd else None
+
         # Anchor: cut cell whose nearest remaining fill is closest (shortest haul).
         if have_kd:
-            ftree = cKDTree(fill_xy)
             dists, _nn = ftree.query(cut_xy, k=1)
             a = int(np.argmin(dists))
         else:
             a = _anchor_bruteforce(cut_xy, fill_xy)
         anchor = (int(cut_idx[a, 1]), int(cut_idx[a, 0]))
 
-        # Grow a compact cut patch outward from the anchor through cut material.
-        cut_cells, load = _grow_region(led.remaining_cut, led.max_depth_m, tol_m,
-                                       anchor, load_cap, cut_per_m, W, H)
+        # --- Multi-drop CUT: keep loading across nearby cut pockets until the
+        # scraper is full. Grow a strip from the anchor; if it doesn't fill the
+        # load and the next remaining cut pocket is within an economical hop,
+        # drive there (blade up) and keep cutting, rather than hauling a partial
+        # load and leaving a near-empty job for a future pass.
+        cut_cells: List[Tuple[Cell, float]] = []
+        load = 0.0
+        seed = anchor
+        while load < load_cap - 1e-9:
+            cells, got = _grow_region(led.remaining_cut, led.max_depth_m, tol_m,
+                                      seed, load_cap - load, cut_per_m, W, H,
+                                      heading_uv=strip_uv, strip_bias=strip_bias)
+            if cells:
+                cut_cells.extend(cells)
+                load += got
+            if load >= load_cap - 1e-9:
+                break
+            last_xy = (grid.cell_center_xy(*cells[-1][0]) if cells
+                       else grid.cell_center_xy(*seed))
+            nxt = _nearest_remaining(last_xy, ctree, cut_xy, cut_idx,
+                                     led.remaining_cut, tol_m)
+            if nxt is None or nxt[1] > max_drop_hop_m:
+                break
+            seed = nxt[0]
         if not cut_cells:
             break
         cut_centroid = _centroid([grid.cell_center_xy(*c) for c, _ in cut_cells])
 
-        # Choose a fill seed near the cut (optionally biased down-heading), then
-        # grow a compact fill patch from it.
+        # --- Multi-drop FILL: spread the whole load across nearby fill pockets.
+        # Grow a fill patch from a seed near the cut; if it can't absorb the full
+        # load and the next remaining fill pocket is within an economical hop,
+        # drive there (still loaded, blade up) and keep dumping until empty.
+        fill_cells: List[Tuple[Cell, float]] = []
+        placed = 0.0
         fseed = _choose_fill_seed(fill_xy, fill_idx, cut_centroid, hvec, k_head, have_kd)
-        fill_cells, placed = _grow_region(led.remaining_fill, led.max_depth_m, tol_m,
-                                          fseed, load, fill_per_m, W, H)
+        while placed < load - 1e-9:
+            cells, got = _grow_region(led.remaining_fill, led.max_depth_m, tol_m,
+                                      fseed, load - placed, fill_per_m, W, H,
+                                      heading_uv=strip_uv, strip_bias=strip_bias)
+            if cells:
+                fill_cells.extend(cells)
+                placed += got
+            if placed >= load - 1e-9:
+                break
+            last_xy = (grid.cell_center_xy(*cells[-1][0]) if cells
+                       else grid.cell_center_xy(*fseed))
+            nxt = _nearest_remaining(last_xy, ftree, fill_xy, fill_idx,
+                                     led.remaining_fill, tol_m)
+            if nxt is None or nxt[1] > max_drop_hop_m:
+                break
+            fseed = nxt[0]
         if not fill_cells:
             for (c, d) in cut_cells:
                 led.remaining_cut[c[1], c[0]] += d
             break
-        # Restore any unplaced remainder so volume is conserved.
+        # If even multi-drop couldn't place the whole load (fill genuinely
+        # exhausted within reach, e.g. the very end of the job), restore the
+        # unplaced remainder to the ledger AND trim those cells out of this pass,
+        # so the recorded cut footprint matches what was actually moved. The
+        # far-from-anchor cells are given back first, keeping the cut nearest the
+        # fill it served.
         leftover = load - placed
         if leftover > 1e-9:
+            kept_rev: List[Tuple[Cell, float]] = []
             for (c, d) in reversed(cut_cells):
                 if leftover <= 1e-9:
-                    break
-                give = min(leftover, d * cut_per_m)
+                    kept_rev.append((c, d))
+                    continue
+                cell_bcy = d * cut_per_m
+                give = min(leftover, cell_bcy)
                 led.remaining_cut[c[1], c[0]] += give / cut_per_m
                 leftover -= give
+                kept_depth = d - give / cut_per_m
+                if kept_depth > 1e-12:
+                    kept_rev.append((c, kept_depth))
+            cut_cells = list(reversed(kept_rev))
+        if not cut_cells:
+            continue
 
         passes.append(_build_pass(grid, cut_cells, fill_cells, placed))
 
@@ -196,6 +272,34 @@ def _cell_centers(grid: Grid) -> np.ndarray:
     ys = grid.min_y + (np.arange(grid.height) + 0.5) * grid.grid_size_m
     gx, gy = np.meshgrid(xs, ys)
     return np.stack([gx, gy], axis=-1)
+
+
+def _nearest_remaining(query_xy, tree, xy_arr, idx_arr, remaining, tol, k: int = 24):
+    """Nearest cell to ``query_xy`` that still holds material (> tol).
+
+    Returns ``((bx, by), distance_m)`` or ``None``. Used to find the next pocket
+    a multi-drop pass should hop to. With a KD-tree we only inspect the ``k``
+    nearest candidates (cells consumed earlier this pass are skipped); if all of
+    them are spent the next pocket is far away, so we report no economical hop.
+    """
+    n = int(xy_arr.shape[0])
+    if n == 0:
+        return None
+    if tree is not None:
+        kk = min(k, n)
+        d, ii = tree.query(query_xy, k=kk)
+        for dist, j in zip(np.atleast_1d(d), np.atleast_1d(ii)):
+            by, bx = int(idx_arr[j, 0]), int(idx_arr[j, 1])
+            if remaining[by, bx] > tol:
+                return (bx, by), float(dist)
+        return None
+    diff = xy_arr - np.asarray(query_xy)
+    order = np.argsort(diff[:, 0] ** 2 + diff[:, 1] ** 2)
+    for j in order:
+        by, bx = int(idx_arr[j, 0]), int(idx_arr[j, 1])
+        if remaining[by, bx] > tol:
+            return (bx, by), float(math.hypot(diff[j, 0], diff[j, 1]))
+    return None
 
 
 def _anchor_bruteforce(cut_xy: np.ndarray, fill_xy: np.ndarray) -> int:
@@ -245,24 +349,47 @@ def _choose_fill_seed(fill_xy, fill_idx, cut_centroid, hvec, k_head, have_kd):
     return (int(fill_idx[m, 1]), int(fill_idx[m, 0]))
 
 
-def _grow_region(remaining, max_depth, tol, seed_cell, target_bcy, per_m, width, height):
-    """Region-grow a compact, contiguous patch of material around ``seed_cell``.
+def _grow_region(remaining, max_depth, tol, seed_cell, target_bcy, per_m, width, height,
+                 heading_uv=None, strip_bias=1.0):
+    """Region-grow a contiguous patch of material around ``seed_cell``.
 
-    Cells are consumed in order of distance from the seed, expanding only through
-    cells that still hold material (>tol), so the patch stays a connected blob.
-    Each cell yields at most ``max_depth`` (one 61 mm layer). Stops at
-    ``target_bcy`` or when the connected material around the seed is exhausted.
+    Cells are consumed in best-first order of a distance-from-seed key, expanding
+    only through cells that still hold material (>tol) so the patch stays a single
+    connected run. Each cell yields at most ``max_depth`` (one 61 mm layer). Stops
+    at ``target_bcy`` or when the connected material around the seed is exhausted.
+
+    Shape control: with the default isotropic key (``strip_bias == 1`` or no
+    heading) the key is squared Euclidean distance, giving a **compact blob**.
+    When a ``heading_uv`` unit vector (in grid (east, north) = (bx, by) space) is
+    supplied with ``strip_bias > 1``, the key makes travel *along* the heading
+    cheap (linear) and stepping *perpendicular* expensive (``strip_bias`` x
+    squared):
+
+        key = abs(along) + strip_bias * perp^2
+
+    Because the along term is linear, a load fills one blade-wide line end-to-end
+    (in both directions from the seed) before it ever steps sideways: the strip
+    only widens once it runs out of material along the lane. ``strip_bias`` is
+    roughly the lane length (in cells) the grower will chase before it prefers a
+    sideways step, so it should exceed a full load's cell count to yield a single
+    continuous cut/fill line. This is the scraper's natural continuous pass and
+    removes the side-by-side "weave"/blob (and its turns) without changing the
+    anchor or the load packing.
     """
     import heapq
 
     sx, sy = seed_cell
+    anisotropic = heading_uv is not None and strip_bias != 1.0
+    if anisotropic:
+        ux, uy = heading_uv
+        vx, vy = uy, -ux  # perpendicular to the heading (rotate -90 deg)
     visited = set()
     used: List[Tuple[Cell, float]] = []
     acc = 0.0
     cnt = 0
-    heap = [(0, 0, sx, sy)]
+    heap = [(0.0, 0, sx, sy)]
     while heap and acc < target_bcy - 1e-9:
-        _d2, _t, x, y = heapq.heappop(heap)
+        _key, _t, x, y = heapq.heappop(heap)
         if (x, y) in visited:
             continue
         visited.add((x, y))
@@ -285,7 +412,13 @@ def _grow_region(remaining, max_depth, tol, seed_cell, target_bcy, per_m, width,
                 if 0 <= nx < width and 0 <= ny < height and (nx, ny) not in visited:
                     ddx, ddy = nx - sx, ny - sy
                     cnt += 1
-                    heapq.heappush(heap, (ddx * ddx + ddy * ddy, cnt, nx, ny))
+                    if anisotropic:
+                        along = ddx * ux + ddy * uy
+                        perp = ddx * vx + ddy * vy
+                        key = abs(along) + strip_bias * perp * perp
+                    else:
+                        key = float(ddx * ddx + ddy * ddy)
+                    heapq.heappush(heap, (key, cnt, nx, ny))
     return used, acc
 
 

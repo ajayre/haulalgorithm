@@ -6,7 +6,8 @@ cut–haul–fill **passes** that bring the field to its target grade with minim
 haul distance and time, and renders a **PNG** of the cut/fill map with overlaid
 haul-direction arrows. It also produces an OptiHaul-style time report and a
 range of optional outputs (zone work order, per-pass CSVs, a haul "heat map",
-and a leveling animation).
+a leveling animation, and a **blade-scale operator guidance** track with a
+realistic drivable time that counts turning and the grade/compact pass).
 
 ## Install
 
@@ -70,6 +71,14 @@ Pin the haul heading to a known slope direction (e.g. due west = 270°):
 python -m landlevel.cli --agd TheShop2_2ft.agd --out plan.png --heading-deg 270
 ```
 
+Blade-scale operator guidance — turn-by-turn waypoints + a realistic drivable
+time (turns, grade/compact pass, multi-drop), with the lanes drawn over the map:
+
+```bash
+python -m landlevel.cli --agd TheShop2_2ft.agd --out plan.png \
+  --guidance-csv --guidance-png
+```
+
 ## Command-line options
 
 Full list also available via `python -m landlevel.cli --help`. Defaults come
@@ -86,13 +95,15 @@ from spec §6.2–§6.4.
 
 | Option | Default | Meaning |
 |---|---|---|
-| `--grid-size-ft` | 15 | square area (cell) edge length in feet |
+| `--grid-size-ft` | 7.5 | square area (cell) edge length in feet (≈ one blade width, so each load is one blade-wide lane; use 15 to match an OptiHaul coarse grid) |
 | `--tolerance-mm` | 10 | finished-area elevation tolerance (cells within this of grade are "on grade") |
 | `--scraper-capacity-lcy` | 20 | scraper capacity in **LCY**; per-pass bank limit = value ÷ swell ≈ 15.4 BCY |
 | `--swell-factor` | 1.3 | `LCY = BCY × swell` (loose soil is bulkier than bank soil) |
 | `--cutfill-ratio`, `--compaction` | 1.2 | bank cut volume needed per bank fill volume (compaction allowance) |
 | `--max-depth-mm` | 61 | max cut/fill depth per area per pass (0.2 ft) |
-| `--blade-width-mm` | 2271 | scraper blade/cut width |
+| `--blade-width-mm` | 2271 | scraper blade/cut width (the tandem 7 ft + 10 ft scrapers have an ≈ 8.5 ft volume-weighted effective width — pass `2590.8` to model that) |
+| `--strip-bias` | 50 | grow each load's cut/fill as one long blade-wide lane along the heading (≈ the lane length in cells chased before stepping sideways; 1 = compact blob) |
+| `--max-drop-hop-ft` | 100 | multi-drop: how far the scraper drives (blade up) to the next cut/fill pocket to keep loading/spreading the same load instead of ending a pass part-full (0 disables multi-drop) |
 
 ### Haul behaviour
 
@@ -114,6 +125,23 @@ from spec §6.2–§6.4.
 | `--return-speed-mph` | 13 | maximum return (empty) speed |
 | `--accel-time-s` | 12 | time to accelerate to max speed (lowers average haul/return speed) |
 | `--decel-time-s` | 12 | time to decelerate from max speed |
+
+### Maneuvering & blade-scale guidance
+
+These drive the realistic, drivable plan: the turn-aware guidance time, the
+grade/compact return pass, and the turn-aware sequencing.
+
+| Option | Default | Meaning |
+|---|---|---|
+| `--turn-speed-mph` | 4 | speed through a turn (the machine slows to turn); used by the turn-aware guidance time and sequencer |
+| `--grade-speed-mph` | 8 | speed of the return grade/compact pass driven back over each fill |
+| `--turning-circle-ft` | 45 | tractor + scraper turning circle (diameter); sets the turn-arc length in the guidance time |
+| `--turn-threshold-deg` | 60 | heading changes below this are gentle bends driven in stride (no slowdown); only sharper turns cost turn time |
+| `--no-grade-return` | off | do **not** add a grade/compact return pass over each fill |
+| `--no-direction-aware` | off | disable direction-aware sequencing (turn-into-cut penalty); fall back to pure deadhead-distance ordering + 2-opt |
+| `--lane-overlap` | 0.0 | 0–0.9: fractional overlap between adjacent blade lanes (0 = lanes butt edge-to-edge) |
+| `--guidance-csv [PATH]` | off | write the blade-scale operator guidance track (turn-by-turn waypoints with depth/heading/instruction); pass the flag **alone** for `<out>_guidance.csv` |
+| `--guidance-png [PATH]` | off | render the blade-scale guidance lanes over the cut/fill map; pass the flag **alone** for `<out>_guidance.png` |
 
 ### PNG rendering
 
@@ -159,6 +187,8 @@ the `--out` stem (e.g. `--out theshop_plan.png` →):
 | `--sequence-csv` (with `--zones > 0`) | `theshop_plan_cut_sequence.csv` |
 | `--pairs-csv` | `theshop_plan_cut_fill_pairs.csv` |
 | `--pairs-png` | `theshop_plan_cut_fill_pairs.png` |
+| `--guidance-csv` | `theshop_plan_guidance.csv` |
+| `--guidance-png` | `theshop_plan_guidance.png` |
 | `--animate-gif` | `theshop_plan_leveling.gif` |
 
 The numbered zone waypoints and exact cell-boundary outlines are drawn directly
@@ -206,18 +236,20 @@ centroid lat/lon, and the pass range each zone was worked over).
 ## Pipeline (spec §5)
 
 ```
-AGD file ─► [1] Parse + grid (15 ft)          agd.py, grid.py   §6, §7
+AGD file ─► [1] Parse + grid (7.5 ft)         agd.py, grid.py   §6, §7
          ─► [2] Volume balance (check/adjust)  balance.py        §8
          ─► [3] Flow field (optimal transport) flowfield.py      §9
          ─► [4] Strips (streamlines)           strips.py         §10
          ─► [5] Passes (15.4 BCY / 61 mm)      passes.py         §11
          ─► [6] Sequence + route               routing.py        §12
          ─► [7] Time estimate                  timemodel.py      §13
+         ─► [8] Blade-scale guidance (opt.)    swaths.py         §13
          ─► PNG: cut/fill map + haul arrows    render.py         §14
 ```
 
 The cut/fill PNG depends only on stages [1]–[3]; the pass list and time are
-additive (`--no-plan` produces the PNG without them).
+additive (`--no-plan` produces the PNG without them). The blade-scale guidance
+track (stage [8]) is built on request via `--guidance-csv` / `--guidance-png`.
 
 ## Notes on the model
 
@@ -245,6 +277,25 @@ additive (`--no-plan` produces the PNG without them).
   *reduce the average speed*. The return distance equals the
   loading + hauling + dumping distance, and a field-efficiency factor (80%) adds
   "Other" (non-productive) time.
+- **Strips & multi-drop (drivability).** Each load's cut and fill are grown as a
+  single long **blade-wide lane** along the heading (`--strip-bias`) instead of a
+  compact blob, so the operator drives straight lines rather than weaving. When a
+  pass would end part-full, **multi-drop** lets the scraper hop (blade up) to a
+  nearby pocket within `--max-drop-hop-ft` to keep loading/spreading the same
+  load, cutting the number of near-empty "crumb" passes.
+- **Direction-aware sequencing.** The sequencer orders passes by a *time* cost
+  that combines the empty deadhead drive with the **turn arc** needed to leave one
+  pass and swing into the next cut (same 45 ft circle / turn-speed model as the
+  guidance), so it minimizes turning, not just distance. With a grade/compact pass
+  the machine ends at the fill's cut-side edge, so the grade return doubles as
+  travel toward the next cut (`--no-direction-aware` reverts to distance + 2-opt).
+- **Blade-scale guidance (drivable plan).** `--guidance-csv` / `--guidance-png`
+  translate the optimized passes into turn-by-turn operator waypoints (action,
+  blade up/down, target depth, next bearing, instruction) and a **realistic
+  drivable time** that, unlike the OptiHaul-matched core model, counts **turning**
+  (turn circle at turn speed, only for turns sharper than `--turn-threshold-deg`),
+  a **grade/compact return pass** over every fill (`--grade-speed-mph`, disable
+  with `--no-grade-return`), and **multi-drop repositioning** between pockets.
 
 ## Tests
 
