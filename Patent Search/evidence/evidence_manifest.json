@@ -1,0 +1,143 @@
+{
+  "generated_at_utc": "2026-06-29 05:06:08 UTC",
+  "tsa": "freetsa.org",
+  "protocol": "RFC 3161",
+  "hash_algorithm": "SHA-256",
+  "files": [
+    {
+      "source_file": "35 USC 292 False Marking.pdf",
+      "sha256": "ee047ad6e408a8eebfbb82c72463546dc44b8b15f62f2cc8b512e8695e0de265",
+      "rfc3161_timestamp_utc": "Jun 29 05:06:03 2026 GMT",
+      "timestamp_request": "35_USC_292_False_Marking.tsq",
+      "timestamp_response": "35_USC_292_False_Marking.tsr",
+      "hash_file": "35_USC_292_False_Marking.sha256",
+      "verified": true
+    },
+    {
+      "source_file": "Email With OptiSurface.pdf",
+      "sha256": "17031ec94cb9b259ce926709413e67747e967c6231915462fe535adde08ff932",
+      "rfc3161_timestamp_utc": "Jun 29 05:06:03 2026 GMT",
+      "timestamp_request": "Email_With_OptiSurface.tsq",
+      "timestamp_response": "Email_With_OptiSurface.tsr",
+      "hash_file": "Email_With_OptiSurface.sha256",
+      "verified": true
+    },
+    {
+      "source_file": "screencapture-ipsearch-ipaustralia-gov-au-patents-2021903299-2026-06-28-19_58_35.pdf",
+      "sha256": "d33056c99a8f6f6ef3693045a277c8eacc1c2e00272167ad23d6d325db403416",
+      "rfc3161_timestamp_utc": "Jun 29 05:06:03 2026 GMT",
+      "timestamp_request": "screencapture-ipsearch-ipaustralia-gov-au-patents-2021903299-2026-06-28-19_58_35.tsq",
+      "timestamp_response": "screencapture-ipsearch-ipaustralia-gov-au-patents-2021903299-2026-06-28-19_58_35.tsr",
+      "hash_file": "screencapture-ipsearch-ipaustralia-gov-au-patents-2021903299-2026-06-28-19_58_35.sha256",
+      "verified": true
+    },
+    {
+      "source_file": "screencapture-optisurface-osd-2026-06-28-21_58_29.pdf",
+      "sha256": "403eda1dc2a3cb8d4ca5686b7c100184035b37ba811948a65adad371ffad1c31",
+      "rfc3161_timestamp_utc": "Jun 29 05:06:04 2026 GMT",
+      "timestamp_request": "screencapture-optisurface-osd-2026-06-28-21_58_29.tsq",
+      "timestamp_response": "screencapture-optisurface-osd-2026-06-28-21_58_29.tsr",
+      "hash_file": "screencapture-optisurface-osd-2026-06-28-21_58_29.sha256",
+      "verified": true
+    },
+    {
+      "source_file": "screencapture-patentscope-wipo-int-search-en-result-jsf-2026-06-28-20_20_50.pdf",
+      "sha256": "80ae07c0ec7e0dc6bddde6d8bdb959f3fb168268fb47ca258126d43059ce603e",
+      "rfc3161_timestamp_utc": "Jun 29 05:06:04 2026 GMT",
+      "timestamp_request": "screencapture-patentscope-wipo-int-search-en-result-jsf-2026-06-28-20_20_50.tsq",
+      "timestamp_response": "screencapture-patentscope-wipo-int-search-en-result-jsf-2026-06-28-20_20_50.tsr",
+      "hash_file": "screencapture-patentscope-wipo-int-search-en-result-jsf-2026-06-28-20_20_50.sha256",
+      "verified": true
+    },
+    {
+      "source_file": "screencapture-patentscope-wipo-int-search-en-result-jsf-2026-06-28-20_22_13.pdf",
+      "sha256": "df39068fcce22fc2ff7c27cbc7f81b8ab6fe1cdb7d490246eb953b94dc629577",
+      "rfc3161_timestamp_utc": "Jun 29 05:06:04 2026 GMT",
+      "timestamp_request": "screencapture-patentscope-wipo-int-search-en-result-jsf-2026-06-28-20_22_13.tsq",
+      "timestamp_response": "screencapture-patentscope-wipo-int-search-en-result-jsf-2026-06-28-20_22_13.tsr",
+      "hash_file": "screencapture-patentscope-wipo-int-search-en-result-jsf-2026-06-28-20_22_13.sha256",
+      "verified": true
+    },
+    {
+      "source_file": "screencapture-patentscope-wipo-int-search-en-result-jsf-2026-06-28-20_26_32.pdf",
+      "sha256": "da4067e20b860784325acb7bc179dde681ab2c0bb1da609aad5da1d37af1aebb",
+      "rfc3161_timestamp_utc": "Jun 29 05:06:05 2026 GMT",
+      "timestamp_request": "screencapture-patentscope-wipo-int-search-en-result-jsf-2026-06-28-20_26_32.tsq",
+      "timestamp_response": "screencapture-patentscope-wipo-int-search-en-result-jsf-2026-06-28-20_26_32.tsr",
+      "hash_file": "screencapture-patentscope-wipo-int-search-en-result-jsf-2026-06-28-20_26_32.sha256",
+      "verified": true
+    },
+    {
+      "source_file": "screencapture-ppubs-uspto-gov-basic-2026-06-28-20_00_11.pdf",
+      "sha256": "d95e68cb6572974b376ffb392e1f7f23a091ef0d7af7618f1f525664783a0d02",
+      "rfc3161_timestamp_utc": "Jun 29 05:06:05 2026 GMT",
+      "timestamp_request": "screencapture-ppubs-uspto-gov-basic-2026-06-28-20_00_11.tsq",
+      "timestamp_response": "screencapture-ppubs-uspto-gov-basic-2026-06-28-20_00_11.tsr",
+      "hash_file": "screencapture-ppubs-uspto-gov-basic-2026-06-28-20_00_11.sha256",
+      "verified": true
+    },
+    {
+      "source_file": "screencapture-ppubs-uspto-gov-basic-2026-06-28-20_01_22.pdf",
+      "sha256": "f0fa8c5c7d095969076844b8e6d394bb4a9462f4d64328cd93158a4c6e27afe8",
+      "rfc3161_timestamp_utc": "Jun 29 05:06:05 2026 GMT",
+      "timestamp_request": "screencapture-ppubs-uspto-gov-basic-2026-06-28-20_01_22.tsq",
+      "timestamp_response": "screencapture-ppubs-uspto-gov-basic-2026-06-28-20_01_22.tsr",
+      "hash_file": "screencapture-ppubs-uspto-gov-basic-2026-06-28-20_01_22.sha256",
+      "verified": true
+    },
+    {
+      "source_file": "screencapture-ppubs-uspto-gov-basic-2026-06-28-20_01_44.pdf",
+      "sha256": "5bb1bccfaffebe78d42cbb2ca631daaf05abcdd47ec3490e199466db30806bd3",
+      "rfc3161_timestamp_utc": "Jun 29 05:06:06 2026 GMT",
+      "timestamp_request": "screencapture-ppubs-uspto-gov-basic-2026-06-28-20_01_44.tsq",
+      "timestamp_response": "screencapture-ppubs-uspto-gov-basic-2026-06-28-20_01_44.tsr",
+      "hash_file": "screencapture-ppubs-uspto-gov-basic-2026-06-28-20_01_44.sha256",
+      "verified": true
+    },
+    {
+      "source_file": "screencapture-ppubs-uspto-gov-pubwebapp-2026-06-28-20_06_19.pdf",
+      "sha256": "9be30db3913a616e2b809b4f79d2ff9f14ec41326a569db5da70a35163a7b75c",
+      "rfc3161_timestamp_utc": "Jun 29 05:06:06 2026 GMT",
+      "timestamp_request": "screencapture-ppubs-uspto-gov-pubwebapp-2026-06-28-20_06_19.tsq",
+      "timestamp_response": "screencapture-ppubs-uspto-gov-pubwebapp-2026-06-28-20_06_19.tsr",
+      "hash_file": "screencapture-ppubs-uspto-gov-pubwebapp-2026-06-28-20_06_19.sha256",
+      "verified": true
+    },
+    {
+      "source_file": "screencapture-ppubs-uspto-gov-pubwebapp-2026-06-28-20_07_04.pdf",
+      "sha256": "0fa69fe50500bb15da69ee163677fc0bdd5443046ea9ee1c6fb8a0e2901b7467",
+      "rfc3161_timestamp_utc": "Jun 29 05:06:06 2026 GMT",
+      "timestamp_request": "screencapture-ppubs-uspto-gov-pubwebapp-2026-06-28-20_07_04.tsq",
+      "timestamp_response": "screencapture-ppubs-uspto-gov-pubwebapp-2026-06-28-20_07_04.tsr",
+      "hash_file": "screencapture-ppubs-uspto-gov-pubwebapp-2026-06-28-20_07_04.sha256",
+      "verified": true
+    },
+    {
+      "source_file": "screencapture-ppubs-uspto-gov-pubwebapp-2026-06-28-20_12_55.pdf",
+      "sha256": "5fbcf753314bc7d661f8500d0a7a2f248f887d1f981f3590ac69a281f4752e05",
+      "rfc3161_timestamp_utc": "Jun 29 05:06:07 2026 GMT",
+      "timestamp_request": "screencapture-ppubs-uspto-gov-pubwebapp-2026-06-28-20_12_55.tsq",
+      "timestamp_response": "screencapture-ppubs-uspto-gov-pubwebapp-2026-06-28-20_12_55.tsr",
+      "hash_file": "screencapture-ppubs-uspto-gov-pubwebapp-2026-06-28-20_12_55.sha256",
+      "verified": true
+    },
+    {
+      "source_file": "screencapture-ppubs-uspto-gov-pubwebapp-2026-06-28-20_17_53.pdf",
+      "sha256": "a4de0626202b7652aeda12855e80906c99299493769caf030f3804d229626320",
+      "rfc3161_timestamp_utc": "Jun 29 05:06:07 2026 GMT",
+      "timestamp_request": "screencapture-ppubs-uspto-gov-pubwebapp-2026-06-28-20_17_53.tsq",
+      "timestamp_response": "screencapture-ppubs-uspto-gov-pubwebapp-2026-06-28-20_17_53.tsr",
+      "hash_file": "screencapture-ppubs-uspto-gov-pubwebapp-2026-06-28-20_17_53.sha256",
+      "verified": true
+    },
+    {
+      "source_file": "Screenshot 2026-06-28 220302.png",
+      "sha256": "7d29eee468924b9a2f291206eb7fda6658cee4b526c3220d4e941fb1dbeb56c1",
+      "rfc3161_timestamp_utc": "Jun 29 05:06:07 2026 GMT",
+      "timestamp_request": "Screenshot_2026-06-28_220302.tsq",
+      "timestamp_response": "Screenshot_2026-06-28_220302.tsr",
+      "hash_file": "Screenshot_2026-06-28_220302.sha256",
+      "verified": true
+    }
+  ]
+}
