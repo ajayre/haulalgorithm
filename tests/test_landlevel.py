@@ -207,7 +207,9 @@ def test_guidance_preserves_haul_and_depth_caps(tmp_path):
     # The blade-scale guidance haul tracks the optimizer's route haul. It is not
     # identical: lane endpoints land at patch corners, so allow modest slack.
     assert g.haul_dist_m == pytest.approx(g.route_haul_dist_m, rel=0.15, abs=2.0)
-    # Blade coverage never lowers the sweep below the planned centerline.
+    # Blade coverage never lowers the sweep below the planned centerline. Route
+    # smoothing only moves the displayed steering points; distance/time stay on
+    # the raw coverage geometry, so this strict floor must still hold.
     assert g.cut_dist_m >= g.planned_cut_dist_m - 1e-6
     assert g.fill_dist_m >= g.planned_fill_dist_m - 1e-6
     # Per-point depth never exceeds the 61 mm layer cap.

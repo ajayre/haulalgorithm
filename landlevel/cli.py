@@ -45,7 +45,12 @@ from .render import (
 )
 from .routing import sequence_passes
 from .sequence import sequence_cut_zones, write_pass_pairs_csv, write_sequence_csv
-from .swaths import build_guidance, estimate_guidance_time, write_guidance_csv
+from .swaths import (
+    build_guidance,
+    estimate_guidance_time,
+    reprofile_knots,
+    write_guidance_csv,
+)
 from .strips import trace_strips
 from .timemodel import TimeParams, estimate_time
 
@@ -96,6 +101,19 @@ def build_parser() -> argparse.ArgumentParser:
                         "load, instead of ending a pass partially full (default "
                         "%(default)g ft). Larger = fewer, fuller passes but longer "
                         "in-pass repositioning; 0 disables multi-drop.")
+    p.add_argument("--min-load-fill", type=float, default=90.0,
+                   help="drivability vs load-fullness trade-off (percent, default "
+                        "%(default)g). Once a load reaches this fraction of scraper "
+                        "capacity, further multi-drop hops are skipped so the cut "
+                        "stays a single flowing lane instead of a U-turn blob. 100 "
+                        "= chase every load to full (more blobs); lower = more "
+                        "drivable but slightly under-filled loads.")
+    p.add_argument("--no-knot-repair", action="store_true",
+                   help="disable bad-knot re-profiling (leave the few undriveable "
+                        "blob sweeps as-is). By default each load whose cut or "
+                        "fill sweep is a tangled knot is re-profiled into "
+                        "boustrophedon parallel passes (straight back-and-forth "
+                        "blade lanes) covering the same cells with the same load.")
     p.add_argument("--field-efficiency", type=float, default=DEFAULT_FIELD_EFFICIENCY,
                    help="fraction of productive time (0-1); 0.8 = 80%%")
     p.add_argument("--loading-speed-mph", type=float, default=DEFAULT_LOADING_SPEED_MPH)
@@ -247,6 +265,7 @@ def main(argv: list[str] | None = None) -> int:
         max_drop_hop_m=args.max_drop_hop_ft * FEET_TO_METERS,
         flow=flow,
         flow_aligned=flow_aligned,
+        min_load_frac=args.min_load_fill / 100.0,
     )
     sys.stderr.write(
         f"INFO: {len(pass_result.passes)} passes in {pass_result.rounds} rounds "
@@ -262,6 +281,17 @@ def main(argv: list[str] | None = None) -> int:
         turn_speed_mph=args.turn_speed_mph,
         turning_circle_ft=args.turning_circle_ft,
     )
+
+    # Re-profile any undriveable knot sweeps as boustrophedon parallel passes
+    # (straight back-and-forth blade lanes instead of a tangled zig-zag). The
+    # load, haul and every cut/fill bin are unchanged - only the in-patch path
+    # becomes drivable. Done after sequencing so the plan is intact.
+    if not args.no_knot_repair:
+        n_reprofiled = reprofile_knots(route, grid, args.blade_width_mm,
+                                       heading_deg=heading_deg,
+                                       lane_overlap=args.lane_overlap)
+        sys.stderr.write(f"INFO: re-profiled {n_reprofiled} knot sweeps as "
+                         f"boustrophedon parallel passes\n")
 
     zone_steps = []
     if args.zones and args.zones > 0:
@@ -357,6 +387,7 @@ def main(argv: list[str] | None = None) -> int:
         print("=" * 56)
 
     if args.guidance_csv is not None or args.guidance_png is not None:
+        guidance_grid = grid
         sys.stderr.write("INFO: building blade-scale guidance track\n")
         guidance = build_guidance(
             grid, field, route,
@@ -398,6 +429,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  Turns: {guidance.n_turns:,} tight (>= {args.turn_threshold_deg:g} deg)  "
               f"(turn circle {args.turning_circle_ft:g} ft @ {args.turn_speed_mph:g} mph; "
               f"gentler bends driven in stride)")
+        print(f"  Drivability fix: {guidance.n_repaired_sweeps:,} tangled sweeps "
+              f"re-tiled to clean serpentines")
         seq_mode = ("off (deadhead distance + 2-opt)" if args.no_direction_aware
                     else "on (deadhead time + turn-into-cut penalty)")
         print(f"  Sequencing: direction-aware {seq_mode}; "
@@ -416,7 +449,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.guidance_png is not None:
             gpng = (args.out.with_name(args.out.stem + "_guidance.png")
                     if args.guidance_png == "__AUTO__" else Path(args.guidance_png))
-            render_guidance_png(grid, guidance.points, gpng,
+            render_guidance_png(guidance_grid, guidance.points, gpng,
                                 pixels_per_bin=args.pixels_per_bin,
                                 blade_width_m=guidance.blade_width_m)
             print(f"Guidance PNG: {gpng}")

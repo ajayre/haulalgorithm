@@ -36,9 +36,10 @@ import math
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
-from . import DEFAULT_TURNING_CIRCLE_FT, FEET_TO_METERS
+from . import DEFAULT_TURNING_CIRCLE_FT, FEET_TO_METERS, M3_TO_CY
 from .agd import AgdField, latlon_from_utm
 from .grid import Grid
+from .passes import Pass
 from .routing import Route
 
 Cell = Tuple[int, int]
@@ -99,6 +100,9 @@ class GuidanceResult:
     # Turning (45 ft circle etc.).
     n_turns: int               # count of significant heading changes (> 30 deg)
     turn_angle_rad: float      # total absolute heading change over the track
+    # Find-and-fix: sweeps whose self-crossing knot was re-tiled into a clean
+    # principal-axis serpentine (§13.3b).
+    n_repaired_sweeps: int = 0
 
     def coverage_factor(self) -> float:
         """Blade-scale sweep length / planned centerline sweep length (>= 1)."""
@@ -146,6 +150,72 @@ def _centroid(points: List[XY]) -> XY:
 
 def _seg_length(points: List[XY]) -> float:
     return sum(math.dist(points[k], points[k + 1]) for k in range(len(points) - 1))
+
+
+def _hard_turn_count(
+    lane: List[Tuple[float, float, float]],
+    grid: Grid,
+    blade_m: float,
+    deg_threshold: float = 100.0,
+) -> int:
+    """Number of near-reversal (hairpin) turns on a sweep's drivable centreline.
+
+    The raw lane steps one waypoint per cell, so a diagonal lane is a staircase
+    of 45/90 deg jogs; we first RDP-simplify to the line the operator actually
+    drives, then count interior vertices whose heading change is at or above
+    ``deg_threshold`` (a hairpin no 45 ft-circle machine can track in place).
+
+    A clean serpentine only hairpins at its lane *ends* (so a k-lane patch scores
+    ~k-1); a fragmented "blob" chained by nearest-run order hairpins repeatedly in
+    a tiny area and scores much higher. The gap is what the repair keys on.
+    """
+    n = len(lane)
+    if n < 3:
+        return 0
+    xs = [p[0] for p in lane]
+    ys = [p[1] for p in lane]
+    tol = max(0.5 * blade_m, 0.5 * grid.grid_size_m)
+    keep = _rdp_keep(xs, ys, tol)
+    if len(keep) < 3:
+        return 0
+    cnt = 0
+    for k in range(1, len(keep) - 1):
+        a = (xs[keep[k - 1]], ys[keep[k - 1]])
+        b = (xs[keep[k]], ys[keep[k]])
+        c = (xs[keep[k + 1]], ys[keep[k + 1]])
+        b0 = _bearing_deg(a, b)
+        b1 = _bearing_deg(b, c)
+        if abs(((b1 - b0 + 180.0) % 360.0) - 180.0) >= deg_threshold:
+            cnt += 1
+    return cnt
+
+
+def _principal_heading_deg(centers: List[XY]) -> float:
+    """Compass bearing (0=N, 90=E) of a point cloud's principal (major) axis.
+
+    Used to re-tile a tangled patch into clean parallel lanes that run along the
+    patch's long axis (fewest lanes -> fewest U-turns).
+    """
+    n = len(centers)
+    if n < 2:
+        return 0.0
+    ox, oy = _centroid(centers)
+    sxx = sxy = syy = 0.0
+    for x, y in centers:
+        dx, dy = x - ox, y - oy
+        sxx += dx * dx
+        sxy += dx * dy
+        syy += dy * dy
+    tr = sxx + syy
+    det = sxx * syy - sxy * sxy
+    disc = max(0.0, (tr * 0.5) ** 2 - det)
+    lam = tr * 0.5 + math.sqrt(disc)          # major eigenvalue
+    ex, ey = sxy, lam - sxx                     # corresponding eigenvector
+    if abs(ex) < 1e-12 and abs(ey) < 1e-12:
+        ex, ey = lam - syy, sxy
+    if abs(ex) < 1e-12 and abs(ey) < 1e-12:
+        return 0.0
+    return math.degrees(math.atan2(ex, ey)) % 360.0
 
 
 def _smooth_run_xy(xys: List[XY], sigma_idx: float) -> List[XY]:
@@ -404,6 +474,30 @@ def _lanes_flow(
     return pts
 
 
+def _lane_direct(
+    cell_list: List[Tuple[Cell, float]],
+    grid: Grid,
+    orient_start_xy: Optional[XY] = None,
+    orient_end_xy: Optional[XY] = None,
+) -> List[Tuple[float, float, float]]:
+    """Sweep cells in their stored order (knot-reduced patches only).
+
+    The matcher already threaded a single bounded-curvature lane through these
+    cells, so the list *is* the drivable route. We must not re-chain it (that is
+    what re-tangles it); we only flip the whole sweep to keep the haul junction.
+    """
+    pts = [(grid.cell_center_xy(*c)[0], grid.cell_center_xy(*c)[1], d)
+           for c, d in cell_list]
+    if len(pts) >= 2:
+        if orient_end_xy is not None:
+            if _d2((pts[0][0], pts[0][1]), orient_end_xy) < _d2((pts[-1][0], pts[-1][1]), orient_end_xy):
+                pts.reverse()
+        elif orient_start_xy is not None:
+            if _d2((pts[-1][0], pts[-1][1]), orient_start_xy) < _d2((pts[0][0], pts[0][1]), orient_start_xy):
+                pts.reverse()
+    return pts
+
+
 def _lanes_multi(
     cell_list: List[Tuple[Cell, float]],
     grid: Grid,
@@ -445,6 +539,264 @@ def _lanes_multi(
             pts += _lanes_for_patch(pockets[i], grid, blade_m, heading_deg, overlap,
                                     orient_start_xy=st)
     return pts
+
+
+def _repair_if_tangled(
+    lane: List[Tuple[float, float, float]],
+    cells: List[Tuple[Cell, float]],
+    grid: Grid,
+    blade_m: float,
+    orient_start_xy: Optional[XY] = None,
+    orient_end_xy: Optional[XY] = None,
+) -> Tuple[List[Tuple[float, float, float]], int]:
+    """Find-and-fix pass for a non-drivable sweep.
+
+    When a compact "blob" patch is chained by nearest-run order the sweep folds
+    back over itself into an undriveable knot (many hairpin reversals in a tiny
+    area). This re-tiles the same cells as a clean serpentine of blade-width lanes
+    along the patch's principal axis (``_lanes_multi`` with the PCA heading),
+    oriented to the same haul junction, and keeps it only if it **strictly
+    reduces** the hairpin-turn count (so the repair can never make a sweep worse;
+    genuine flowing streamlines, which already score ~0, are left untouched).
+    Returns ``(lane, 1)`` if repaired, else ``(lane, 0)``.
+    """
+    c0 = _hard_turn_count(lane, grid, blade_m)
+    if c0 == 0:
+        return lane, 0
+    centers = [grid.cell_center_xy(*c) for c, _d in cells]
+    pca_h = _principal_heading_deg(centers)
+    alt = _lanes_multi(cells, grid, blade_m, pca_h, 0.0,
+                       orient_start_xy=orient_start_xy, orient_end_xy=orient_end_xy)
+    if alt and _hard_turn_count(alt, grid, blade_m) < c0:
+        return alt, 1
+    return lane, 0
+
+
+def _patch_drivable_lanes(
+    cells: List[Tuple[Cell, float]],
+    grid: Grid,
+    blade_m: float,
+) -> List[List[Tuple[Cell, float]]]:
+    """Decompose a patch into its parallel blade-width lanes (drivable units).
+
+    The cells are projected onto the patch's principal axis (:func:`_principal_
+    heading_deg`) and binned into blade-wide bands across it. Each band, swept
+    end-to-end along the long axis, is one straight (gently flowing) lane a
+    scraper can drive without a hairpin. Returned in cross-axis band order, each
+    lane's cells sorted along the axis. This is the natural decomposition that
+    turns a knotted serpentine (whose U-turns are the knot) into a set of
+    individually drivable lanes.
+    """
+    if len(cells) <= 1:
+        return [list(cells)]
+    centers = [grid.cell_center_xy(*c) for c, _d in cells]
+    h = _principal_heading_deg(centers)
+    th = math.radians(h)
+    uh = (math.sin(th), math.cos(th))     # along the long axis
+    vh = (math.cos(th), -math.sin(th))    # across it (lane-to-lane)
+    ox, oy = _centroid(centers)
+    us = [(x - ox) * uh[0] + (y - oy) * uh[1] for x, y in centers]
+    vs = [(x - ox) * vh[0] + (y - oy) * vh[1] for x, y in centers]
+    step = max(blade_m, 1e-3)
+    v_min, v_max = min(vs), max(vs)
+    n_lanes = max(1, int(math.floor((v_max - v_min) / step + 1e-9)) + 1)
+    lane_v = [v_min + step * k for k in range(n_lanes)]
+    if v_max - lane_v[-1] > 0.5 * step:
+        lane_v.append(v_max)
+    groups: List[List[int]] = [[] for _ in lane_v]
+    for i in range(len(cells)):
+        k = min(range(len(lane_v)), key=lambda L: abs(vs[i] - lane_v[L]))
+        groups[k].append(i)
+    lanes: List[List[Tuple[Cell, float]]] = []
+    for members in groups:
+        if not members:
+            continue
+        members.sort(key=lambda i: us[i])
+        lanes.append([cells[i] for i in members])
+    return lanes
+
+
+def _boustrophedon_one(
+    cells: List[Tuple[Cell, float]],
+    grid: Grid,
+    blade_m: float,
+    orient_start_xy: Optional[XY] = None,
+    orient_end_xy: Optional[XY] = None,
+) -> List[Tuple[Cell, float]]:
+    """Boustrophedon a single connected pocket (parallel back-and-forth lanes).
+
+    The pocket is decomposed into its parallel blade-width lanes along the
+    principal axis (:func:`_patch_drivable_lanes`) and the lanes are walked in
+    serpentine order - every other lane reversed - so the machine drives one
+    straight lane, makes a single turn at the headland, and drives the next lane
+    back. The whole sweep is flipped so it starts/ends at the haul junction.
+    """
+    lanes = _patch_drivable_lanes(cells, grid, blade_m)
+    out: List[Tuple[Cell, float]] = []
+    for j, lane in enumerate(lanes):
+        out += list(reversed(lane)) if (j % 2) else list(lane)
+    if len(out) >= 2:
+        c0 = grid.cell_center_xy(*out[0][0])
+        c1 = grid.cell_center_xy(*out[-1][0])
+        if orient_end_xy is not None:
+            if _d2(c0, orient_end_xy) < _d2(c1, orient_end_xy):
+                out.reverse()
+        elif orient_start_xy is not None:
+            if _d2(c1, orient_start_xy) < _d2(c0, orient_start_xy):
+                out.reverse()
+    return out
+
+
+def _boustrophedon_cells(
+    cells: List[Tuple[Cell, float]],
+    grid: Grid,
+    blade_m: float,
+    orient_start_xy: Optional[XY] = None,
+    orient_end_xy: Optional[XY] = None,
+) -> List[Tuple[Cell, float]]:
+    """Re-order a patch's cells as a boustrophedon, **pocket by pocket**.
+
+    A single load may span several disjoint pockets (a multi-drop cut/fill).
+    Binning the whole spread as one lane field would stitch distant pockets
+    together with long blade-up jumps, so - exactly like :func:`_lanes_multi` -
+    the patch is split into connected pockets, each pocket is boustrophedon'd
+    locally (:func:`_boustrophedon_one`), and the pockets are ordered to finish
+    nearest the fill (``orient_end_xy``, cut side) or start nearest the haul
+    arrival (``orient_start_xy``, fill side) so inter-pocket repositions stay
+    minimal. Every original cell is kept, so the soil routing and simulated
+    surface are unchanged - only the path through the patch changes.
+    """
+    pockets = _connected_pockets(cells)
+    if len(pockets) <= 1:
+        return _boustrophedon_one(cells, grid, blade_m,
+                                  orient_start_xy=orient_start_xy,
+                                  orient_end_xy=orient_end_xy)
+    cents = [_centroid([grid.cell_center_xy(*c) for c, _d in pk]) for pk in pockets]
+    out: List[Tuple[Cell, float]] = []
+    if orient_end_xy is not None:
+        order = sorted(range(len(pockets)), key=lambda i: -_d2(cents[i], orient_end_xy))
+        for rank, i in enumerate(order):
+            tgt = orient_end_xy if rank == len(order) - 1 else cents[order[rank + 1]]
+            out += _boustrophedon_one(pockets[i], grid, blade_m, orient_end_xy=tgt)
+    else:
+        src = orient_start_xy if orient_start_xy is not None else cents[0]
+        order = sorted(range(len(pockets)), key=lambda i: _d2(cents[i], src))
+        for rank, i in enumerate(order):
+            st = src if rank == 0 else cents[order[rank - 1]]
+            out += _boustrophedon_one(pockets[i], grid, blade_m, orient_start_xy=st)
+    return out
+
+
+def _rendered_lane(
+    cells: List[Tuple[Cell, float]],
+    grid: Grid,
+    blade_m: float,
+    flow_pass: bool,
+    heading_deg: float,
+    overlap: float,
+    orient_start_xy: Optional[XY] = None,
+    orient_end_xy: Optional[XY] = None,
+) -> List[Tuple[float, float, float]]:
+    """The sweep the guidance would draw today (mirrors :func:`build_guidance`).
+
+    Flow-aligned passes follow the streamline (:func:`_lanes_flow`); single-
+    heading passes are tiled into straight lanes (:func:`_lanes_multi`). Either
+    way the serpentine find-and-fix (:func:`_repair_if_tangled`) runs, so this is
+    exactly the path scored for drivability - not the raw, unrepaired order.
+    """
+    if flow_pass:
+        lane = _lanes_flow(cells, grid, orient_start_xy=orient_start_xy,
+                           orient_end_xy=orient_end_xy)
+    else:
+        lane = _lanes_multi(cells, grid, blade_m, heading_deg, overlap,
+                            orient_start_xy=orient_start_xy, orient_end_xy=orient_end_xy)
+    lane, _ = _repair_if_tangled(lane, cells, grid, blade_m,
+                                 orient_start_xy=orient_start_xy,
+                                 orient_end_xy=orient_end_xy)
+    return lane
+
+
+def _pass_is_knot(p: Pass, grid: Grid, blade_m: float, hairpin_min: int,
+                  heading_deg: float = 0.0, overlap: float = 0.0) -> bool:
+    """True when the cut or fill sweep *as the guidance renders it* still hairpins.
+
+    Uses the rendered path (flow/lane tiling + serpentine find-and-fix), so a
+    sweep the existing pipeline already drives cleanly is **not** flagged - only
+    genuine, still-tangled knots are.
+    """
+    flow_pass = p.cut_heading_deg is not None or p.fill_heading_deg is not None
+    cut_h = p.cut_heading_deg if p.cut_heading_deg is not None else heading_deg
+    fill_h = p.fill_heading_deg if p.fill_heading_deg is not None else heading_deg
+    if len(p.cut_cells) > 3:
+        lane = _rendered_lane(p.cut_cells, grid, blade_m, flow_pass, cut_h, overlap,
+                              orient_end_xy=p.fill_start_xy)
+        if _hard_turn_count(lane, grid, blade_m) >= hairpin_min:
+            return True
+    if len(p.fill_cells) > 3:
+        cut_end = grid.cell_center_xy(*p.cut_cells[-1][0]) if p.cut_cells else None
+        lane = _rendered_lane(p.fill_cells, grid, blade_m, flow_pass, fill_h, overlap,
+                              orient_start_xy=cut_end)
+        if _hard_turn_count(lane, grid, blade_m) >= hairpin_min:
+            return True
+    return False
+
+
+def reprofile_knots(
+    route: Route,
+    grid: Grid,
+    blade_width_mm: float,
+    hairpin_min: int = 3,
+    heading_deg: float = 0.0,
+    lane_overlap: float = 0.0,
+) -> int:
+    """Re-profile tangled knot sweeps as boustrophedon parallel passes, in place.
+
+    The matcher emits the full plan; some compact loads chain into an
+    undriveable zig-zag knot. This walks each sequenced pass and, for the cut and
+    fill sweeps, compares the path the guidance renders today (flow/lane tiling +
+    the serpentine find-and-fix, :func:`_rendered_lane`) against a boustrophedon
+    of straight back-and-forth blade lanes (:func:`_boustrophedon_cells`). The
+    boustrophedon is adopted **only when the rendered path is still a knot**
+    (``>= hairpin_min`` hairpins) **and the boustrophedon strictly fewer** - so a
+    sweep that already drives cleanly (e.g. a gentle flowing fill) is never made
+    worse. The load, haul and every cut/fill bin are unchanged, so neither the
+    soil routing nor the simulated surface moves; only the in-patch path changes.
+    Returns the number of patches re-profiled.
+    """
+    blade_m = blade_width_mm / 1000.0
+    n = 0
+    for p in route.ordered_passes:
+        flow_pass = p.cut_heading_deg is not None or p.fill_heading_deg is not None
+        cut_h = p.cut_heading_deg if p.cut_heading_deg is not None else heading_deg
+        fill_h = p.fill_heading_deg if p.fill_heading_deg is not None else heading_deg
+
+        if len(p.cut_cells) > 3:
+            rendered = _rendered_lane(p.cut_cells, grid, blade_m, flow_pass, cut_h,
+                                      lane_overlap, orient_end_xy=p.fill_start_xy)
+            c_now = _hard_turn_count(rendered, grid, blade_m)
+            if c_now >= hairpin_min:
+                bcells = _boustrophedon_cells(p.cut_cells, grid, blade_m,
+                                              orient_end_xy=p.fill_start_xy)
+                blane = _lane_direct(bcells, grid, orient_end_xy=p.fill_start_xy)
+                if _hard_turn_count(blane, grid, blade_m) < c_now:
+                    p.cut_cells = bcells
+                    p.cut_knot_reduced = True
+                    n += 1
+
+        cut_end = grid.cell_center_xy(*p.cut_cells[-1][0]) if p.cut_cells else None
+        if len(p.fill_cells) > 3:
+            rendered = _rendered_lane(p.fill_cells, grid, blade_m, flow_pass, fill_h,
+                                      lane_overlap, orient_start_xy=cut_end)
+            c_now = _hard_turn_count(rendered, grid, blade_m)
+            if c_now >= hairpin_min:
+                bcells = _boustrophedon_cells(p.fill_cells, grid, blade_m,
+                                              orient_start_xy=cut_end)
+                blane = _lane_direct(bcells, grid, orient_start_xy=cut_end)
+                if _hard_turn_count(blane, grid, blade_m) < c_now:
+                    p.fill_cells = bcells
+                    p.fill_knot_reduced = True
+                    n += 1
+    return n
 
 
 # ---------------------------------------------------------------------------
@@ -500,6 +852,7 @@ def build_guidance(
     points: List[GuidancePoint] = []
     return_d = haul_d = cut_d = fill_d = grade_d = reposition_d = 0.0
     planned_cut_d = planned_fill_d = route_haul_d = 0.0
+    n_repaired = 0
 
     prev_xy: Optional[XY] = None       # end of the previous waypoint (raw coverage)
     seq = 0
@@ -528,17 +881,36 @@ def build_guidance(
         # begins) so the per-pass haul leg stays the optimizer's transit. Flow
         # strips are driven along their (curved) spine; single-heading patches are
         # tiled into straight blade lanes.
-        if flow_pass:
+        # A knot-reduced patch is already a single drivable lane in stored order:
+        # follow it directly (no re-chaining / no re-tangle). Otherwise tile the
+        # flow lane (or single-heading lanes) and run the serpentine find-and-fix.
+        if getattr(p, "cut_knot_reduced", False):
+            cut_lane = _lane_direct(p.cut_cells, grid, orient_end_xy=p.fill_start_xy)
+        elif flow_pass:
             cut_lane = _lanes_flow(p.cut_cells, grid, orient_end_xy=p.fill_start_xy)
+            cut_lane, fixed = _repair_if_tangled(cut_lane, p.cut_cells, grid, blade_m,
+                                                 orient_end_xy=p.fill_start_xy)
+            n_repaired += fixed
         else:
             cut_lane = _lanes_multi(p.cut_cells, grid, blade_m, cut_h, lane_overlap,
                                     orient_end_xy=p.fill_start_xy)
+            cut_lane, fixed = _repair_if_tangled(cut_lane, p.cut_cells, grid, blade_m,
+                                                 orient_end_xy=p.fill_start_xy)
+            n_repaired += fixed
         cut_end_xy = (cut_lane[-1][0], cut_lane[-1][1]) if cut_lane else p.cut_end_xy
-        if flow_pass:
+        if getattr(p, "fill_knot_reduced", False):
+            fill_lane = _lane_direct(p.fill_cells, grid, orient_start_xy=cut_end_xy)
+        elif flow_pass:
             fill_lane = _lanes_flow(p.fill_cells, grid, orient_start_xy=cut_end_xy)
+            fill_lane, fixed = _repair_if_tangled(fill_lane, p.fill_cells, grid, blade_m,
+                                                  orient_start_xy=cut_end_xy)
+            n_repaired += fixed
         else:
             fill_lane = _lanes_multi(p.fill_cells, grid, blade_m, fill_h, lane_overlap,
                                      orient_start_xy=cut_end_xy)
+            fill_lane, fixed = _repair_if_tangled(fill_lane, p.fill_cells, grid, blade_m,
+                                                  orient_start_xy=cut_end_xy)
+            n_repaired += fixed
 
         # Drivable steering line: smooth each sweep's *shape* (endpoints pinned, so
         # the haul/return junctions are untouched). This is what the operator
@@ -642,6 +1014,7 @@ def build_guidance(
         route_haul_dist_m=route_haul_d,
         n_turns=n_turns,
         turn_angle_rad=turn_angle,
+        n_repaired_sweeps=n_repaired,
     )
 
 

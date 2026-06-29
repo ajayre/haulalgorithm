@@ -46,6 +46,11 @@ class Pass:
     # along these so the lanes follow the flow rather than one global heading.
     cut_heading_deg: Optional[float] = None
     fill_heading_deg: Optional[float] = None
+    # Set when the knot repair reduced the patch to a single bounded-curvature
+    # lane. The cell list is then already in drivable route order, so guidance
+    # must follow it directly instead of re-deriving (and re-tangling) the sweep.
+    cut_knot_reduced: bool = False
+    fill_knot_reduced: bool = False
 
 
 class _Ledger:
@@ -124,6 +129,7 @@ def generate_passes(
     max_drop_hop_m: float = DEFAULT_MAX_DROP_HOP_FT * FEET_TO_METERS,
     flow: Optional[FlowField] = None,
     flow_aligned: bool = False,
+    min_load_frac: float = 1.0,
 ) -> PassResult:
     """Generate cut-haul-fill passes packed to ``max_load_bcy`` (spec §11).
 
@@ -146,8 +152,22 @@ def generate_passes(
       resulting lanes curve across the field. The per-pass cut/fill bearings are
       recorded on each :class:`Pass` so the guidance builder tiles blade lanes
       along the flow rather than one global heading.
+
+    ``min_load_frac`` (0..1) trades load-fullness for drivability. Topping a load
+    to capacity often forces a multi-drop hop into a *laterally offset* pocket,
+    which turns the single flowing lane into a side-by-side blob that the blade
+    can only cover with tight U-turns no scraper can drive. Once a load reaches
+    ``min_load_frac`` of capacity, further multi-drop hops are skipped and the
+    load is taken as complete - keeping passes as single flowing lanes at the
+    cost of slightly under-filled loads. ``1.0`` restores the original
+    chase-to-full behaviour.
+
+    Undriveable "knot" sweeps are *not* fixed here - the full plan (knots and
+    all) is generated, then :func:`landlevel.swaths.reprofile_knots` re-profiles
+    the offending sweeps into boustrophedon parallel passes after sequencing.
     """
     tol_m = tolerance_mm / 1000.0
+    min_load_frac = min(max(min_load_frac, 0.0), 1.0)
     led = _Ledger(grid, tol_m)
     cut_per_m = led.cut_bcy_per_m()
     fill_per_m = led.fill_bcy_per_m()
@@ -245,6 +265,10 @@ def generate_passes(
                 cut_cells.extend(cells)
                 load += got
             if load >= load_cap - 1e-9:
+                break
+            # Drivability cutoff: once the load is "full enough", stop chasing the
+            # last bit with extra hops that would blob the cut into a U-turn patch.
+            if load >= min_load_frac * load_cap - 1e-9:
                 break
             last_xy = (grid.cell_center_xy(*cells[-1][0]) if cells
                        else grid.cell_center_xy(*seed))

@@ -11,6 +11,8 @@ time report and a range of optional outputs (zone work order, per-pass CSVs, a
 haul "heat map", a leveling animation, and a **blade-scale operator guidance**
 track — turn-by-turn waypoints on a **smoothed, drivable GPS route** — with a
 realistic drivable time that counts turning and the grade/compact pass).
+Undriveable "knot" loads are automatically re-profiled into **boustrophedon**
+(back-and-forth parallel) sweeps so the route stays drivable.
 
 ## Install
 
@@ -116,6 +118,7 @@ from spec §6.2–§6.4.
 | `--blade-width-mm` | 2271 | scraper blade/cut width (the tandem 7 ft + 10 ft scrapers have an ≈ 8.5 ft volume-weighted effective width — pass `2590.8` to model that) |
 | `--strip-bias` | 50 | grow each load's cut/fill as one long blade-wide lane along the heading (≈ the lane length in cells chased before stepping sideways; 1 = compact blob) |
 | `--max-drop-hop-ft` | 100 | multi-drop: how far the scraper drives (blade up) to the next cut/fill pocket to keep loading/spreading the same load instead of ending a pass part-full (0 disables multi-drop) |
+| `--min-load-fill` | 90 | % of capacity at which multi-drop stops chasing more pockets, so the load stays a single clean lane instead of a U-turn blob; `100` = chase every load to full |
 
 ### Haul behaviour
 
@@ -152,6 +155,7 @@ grade/compact return pass, and the turn-aware sequencing.
 | `--turn-threshold-deg` | 60 | heading changes below this are gentle bends driven in stride (no slowdown); only sharper turns cost turn time |
 | `--no-grade-return` | off | do **not** add a grade/compact return pass over each fill |
 | `--no-route-smoothing` | off | emit raw grid-stepped guidance waypoints instead of smoothing each cut/fill sweep's displayed line into a drivable curve (corner radius tied to the turning circle). Smoothing is display-only: it never changes distance/turn/time |
+| `--no-knot-repair` | off | leave undriveable "knot" sweeps as-is. By default each cut/fill sweep that is still a tangled knot is re-profiled into **boustrophedon** parallel back-and-forth lanes (only when that strictly reduces hairpins); the load, haul, cells and finished surface are unchanged — only the in-patch path |
 | `--no-direction-aware` | off | disable direction-aware sequencing (turn-into-cut penalty); fall back to pure deadhead-distance ordering + 2-opt |
 | `--lane-overlap` | 0.0 | 0–0.9: fractional overlap between adjacent blade lanes (0 = lanes butt edge-to-edge) |
 | `--guidance-csv [PATH]` | off | write the blade-scale operator guidance track (turn-by-turn waypoints with depth/heading/instruction); pass the flag **alone** for `<out>_guidance.csv` |
@@ -308,7 +312,10 @@ request via `--guidance-csv` / `--guidance-png`.
   drives long continuous lanes rather than weaving. When a pass would end
   part-full, **multi-drop** lets the scraper hop (blade up) to a nearby pocket
   within `--max-drop-hop-ft` to keep loading/spreading the same load, cutting the
-  number of near-empty "crumb" passes.
+  number of near-empty "crumb" passes. To stop multi-drop from chasing the last
+  few percent into a *laterally offset* pocket (which blobs the lane into tight
+  U-turns), `--min-load-fill` (default 90%) caps load fullness — keeping more
+  loads as a single clean lane.
 - **Direction-aware sequencing.** The sequencer orders passes by a *time* cost
   that combines the empty deadhead drive with the **turn arc** needed to leave one
   pass and swing into the next cut (same 45 ft circle / turn-speed model as the
@@ -331,6 +338,19 @@ request via `--guidance-csv` / `--guidance-png`.
   coverage geometry, because the narrow blade must still cover the full cell band —
   loading distance is bounded below by `volume ÷ (max_depth × blade_width)`, and a
   shorter "smoothed" sweep would silently under-cut the field.
+- **Knot re-profiling (drivable).** A few compact multi-drop loads still chain
+  into an undriveable **knot** — a sweep that doubles back on itself with several
+  hairpin reversals no 45 ft-circle machine can follow. After sequencing the
+  guidance scans every pass and re-profiles such sweeps into a **boustrophedon**:
+  the patch is split into parallel blade-width lanes (pocket by pocket) and driven
+  as straight **back-and-forth** sweeps with a single headland turn between lanes.
+  The boustrophedon is adopted **only** where the rendered sweep is still a knot
+  **and** it strictly reduces hairpins, so clean flowing sweeps are never made
+  worse. It only re-orders cells — the load, haul, every cut/fill bin and the
+  finished surface are unchanged, so the simulated field is identical; the only
+  cost is the extra headland turns (a few percent of time). `--no-knot-repair`
+  disables it. (A thin GPS line with no cut/fill colour under it is a legitimate
+  blade-**up** reposition between genuinely separate pockets, not a missed bin.)
 
 ## Tests
 
