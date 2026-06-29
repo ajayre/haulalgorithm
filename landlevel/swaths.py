@@ -861,6 +861,7 @@ def build_guidance(
     turn_radius_m: Optional[float] = None,
     smooth_scale: float = 0.7,
     obstacles: ObstacleField = EMPTY_OBSTACLES,
+    arm_obstacles: Optional[dict] = None,
 ) -> GuidanceResult:
     """Build the blade-scale operator guidance track from the optimized route.
 
@@ -1003,13 +1004,18 @@ def build_guidance(
     # right up to the cleared bins abutting the zone. The optimizer already
     # counted these detours in the haul/deadhead distances; this realizes them on
     # the drivable track so the in-cab line bends around the no-go area.
-    if obstacles.active and len(raw) >= 2:
+    # When ``arm_obstacles`` is given (center-pivot analysis), each pass routes
+    # around the arm where it is parked during that pass, in addition to any
+    # static exclusion zones (already folded into each per-pass field).
+    if (obstacles.active or arm_obstacles) and len(raw) >= 2:
         detoured: List[Tuple[float, float, float, str, int, float, float]] = [raw[0]]
         for i in range(1, len(raw)):
             x, y, d, action, pass_no, xs_, ys_ = raw[i]
             prev = detoured[-1]
-            if action in _BLADE_UP and action != START:
-                chain = obstacles.path((prev[0], prev[1]), (x, y))
+            field_i = (arm_obstacles.get(pass_no, obstacles)
+                       if arm_obstacles else obstacles)
+            if action in _BLADE_UP and action != START and field_i.active:
+                chain = field_i.path((prev[0], prev[1]), (x, y))
                 for vx, vy in chain[1:-1]:
                     detoured.append((vx, vy, 0.0, action, pass_no, vx, vy))
             detoured.append((x, y, d, action, pass_no, xs_, ys_))

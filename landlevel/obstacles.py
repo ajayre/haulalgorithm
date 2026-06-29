@@ -184,6 +184,13 @@ class ObstacleField:
         of._build_graph()
         return of
 
+    @classmethod
+    def from_zones(cls, zones: Sequence["ExclusionZone"]) -> "ObstacleField":
+        """Build a field from already-buffered zones (e.g. mixing clearances)."""
+        of = cls(zones=list(zones))
+        of._build_graph()
+        return of
+
     @property
     def active(self) -> bool:
         return bool(self.zones)

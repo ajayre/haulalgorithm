@@ -21,6 +21,8 @@ from . import (
     DEFAULT_LOADING_SPEED_MPH,
     DEFAULT_MAX_DEPTH_MM,
     DEFAULT_MAX_DROP_HOP_FT,
+    DEFAULT_PIVOT_CLEARANCE_FT,
+    DEFAULT_PIVOT_WHEELBASE_FT,
     DEFAULT_PIXELS_PER_BIN,
     FEET_TO_METERS,
     DEFAULT_RETURN_SPEED_MPH,
@@ -30,15 +32,26 @@ from . import (
     DEFAULT_TURN_SPEED_MPH,
     DEFAULT_TURN_THRESHOLD_DEG,
     DEFAULT_TURNING_CIRCLE_FT,
+    MPH_TO_MPS,
     __version__,
 )
-from .agd import parse_agd_file, project_latlon_ring
+from .agd import parse_agd_file, project_latlon_ring, utm_from_latlon
 from .balance import balance
 from .flowfield import compute_flow_field
 from .grid import apply_exclusions, build_grid
 from .obstacles import EMPTY_OBSTACLES, ObstacleField
 from .passes import estimate_slope_heading, generate_passes
 from .animate import animate_leveling
+from .pivot import (
+    animate_pivot_leveling,
+    build_arm_obstacles,
+    cardinal,
+    compute_pivot_geometry,
+    pivot_detour_stats,
+    plan_pivot,
+    render_pivot_pngs,
+    write_pivot_csv,
+)
 from .render import (
     overlay_zone_waypoints,
     render_guidance_png,
@@ -222,6 +235,56 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--animate-mode", choices=["cutfill", "topology"], default="cutfill",
                    help="animation render: cutfill map (default) or topology "
                         "(elevation terrain that flattens to grade)")
+    p.add_argument("--pivot", action=argparse.BooleanOptionalAction, default=False,
+                   help="evaluate a center-pivot irrigation system (anchored in "
+                        "the field's middle, sized as large as fits) and schedule "
+                        "the arm bearings that keep it clear of each leveling pass "
+                        "with the fewest moves; the scraper's haul/return legs are "
+                        "routed around the arm where it is parked. Prints the move "
+                        "schedule + detour/time impact, writes a CSV, PNG maps and "
+                        "a leveling animation. Default off; use --no-pivot to "
+                        "disable explicitly.")
+    p.add_argument("--pivot-center", type=str, default=None, metavar="\"lat,lon\"",
+                   help="WGS-84 lat,lon for the pivot anchor (e.g. "
+                        "\"36.4477,-90.7236\"); defaults to the field centroid.")
+    p.add_argument("--pivot-wheelbase-ft", type=float, default=DEFAULT_PIVOT_WHEELBASE_FT,
+                   help="center-pivot wheelbase / arm width in feet (default "
+                        "%(default)g)")
+    p.add_argument("--pivot-clearance-ft", type=float, default=DEFAULT_PIVOT_CLEARANCE_FT,
+                   help="extra clearance (per side, ft) kept between the parked arm "
+                        "and the active leveling work, on top of half the wheelbase "
+                        "(default %(default)g)")
+    p.add_argument("--pivot-move-cost", type=float, default=25.0,
+                   help="cost of one pivot reposition, expressed as the number of "
+                        "single-pass haul detours it is worth avoiding (default "
+                        "%(default)g). The schedule holds the arm still until "
+                        "moving it would save more than this many detours, so a "
+                        "higher value means fewer moves and a few more detours; set "
+                        "below 1 to forbid every avoidable detour (most moves).")
+    p.add_argument("--pivot-dir", type=Path, default=None,
+                   help="directory for the per-position pivot PNG maps "
+                        "(default: <out>_pivot)")
+    p.add_argument("--pivot-csv", nargs="?", const="__AUTO__", default=None,
+                   help="write the pivot move schedule to this CSV; pass the flag "
+                        "alone (or just --pivot) for <out>_pivot.csv")
+    p.add_argument("--pivot-mode", choices=["cutfill", "topology"], default="cutfill",
+                   help="pivot PNG/animation render: cutfill map (default) or topology")
+    p.add_argument("--pivot-ppb", type=int, default=6,
+                   help="pixels per area edge for the pivot PNG maps + animation "
+                        "(default 6)")
+    p.add_argument("--pivot-gif", nargs="?", const="__AUTO__", default=None,
+                   help="animate the field leveling with the pivot arm, pausing on "
+                        "every move; pass the flag alone (the default when --pivot "
+                        "is set) for <out>_pivot_leveling.gif. Use --no-pivot-gif to "
+                        "skip it.")
+    p.add_argument("--no-pivot-gif", action="store_true",
+                   help="do not build the pivot leveling animation GIF")
+    p.add_argument("--pivot-frames", type=Path, default=None,
+                   help="also write the pivot animation as individual PNG frames "
+                        "into this directory")
+    p.add_argument("--pivot-anim-stride", type=int, default=15,
+                   help="emit one pivot-animation frame per N applied passes "
+                        "(default 15); every pivot move always gets its own frame")
     p.add_argument("--equipment-width-ft", type=float, default=DEFAULT_EQUIPMENT_WIDTH_FT,
                    help="machine (equipment) width in feet (default %(default)g). "
                         "Exclusion zones are buffered outward by half this so the "
@@ -408,6 +471,45 @@ def main(argv: list[str] | None = None) -> int:
                 f"{after / 1609.344:.2f} mi (saved {saved:.2f} mi)\n"
             )
 
+    # Center-pivot analysis (spec §12.4). Computed here, before guidance, so the
+    # guidance track can route haul/return legs around the parked arm and the
+    # time model can include the detours.
+    pivot_geom = None
+    pivot_plan = None
+    arm_obstacles = None
+    pivot_detours = 0
+    pivot_under_arm = 0
+    pivot_extra_haul_m = 0.0
+    if args.pivot:
+        center_xy = None
+        if args.pivot_center:
+            try:
+                lat_s, lon_s = (c.strip() for c in args.pivot_center.split(","))
+                lat0, lon0 = float(lat_s), float(lon_s)
+            except ValueError:
+                sys.stderr.write("ERROR: --pivot-center must be \"lat,lon\"\n")
+                return 2
+            utm = utm_from_latlon(lat0, lon0)
+            if utm.zone != grid.zone:
+                sys.stderr.write(
+                    f"WARNING: --pivot-center UTM zone {utm.zone} differs from field "
+                    f"zone {grid.zone}; the anchor may be placed inaccurately\n"
+                )
+            center_xy = (utm.easting, utm.northing)
+        sys.stderr.write("INFO: scheduling center-pivot positions\n")
+        pivot_geom = compute_pivot_geometry(
+            grid, args.pivot_wheelbase_ft, args.pivot_clearance_ft, center_xy=center_xy
+        )
+        pivot_plan = plan_pivot(grid, route.ordered_passes, pivot_geom,
+                                move_cost=args.pivot_move_cost)
+        arm_clearance_m = args.equipment_width_ft * FEET_TO_METERS / 2.0
+        arm_obstacles = build_arm_obstacles(
+            pivot_geom, pivot_plan, obstacles, clearance_m=arm_clearance_m
+        )
+        pivot_detours, pivot_extra_haul_m, pivot_under_arm, _ = pivot_detour_stats(
+            route.ordered_passes, arm_obstacles
+        )
+
     zone_steps = []
     if args.zones and args.zones > 0:
         zone_steps = sequence_cut_zones(grid, field, route, n_zones=args.zones, seed=args.seed)
@@ -422,6 +524,18 @@ def main(argv: list[str] | None = None) -> int:
         field_efficiency=args.field_efficiency,
     )
     tres = estimate_time(grid, route, params)
+
+    # Pivot detours lengthen each crossing pass's loaded haul (and its mirrored
+    # return); add that to the field-time estimate at the achieved haul/return
+    # speeds, then divided by field efficiency like the rest of the model.
+    pivot_added_time_s = 0.0
+    if args.pivot and pivot_extra_haul_m > 0.0:
+        haul_mps = max(1e-6, tres.avg_haul_speed_mph * MPH_TO_MPS)
+        ret_mps = max(1e-6, tres.avg_return_speed_mph * MPH_TO_MPS)
+        eff = args.field_efficiency if 0.0 < args.field_efficiency <= 1.0 else 1.0
+        productive = pivot_extra_haul_m / haul_mps + pivot_extra_haul_m / ret_mps
+        pivot_added_time_s = productive / eff
+    total_with_pivot_s = tres.total_time_s + pivot_added_time_s
 
     elapsed = time.time() - t0
 
@@ -468,6 +582,10 @@ def main(argv: list[str] | None = None) -> int:
     print(f"  Returning:  {hh(tres.returning_time_s):>6}")
     print(f"  Other:      {hh(tres.other_time_s):>6}   (field eff. {args.field_efficiency:.0%})")
     print(f"  TOTAL:      {hh(tres.total_time_s):>6}")
+    if args.pivot and pivot_added_time_s > 0.0:
+        print(f"  + pivot detours: {hh(pivot_added_time_s):>6}   "
+              f"({mi(pivot_extra_haul_m)} mi extra loaded haul, {pivot_detours} passes)")
+        print(f"  TOTAL w/ pivot: {hh(total_with_pivot_s):>6}")
     print("=" * 56)
 
     if zone_steps:
@@ -514,6 +632,7 @@ def main(argv: list[str] | None = None) -> int:
             smooth_route=not args.no_route_smoothing,
             turn_radius_m=args.turning_circle_ft * 0.5 * FEET_TO_METERS,
             obstacles=obstacles,
+            arm_obstacles=arm_obstacles,
         )
         gtime = estimate_guidance_time(
             guidance,
@@ -589,6 +708,68 @@ def main(argv: list[str] | None = None) -> int:
             print(f"Animation frames: {n_frames} PNGs in {args.animate_dir}")
         if gif_path is not None:
             print(f"Animation GIF: {gif_path}")
+        print("=" * 56)
+
+    if args.pivot and pivot_plan is not None:
+        geom = pivot_geom
+        plan = pivot_plan
+        n_passes_total = len(route.ordered_passes)
+        clat, clon = geom.center_latlon
+        anchor_src = "user-specified" if args.pivot_center else "field middle"
+        print("Center-pivot irrigation schedule")
+        print(f"  Anchor ({anchor_src}):  {clat:.6f}, {clon:.6f}")
+        print(f"  Max radius:             {geom.radius_m / FEET_TO_METERS:,.0f} ft "
+              f"({2 * geom.radius_m / FEET_TO_METERS:,.0f} ft span, "
+              f"wheelbase {args.pivot_wheelbase_ft:g} ft)")
+        print(f"  Positions / moves:      {len(plan.positions)} / {plan.n_moves} "
+              f"(total rotation {plan.total_rotation_deg:,.0f} deg "
+              f"over {n_passes_total} passes)")
+        print(f"  Haul detours (routed):  {pivot_detours} passes skirt the arm "
+              f"(+{pivot_extra_haul_m / 1609.344:,.2f} mi loaded haul, "
+              f"+{pivot_added_time_s / 3600.0:,.2f} hr; routed around the arm in guidance)")
+        if pivot_under_arm:
+            print(f"  Work under arm:         {pivot_under_arm} passes level cells "
+                  f"beneath the arm (cannot reroute; arm move/skip needed)")
+        print("-" * 56)
+        print("  # passes        bearing        move")
+        for pos in plan.positions:
+            print(f"  {pos.index:<2} {pos.first_pass:>5}-{pos.last_pass:<5} "
+                  f"{pos.bearing_deg:>6.1f} ({cardinal(pos.bearing_deg):<3})  "
+                  f"{pos.move_deg:>6.1f} deg"
+                  + ("   <- park" if pos.move_deg == 0 else "   <- rotate"))
+        pivot_csv = (args.out.with_name(args.out.stem + "_pivot.csv")
+                     if (args.pivot_csv is None or args.pivot_csv == "__AUTO__")
+                     else Path(args.pivot_csv))
+        write_pivot_csv(plan, pivot_csv)
+        print(f"Pivot CSV: {pivot_csv}")
+        pivot_dir = args.pivot_dir or args.out.with_name(args.out.stem + "_pivot")
+        sys.stderr.write("INFO: rendering pivot PNG maps\n")
+        paths = render_pivot_pngs(
+            grid, route.ordered_passes, plan, pivot_dir,
+            mode=args.pivot_mode, pixels_per_bin=max(1, args.pivot_ppb),
+        )
+        print(f"Pivot PNG maps: {len(paths)} + overview in {pivot_dir}")
+
+        # Leveling animation with the pivot arm (on by default with --pivot).
+        if not args.no_pivot_gif or args.pivot_frames is not None:
+            if args.pivot_gif is not None and args.pivot_gif != "__AUTO__":
+                pivot_gif = Path(args.pivot_gif)
+            else:
+                pivot_gif = (None if args.no_pivot_gif
+                             else args.out.with_name(args.out.stem + "_pivot_leveling.gif"))
+            sys.stderr.write("INFO: rendering pivot leveling animation\n")
+            n_frames = animate_pivot_leveling(
+                grid, route.ordered_passes, plan,
+                gif_path=pivot_gif,
+                out_dir=args.pivot_frames,
+                stride=max(1, args.pivot_anim_stride),
+                pixels_per_bin=max(1, args.pivot_ppb),
+                mode=args.pivot_mode,
+            )
+            if pivot_gif is not None:
+                print(f"Pivot leveling GIF: {pivot_gif} ({n_frames} frames)")
+            if args.pivot_frames is not None:
+                print(f"Pivot animation frames: {n_frames} PNGs in {args.pivot_frames}")
         print("=" * 56)
 
     print(f"PNG: {args.out}")

@@ -61,3 +61,13 @@ DEFAULT_TURN_THRESHOLD_DEG = 60.0
 
 DEFAULT_PIXELS_PER_BIN = 50
 DEFAULT_SEED = 1234
+
+# Center-pivot irrigation analysis (spec §12.4, optional, default off).
+# A center pivot anchored in the field's middle sweeps a circle as large as fits.
+# Its arm (a radius-long bar) is parked at angles that keep it clear of the active
+# leveling pass so the scraper never has to detour around it, while moving the arm
+# as seldom as possible. The wheelbase is the arm's physical width.
+DEFAULT_PIVOT_WHEELBASE_FT = 14.0
+# Extra room kept between the parked arm and the active leveling work (per side),
+# on top of half the wheelbase, so the machine has clearance to operate.
+DEFAULT_PIVOT_CLEARANCE_FT = 25.0

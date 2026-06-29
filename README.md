@@ -14,7 +14,11 @@ haul "heat map", a leveling animation, and a **blade-scale operator guidance**
 track — turn-by-turn waypoints on a **smoothed, drivable GPS route** — with a
 realistic drivable time that counts turning and the grade/compact pass).
 Undriveable "knot" loads are automatically re-profiled into **boustrophedon**
-(back-and-forth parallel) sweeps so the route stays drivable.
+(back-and-forth parallel) sweeps so the route stays drivable. Optional
+**center-pivot irrigation scheduling** (`--pivot`) places a pivot in the field,
+finds optimal arm bearings across the leveling passes, routes haul/return legs
+around the parked arm in the guidance track, and produces schedule CSVs, maps,
+and a leveling animation.
 
 ## Install
 
@@ -127,6 +131,21 @@ assertions + routing PNGs):
 python make_exclusion_test.py
 ```
 
+Center-pivot irrigation — schedule arm bearings, route haul detours around the
+parked arm in guidance, and write the move schedule + maps + animation:
+
+```bash
+python -m landlevel.cli --agd TheShop2_2ft.agd --out plan.png \
+  --pivot --guidance-png
+```
+
+Specify a custom pivot anchor (default is the field centroid):
+
+```bash
+python -m landlevel.cli --agd TheShop2_2ft.agd --out plan.png \
+  --pivot --pivot-center "36.4477,-90.7236" --no-pivot-gif
+```
+
 ## Command-line options
 
 Full list also available via `python -m landlevel.cli --help`. Defaults come
@@ -230,6 +249,54 @@ grade/compact return pass, and the turn-aware sequencing.
 | `--animate-stride` | 10 | emit one animation frame per N applied passes |
 | `--animate-ppb` | 8 | pixels per area edge for animation frames |
 
+### Center-pivot irrigation
+
+Off by default (`--no-pivot`). When enabled, the tool assumes a center-pivot
+system anchored in the field and sized as large as fits inside the boundary.
+Its arm (one radius long, `--pivot-wheelbase-ft` wide, default 14 ft) is
+scheduled at bearings that stay clear of each leveling pass — cut/fill cells and
+the loaded haul leg — while minimising arm moves.
+
+The schedule is solved by **dynamic programming** over every pass and every
+candidate bearing, minimising:
+
+```
+move_cost × (pivot repositions) + (detoured passes)
+```
+
+The arm only rotates when holding still would cost more than `--pivot-move-cost`
+(default 25) passes' worth of small haul detours. Lower the cost to forbid more
+detours (more moves); raise it to keep the arm parked longer.
+
+When guidance is built, haul/return legs that would cross the parked arm are
+**routed around it** (same visibility-graph detour as exclusion zones, evaluated
+per pass against the arm where it sits then). Extra loaded-haul distance is added
+to the OptiHaul time report as `+ pivot detours` / `TOTAL w/ pivot`. Legs whose
+work sits *under* the arm cannot be rerouted and are reported as **work under
+arm** (the arm must move or those cells be skipped).
+
+| Option | Default | Meaning |
+|---|---|---|
+| `--pivot` / `--no-pivot` | off | enable / disable pivot scheduling and outputs |
+| `--pivot-center "lat,lon"` | field centroid | WGS-84 anchor; radius is the largest circle that still fits from that point |
+| `--pivot-wheelbase-ft` | 14 | pivot wheelbase / arm width (ft) |
+| `--pivot-clearance-ft` | 25 | extra clearance per side between the parked arm and active work, on top of half the wheelbase |
+| `--pivot-move-cost` | 25 | cost of one reposition, as single-pass detour-equivalents (`< 1` → forbid avoidable detours) |
+| `--pivot-dir DIR` | `<out>_pivot` | directory for per-position PNG maps |
+| `--pivot-csv [PATH]` | `<out>_pivot.csv` | move schedule (pass range, bearing, rotation, tip lat/lon) |
+| `--pivot-gif [PATH]` | `<out>_pivot_leveling.gif` | leveling animation with a held frame at every arm move (on by default with `--pivot`) |
+| `--no-pivot-gif` | — | skip the pivot animation GIF |
+| `--pivot-frames DIR` | off | also write animation frames as individual PNGs |
+| `--pivot-anim-stride` | 15 | one animation frame per N applied passes (every move always gets its own frame) |
+| `--pivot-mode` | `cutfill` | PNG/animation render: `cutfill` map or `topology` |
+| `--pivot-ppb` | 6 | pixels per area edge for pivot PNG maps + animation |
+
+Each per-position map shows the cut/fill (or topology) state when the arm moves,
+the new bearing (grey ghost of the previous one), the swept circle, and that
+run's haul operations. The animation plays the whole leveling: surface flattens,
+current haul leg is drawn, and at every scheduled move the arm flashes red and
+swings from its grey previous bearing into the clear.
+
 ### Misc
 
 | Option | Default | Meaning |
@@ -250,6 +317,8 @@ the `--out` stem (e.g. `--out theshop_plan.png` →):
 | `--guidance-csv` | `theshop_plan_guidance.csv` |
 | `--guidance-png` | `theshop_plan_guidance.png` |
 | `--animate-gif` | `theshop_plan_leveling.gif` |
+| `--pivot-csv` (or just `--pivot`) | `theshop_plan_pivot.csv` (+ `theshop_plan_pivot/` PNGs) |
+| `--pivot-gif` (or just `--pivot`) | `theshop_plan_pivot_leveling.gif` |
 
 The numbered zone waypoints and exact cell-boundary outlines are drawn directly
 onto the main `--out` PNG when `--zones > 0`.
@@ -287,8 +356,14 @@ Times (hr)
   Returning:  ...
   Other:      ...   (field eff. 80%)
   TOTAL:      ...
+  + pivot detours: ...   (extra loaded haul mi, N passes)   # when --pivot
+  TOTAL w/ pivot: ...                                      # when --pivot
 ========================================================
 ```
+
+When `--pivot` is set, a **Center-pivot irrigation schedule** block follows with
+anchor lat/lon, radius, position/move counts, routed detour stats, and a
+pass-range / bearing / move table.
 
 If `--zones > 0` it also prints the rough cut work order (zone, load count, BCY,
 centroid lat/lon, and the pass range each zone was worked over).
@@ -303,9 +378,11 @@ AGD file ─► [1] Parse + grid (7.5 ft)         agd.py, grid.py   §6, §7
          ─► [4] Strips (streamlines)           strips.py         §10
          ─► [5] Passes (15.4 BCY / 61 mm)      passes.py         §11
          ─► [6] Sequence + route               routing.py        §12
+         ─►     (optional) pivot schedule      pivot.py          §12.4
          ─► [7] Time estimate                  timemodel.py      §13
          ─► [8] Blade-scale guidance (opt.)    swaths.py         §13
          ─► PNG: cut/fill map + haul arrows    render.py         §14
+         ─► (optional) pivot maps / GIF        pivot.py          §12.4, §14.7
 ```
 
 The cut/fill PNG depends only on stages [1]–[3]; the pass list and time are
@@ -314,7 +391,9 @@ additive (`--no-plan` produces the PNG without them). In the default
 (stage [3]) to grow lanes along the local streamlines; under `--no-flow-aligned`
 the passes are computed from the cut/fill geometry alone and the flow field/strips
 are visualization-only. The blade-scale guidance track (stage [8]) is built on
-request via `--guidance-csv` / `--guidance-png`.
+request via `--guidance-csv` / `--guidance-png`. With `--pivot`, the pivot
+schedule runs after sequencing and before guidance so haul/return detours around
+the parked arm are inserted into the guidance track (spec §12.4).
 
 ## Notes on the model
 
@@ -433,6 +512,16 @@ request via `--guidance-csv` / `--guidance-png`.
   cost, and the guidance track (detour waypoints inserted on travel legs). Blade-down
   coverage (`CUT`/`FILL`/`GRADE`) is never rerouted; cuts and fills may abut the
   cleared perimeter. See spec **§12.3**.
+- **Center-pivot irrigation (`--pivot`).** A pivot anchored at the field centroid
+  (or `--pivot-center "lat,lon"`) is sized as large as fits. A dynamic-programming
+  scheduler finds arm bearings held across the executed pass order, trading arm
+  moves against haul detours (`--pivot-move-cost`, default 25). The parked arm is
+  modeled as a wheelbase-wide rectangle buffered by half `--equipment-width-ft`;
+  blade-up haul/return legs route around it in the guidance track (same
+  visibility-graph mechanism as exclusion zones). Routed detour distance is added
+  to the time report; work *under* the arm is reported separately. Outputs:
+  schedule CSV, per-position PNG maps, and a leveling animation with a held frame
+  at every arm move. See spec **§12.4**.
 
 ## Tests
 
@@ -443,6 +532,7 @@ python -m pytest tests/ -q
 Tests cover AGD round-trip and `delta` sign, BCY conversions, the LCY→BCY
 scraper conversion, mass balance, ridge→valley flow direction, pass limits
 (≤ 15.4 BCY, ≤ 61 mm), the cut/fill palette and render geometry, both
-masking paths (with and without `2PER` boundary rows), and **exclusion zones**
-(visibility-graph detour, bin removal). See spec §17.
+masking paths (with and without `2PER` boundary rows), **exclusion zones**
+(visibility-graph detour, bin removal), and **center-pivot scheduling** (DP
+positions, arm obstacle routing). See spec §17.
 

@@ -2,7 +2,7 @@
 
 **[0.0.2]** This document is the authoritative specification (revision 2) for the **land leveling haul algorithm**: a Python program that reads an OptiSurface-style **AGD** field file, plans a sequence of cut–haul–fill operations that bring the field to its target grade with minimum haul distance and time, and renders a **PNG** of the cut/fill map with haul-direction arrows, plus optional sequencing CSVs, a haul "heat map" PNG, and a leveling animation.
 
-**[0.0.3]** This v2 supersedes **LAND-LEVELING-SPEC.md** (v0.0.1). It folds in the optimizations and outputs added during implementation: a **7.5 ft** default grid (≈ one blade width), **contiguous region-grown** cut/fill patches grown as long **blade-wide strips**, **multi-drop** cuts/fills across nearby pockets, the **true transit haul leg** (cut-end → fill-start), an optional **haul heading** bias (snapped to the nearest cardinal axis), an **OptiHaul-matched** time model, **direction-aware** turn-minimizing sequencing, a **blade-scale operator guidance** track (turn-by-turn waypoints, a grade/compact return pass, and a realistic drivable time that counts turning), **zone-level work sequencing**, per-pass **lat/lon CSV** export, a **pass-pairs heat-map** PNG, a frame-by-frame **leveling animation**, and **exclusion zones** with **visibility-graph obstacle routing** around no-go polygons (wells, structures). Where v1 and the code disagreeed, the code is treated as authoritative and this document is updated to match.
+**[0.0.3]** This v2 supersedes **LAND-LEVELING-SPEC.md** (v0.0.1). It folds in the optimizations and outputs added during implementation: a **7.5 ft** default grid (≈ one blade width), **contiguous region-grown** cut/fill patches grown as long **blade-wide strips**, **multi-drop** cuts/fills across nearby pockets, the **true transit haul leg** (cut-end → fill-start), an optional **haul heading** bias (snapped to the nearest cardinal axis), an **OptiHaul-matched** time model, **direction-aware** turn-minimizing sequencing, a **blade-scale operator guidance** track (turn-by-turn waypoints, a grade/compact return pass, and a realistic drivable time that counts turning), **zone-level work sequencing**, per-pass **lat/lon CSV** export, a **pass-pairs heat-map** PNG, a frame-by-frame **leveling animation**, **exclusion zones** with **visibility-graph obstacle routing** around no-go polygons (wells, structures), and optional **center-pivot irrigation scheduling** with dynamic-programming arm placement, per-pass haul detours around the parked arm in the guidance track, and a pivot leveling animation (**§12.4**). Where v1 and the code disagreeed, the code is treated as authoritative and this document is updated to match.
 
 **[0.0.4]** The problem background and physical model are described in **LAND_LEVELING_PROBLEM.md**; this specification turns that description into an implementation-complete contract.
 
@@ -28,6 +28,7 @@
 | **2.4.0** | 2026-06-28 | **Knot re-profiling + load-fullness cap.** Some compact multi-drop loads chain into an undriveable "knot" (a sweep that hairpins back on itself). After sequencing, the guidance now re-profiles such sweeps into a **boustrophedon** — parallel blade-width back-and-forth lanes — but only where the rendered sweep is still a knot **and** the boustrophedon strictly reduces hairpins, so clean flowing sweeps are never made worse; the re-profile is **pocket-aware** and **conservative** (no bin/load/haul/surface change, only the in-patch path) (§13.3b). `--no-knot-repair` disables it. New **`--min-load-fill`** (default 90%) caps multi-drop chasing once a load is "full enough", keeping more loads single clean lanes instead of U-turn blobs (§11.0.3c-i). New CLI flags in §15. |
 | **2.6.0** | 2026-06-28 | **Windowed order refinement (optional, default off).** After routing and knot re-profiling, an optional local search walks the passes one at a time and, for each, relocates it within a window of nearby passes whenever that lowers the order-dependent time (the §12.0.5 transition cost). Relocation (or-opt) never reverses a run, so — unlike 2-opt (§12.0.4) — it is safe with the asymmetric direction-aware turn cost, supplying the improvement step that the turn-aware nearest-neighbour construction otherwise lacks. Every accepted move strictly lowers the objective, so the search only ever reduces (never increases) total time, and the refined order flows into the time model, zone sequencing, pair exports, and guidance (§12.2). New **`--reorder-window`** flag in §15 (default 0 = disabled; typical value 50). |
 | **2.7.0** | 2026-06-29 | **Exclusion zones and obstacle-aware routing.** One or more irregular **no-go polygons** (e.g. a well head) may be supplied on the command line. Each polygon is projected to UTM, mapped to the rectangular block of grid bins whose bounding box contains it, and dropped from the field mask — no cut/fill is planned inside even if the AGD has bins there. Any resulting cut/fill imbalance is treated as **exported from** (or **imported to**) the field rather than a warning. Blade-up travel legs (loaded **HAUL**, deadhead **RETURN**, multi-drop **MOVE**) route **around** every zone using a **visibility graph + Dijkstra** shortest path on a clearance-buffered polygon (buffer = half **`--equipment-width-ft`**, default 14 ft). The same obstacle distances feed pass haul lengths, the sequencer transition cost, and the guidance track (detour waypoints inserted on travel legs). Optional hatched overlay on plan/guidance PNGs. New **`--exclude-polygon`** (repeatable) and **`--equipment-width-ft`** flags in §15; new module **`obstacles.py`** (§12.3, §16.1). |
+| **2.8.0** | 2026-06-29 | **Center-pivot irrigation scheduling (optional, default off).** A center-pivot system anchored in the field (default: valid-cell centroid; override with **`--pivot-center "lat,lon"`**) is sized as large as fits inside the boundary. A **dynamic-programming** scheduler finds the arm-bearing sequence that minimises `move_cost × (repositions) + (detoured passes)` over the executed pass order (**§12.4**). Blade-up haul/return legs that would cross the parked arm are routed around it in the guidance track (same visibility-graph mechanism as **§12.3**, per pass, per arm position); extra loaded-haul distance is added to the OptiHaul time report. Outputs: move schedule CSV, per-position PNG maps, and a leveling animation with a held frame at every arm move. New **`--pivot` / `--no-pivot`**, **`--pivot-center`**, **`--pivot-wheelbase-ft`**, **`--pivot-clearance-ft`**, **`--pivot-move-cost`**, and animation/output flags in **§15**; new module **`pivot.py`** (**§12.4**, **§14.7**, **§16.1**). |
 
 **[0.1.2]** This document follows [semantic versioning](https://semver.org/): **MAJOR** = incompatible normative change, **MINOR** = backward-compatible addition, **PATCH** = clarification.
 
@@ -38,7 +39,7 @@
 
 **[1.0.2]** The program shall accept its field input exclusively as an **AGD file** (**§6.1**) and shall accept equipment, time, and output parameters as described in **§6.2**–**§6.4** and **§15**.
 
-**[1.0.3]** The program shall produce, as its primary deliverable, a **PNG image** containing a **cut/fill map** and overlaid **haul-direction arrows** (**§14**). It shall additionally produce, on request, the sequencing, CSV, heat-map, and animation outputs of **§14.4**–**§14.6** and **§12.1**.
+**[1.0.3]** The program shall produce, as its primary deliverable, a **PNG image** containing a **cut/fill map** and overlaid **haul-direction arrows** (**§14**). It shall additionally produce, on request, the sequencing, CSV, heat-map, animation, and **center-pivot** outputs of **§14.4**–**§14.7** and **§12.1**, **§12.4**.
 
 **[1.0.4]** This specification is written for both human maintainers and agentic implementers; obligations use **shall**, **should**, **may** as defined in **ANDY-SPECSTYLEGUIDE.md §6**.
 
@@ -62,6 +63,7 @@
 **[2.0.13]** 12. A documented **command-line interface** (**§15**).
 **[2.0.14]** 13. A **blade-scale operator guidance** track that turns the optimized passes into turn-by-turn waypoints (action, blade up/down, target depth, next bearing, instruction) plus a **realistic drivable time** that — unlike the OptiHaul-matched core model — counts **turning** and a **grade/compact return pass** over every fill (**§13.1**–**§13.6**). The guidance shall not worsen the optimized passes' haul/time; it realizes them at blade scale.
 **[2.0.15]** 14. Optional **exclusion zones**: one or more irregular no-go polygons (e.g. a well head) that are neither levelled nor driven through; blade-up travel routes around them via a visibility graph (**§12.3**).
+**[2.0.16]** 15. Optional **center-pivot irrigation scheduling**: a pivot anchored in the field (default centroid, user-specified lat/lon optional) and sized as large as fits, with a dynamic-programming schedule of arm bearings held across the leveling passes, per-pass haul detours around the parked arm in the guidance track, and optional schedule CSV / PNG maps / leveling animation (**§12.4**, **§14.7**).
 
 ## 3. Non-goals
 
@@ -157,6 +159,12 @@
 
 **[4.19.1]** For routing, each exclusion polygon is offset outward by a **clearance** equal to half the configured **equipment width** (`--equipment-width-ft`, default 14 ft), so the machine **body**, not just the GPS centerline, stays clear of the zone. The set of buffered polygons forms an **obstacle field**; blade-up travel legs (**§12.3**) use a **visibility graph + Dijkstra** shortest path that never crosses any buffered interior.
 
+### 4.20 Center pivot (irrigation arm)
+
+**[4.20.1]** A **center pivot** is a linear irrigation arm anchored at a point in the field and rotating about that anchor. In this specification the arm is modeled as a **wheelbase-wide bar** one **radius** long (anchor → tip), parked at a compass **bearing** while the field is leveled. The pivot does not level soil; it is a **temporary obstacle** the scraper must not drive through while the arm is parked there.
+
+**[4.20.2]** A **pivot position** is a contiguous run of executed passes during which the arm is held at one bearing. A **pivot move** is the rotation from one position's bearing to the next. A **routed haul detour** is a loaded **HAUL** leg (or its mirrored **RETURN**) whose straight line crosses the parked arm but whose visibility-graph path around the arm is longer; **work under the arm** is cut/fill activity in cells beneath the arm where no bearing clears the work (cannot be rerouted — the arm must move or those cells be skipped).
+
 ---
 ## 5. High-level architecture
 
@@ -172,12 +180,14 @@ AGD file           ──► [1] Parse + grid (7.5 ft)         agd.py, grid.py  
           ──► [4] Strips (streamlines)           strips.py         §10
           ──► [5] Passes (≈15.4 BCY / 61 mm)     passes.py         §11
           ──► [6] Sequence + route               routing.py        §12
+          ──►     (optional) pivot schedule      pivot.py          §12.4
           ──► [7] Time estimate                  timemodel.py      §13
           ──► [8] Blade-scale guidance (opt.)    swaths.py         §13.1–§13.6
           ──► PNG: cut/fill map + haul arrows    render.py         §14
           ──► (optional) zones / CSVs / heat map sequence.py, render.py  §12.1, §14.4–14.5
           ──► (optional) guidance CSV / PNG      swaths.py, render.py  §13.6
           ──► (optional) leveling animation      animate.py        §14.6
+          ──► (optional) pivot CSV / maps / GIF  pivot.py          §12.4, §14.7
 ```
 
 **[5.0.3]** Equipment (**§6.2**) and time/motion (**§6.3**) parameters feed stages [5]–[7]. The cut/fill map depends only on stages [1]–[2]; the haul arrows depend on stage [3].
@@ -251,7 +261,10 @@ Latitude (deg), Longitude (deg), Elevation Existing(m), Elevation Proposed(m), C
 | **Multi-drop hop** | 100 ft | Max blade-up drive to the next pocket to keep loading/spreading the same load (**§11.0.3c**); 0 disables multi-drop. |
 | **Minimum load fill** | 90% | Drivability vs load-fullness trade-off: once a load reaches this fraction of capacity, further multi-drop hops are skipped so it stays a single clean lane (**§11.0.3c-i**); 100 = chase every load to full. |
 | **Knot re-profiling** | on | Re-profile undriveable knot sweeps into boustrophedon parallel passes after sequencing (**§13.3b**); `--no-knot-repair` disables it. |
-| **Equipment width** | 14 ft | Machine width used as the clearance buffer around exclusion zones: each no-go polygon is offset outward by **half** this value for obstacle routing (**§12.3**). |
+| **Equipment width** | 14 ft | Machine width used as the clearance buffer around exclusion zones: each no-go polygon is offset outward by **half** this value for obstacle routing (**§12.3**). Also used as the clearance buffer around the parked pivot arm (**§12.4**). |
+| **Pivot wheelbase** | 14 ft | Center-pivot arm width (**§12.4**); `--pivot-wheelbase-ft`. |
+| **Pivot clearance** | 25 ft | Extra clearance per side between the parked arm and active leveling work, on top of half the wheelbase (**§12.4**); `--pivot-clearance-ft`. |
+| **Pivot move cost** | 25 passes | Cost of one arm reposition, expressed as the number of single-pass haul detours it is worth avoiding (**§12.4**); `--pivot-move-cost`. |
 
 ### 6.3 Time and motion parameters (normative)
 
@@ -279,10 +292,12 @@ Latitude (deg), Longitude (deg), Elevation Existing(m), Elevation Proposed(m), C
 | **Transport mode** | `poisson` | `poisson` (L²) or `mincostflow` (L¹) flow field (**§9**). |
 | **Balance mode** | `check` | `check` (warn) or `adjust` (re-level target, **§8**). |
 | **Exclusion polygons** | (none) | Zero or more no-go polygons, each ≥ 3 lat/lon vertices (**§7.2.8**, **§12.3**); repeat `--exclude-polygon` for multiple zones. |
+| **Pivot analysis** | off | Center-pivot scheduling, detour routing, CSV/PNG/animation outputs (**§12.4**); `--pivot` / `--no-pivot`. |
+| **Pivot center** | field centroid | WGS-84 lat/lon anchor for the pivot (**§12.4**); `--pivot-center "lat,lon"`. |
 | **Zones** | 8 | Number of cut zones for the rough work order (0 disables) (**§12.1**). |
 | **Seed** | 1234 | Random seed for deterministic zone clustering (**§16.4**). |
 
-**[6.4.2]** The optional output toggles (sequence CSV, pairs CSV, pairs PNG, **guidance CSV/PNG**, animation directory/GIF, animation mode/stride/pixels-per-bin) are defined with the CLI in **§15** and the outputs in **§12.1**, **§13.6**, and **§14.4**–**§14.6**. The maneuvering parameters (turn speed, grade speed, turning circle, turn threshold) and the strip-bias / multi-drop / lane-overlap controls are listed in **§6.2** and exposed in **§15**.
+**[6.4.2]** The optional output toggles (sequence CSV, pairs CSV, pairs PNG, **guidance CSV/PNG**, animation directory/GIF, animation mode/stride/pixels-per-bin, **pivot CSV/PNG maps/animation**) are defined with the CLI in **§15** and the outputs in **§12.1**, **§12.4**, **§13.6**, **§14.4**–**§14.7**. The maneuvering parameters (turn speed, grade speed, turning circle, turn threshold) and the strip-bias / multi-drop / lane-overlap controls are listed in **§6.2** and exposed in **§15**.
 
 ---
 
@@ -565,6 +580,55 @@ edge(i,j) exists iff straight segment (node_i, node_j) does not cross any buffer
 
 **[12.3.13]** *Rendering (informative).* When exclusion zones are present, the plan and guidance PNG renderers **may** draw the no-go polygon as a hatched overlay (**§14**). This is visual only and does not affect the plan.
 
+### 12.4 Center-pivot irrigation scheduling (optional)
+
+**[12.4.1]** *Purpose.* A field may carry a **center-pivot irrigation system**: a linear arm anchored at a point in the field and rotating about that anchor. While the field is being leveled the arm must stay clear of the scraper's active cut–haul–fill work so the machine does not have to drive detours around it; rotating the arm costs effort, so the schedule shall **minimise arm moves** while accepting a bounded number of **haul detours** when holding the arm still is cheaper than repositioning. This stage is **optional** and **off by default** (`--pivot` / `--no-pivot`, **§15**).
+
+**[12.4.2]** *Anchor and radius (normative).* When `--pivot` is set, the implementation shall compute a **pivot geometry** (`PivotGeometry`, `pivot.py`):
+
+**[12.4.3]** 1. **Anchor** — the centroid of all valid field cells (projected easting/northing), unless **`--pivot-center "lat,lon"`** supplies a WGS-84 point, in which case that point is projected to UTM with `utm_from_latlon` (**§6.1**, **§7.1**). If the supplied point falls in a different UTM zone than the field, the implementation **shall warn** but continue.
+**[12.4.4]** 2. **Radius** — the largest circle, centred at the anchor, that contains no invalid cell and stays inside the grid envelope, minus half a cell diagonal and half the **wheelbase** so the arm's physical width also fits inside the field boundary.
+**[12.4.5]** 3. **Wheelbase** — `--pivot-wheelbase-ft` (default **14 ft**), converted to metres; the arm is modeled as a bar this wide running anchor → tip.
+**[12.4.6]** 4. **Clearance** — `--pivot-clearance-ft` (default **25 ft**), converted to metres; extra room kept between the parked arm and active leveling work **per side**, on top of half the wheelbase.
+
+**[12.4.7]** *Angular occupancy (normative).* For each executed pass (in route order) and each candidate arm bearing (discretised into `n_bins`, default **720**), the implementation shall mark bearings that would collide with that pass's work:
+
+**[12.4.8]** - every **cut cell** and **fill cell** centre;
+**[12.4.9]** - every sample point along the loaded **haul leg** (cut-end → fill-start).
+
+A work point at radius `r` and bearing `φ` from the anchor blocks bearings within `± (half_wheelbase + clearance + cell_radius) / r` of `φ` (clamped to π). Points beyond the arm's reach do not block.
+
+**[12.4.10]** *Dynamic-programming schedule (normative).* Let `blocked[i, b]` be whether bearing bin `b` collides with pass `i`, and `move_cost = --pivot-move-cost` (default **25**, interpreted as the number of single-pass haul detours one arm reposition is worth avoiding). The implementation shall find the bearing sequence `chosen[i]` minimising
+
+```text
+Σ_i  blocked[i, chosen[i]]
+     + move_cost × (number of i where chosen[i] ≠ chosen[i−1])
+```
+
+via the forward DP
+
+```text
+dp[i][b] = blocked[i][b] + min( dp[i−1][b],                    # hold bearing
+                                  move_cost + min_b' dp[i−1][b'] )  # rotate
+```
+
+Backtracking shall **prefer holding** the previous bearing; when a move is forced, the new bearing shall be the optimal predecessor **closest in circular angle** (minimum rotation). Equal-bearing contiguous runs are collapsed into **pivot positions**, each reporting: 1-based position index, first/last pass (inclusive, route order), compass bearing, rotation from the previous position, arm-tip lat/lon, and the count of collided passes in that run.
+
+**[12.4.11]** *Placement in the pipeline (normative).* Pivot scheduling shall run **after** routing (**§12.0**) and knot re-profiling (**§13.3b**) and **before** the time model (**§13.0**), zone sequencing (**§12.1**), pair exports (**§14**), and blade-scale guidance (**§13.1**), so downstream outputs reflect the same executed pass order. It shall **not** add, remove, split, or alter any pass, cut/fill bin, load, or haul leg — only the arm schedule and the detour routing described below.
+
+**[12.4.12]** *Arm obstacles and guidance detours (normative).* For each pivot position the parked arm at its held bearing shall be represented as a **wheelbase-wide rectangle** from anchor to tip (`arm_ring`, `pivot.py`), buffered outward by half **`--equipment-width-ft`** (default 14 ft) into an `ExclusionZone`, and combined with any static exclusion zones (**§12.3**) into a per-pass **`ObstacleField`**. Every pass held at that position shares the same field.
+
+When `--pivot` is set and guidance is built (**§13.1**), the obstacle detour pass (**§13.4.2**) shall use the **per-pass arm field** (falling back to the static exclusion field when no arm field applies) so each blade-up travel leg (`RETURN`, `HAUL`, `MOVE`) whose straight segment crosses the parked arm receives the visibility-graph detour vertices of `path(prev, cur)`. Blade-down coverage (`CUT`, `FILL`, `GRADE`) is **never** rerouted.
+
+**[12.4.13]** *Detour statistics and time (normative).* For each pass whose loaded haul leg crosses the parked arm, the implementation shall measure `extra = path_length(cut_end, fill_start) − euclidean(cut_end, fill_start)`. Legs with `extra` above a small threshold (default 1 mm) are **routed haul detours**; legs blocked but with negligible extra distance are **work under the arm** (the work itself sits beneath the arm and cannot be rerouted). The sum of routed extras shall be added to the OptiHaul report as **`+ pivot detours`** time at the achieved haul and return speeds (**§13.0.3**), divided by field efficiency, and a **`TOTAL w/ pivot`** line shall be printed when `--pivot` is set.
+
+**[12.4.14]** *Outputs (normative).* When `--pivot` is set the implementation shall:
+
+**[12.4.15]** 1. Print a **center-pivot schedule** block: anchor lat/lon (and whether user-specified or field middle), max radius, position/move counts, total rotation, routed detour count and extra distance/time, and work-under-arm count.
+**[12.4.16]** 2. Write a **pivot CSV** (`--pivot-csv`, default `<out>_pivot.csv`): header comments (anchor, radius, wheelbase, moves, total rotation, detoured-pass count, move cost) and one row per position (pass range, bearing, cardinal label, move degrees, tip lat/lon, collided-pass count).
+**[12.4.17]** 3. Write **per-position PNG maps** to `--pivot-dir` (default `<out>_pivot/`): one map per position showing the cut/fill (or topology) state at the moment the arm moves, the arm at its new bearing (grey ghost of the previous bearing), the swept irrigation circle, and that run's haul operations; plus a **`pivot_overview.png`** with all bearings colour-graded first→last. Stale maps from a prior run shall be removed before writing.
+**[12.4.18]** 4. Write a **pivot leveling animation GIF** (`--pivot-gif`, default `<out>_pivot_leveling.gif`, on by default with `--pivot`; `--no-pivot-gif` disables). The animation shall apply passes in route order, draw the current haul leg, show the arm at its scheduled bearing, and emit a **held frame at every arm move** (arm flashes red, grey ghost of previous bearing). Frame cadence otherwise follows `--pivot-anim-stride` (default 15). `--pivot-frames DIR` may additionally write individual PNG frames. Render mode `--pivot-mode {cutfill,topology}` (default `cutfill`) and resolution `--pivot-ppb` (default 6) apply to maps and animation.
+
 ---
 
 ## 13. Stage 6 — Time model (OptiHaul-matched) & Stage 7 — blade-scale guidance
@@ -594,7 +658,7 @@ else:                                   # triangular: peak speed vp < v
 
 **[13.0.7]** Speeds shall be converted MPH → m/s. Loading/dumping travel times (`distance / speed`) inherently include cutting/placing time; there is no separate per-BCY term.
 
-**[13.0.8]** *Field efficiency.* Productive time = loading + hauling + dumping + returning. **Total time = productive ÷ field_efficiency**; the remainder is reported as **"Other"** time. The implementation shall report total time, the four distances, the achieved average haul and return speeds, and the moved volume (BCY).
+**[13.0.8]** *Field efficiency.* Productive time = loading + hauling + dumping + returning. **Total time = productive ÷ field_efficiency**; the remainder is reported as **"Other"** time. The implementation shall report total time, the four distances, the achieved average haul and return speeds, and the moved volume (BCY). When **`--pivot`** is set and routed haul detours add measurable loaded-haul distance (**§12.4.13**), the report shall additionally print **`+ pivot detours`** and **`TOTAL w/ pivot`** lines.
 
 ### 13.1 Stage 7 — blade-scale guidance overview
 
@@ -636,7 +700,7 @@ else:                                   # triangular: peak speed vp < v
 
 **[13.4.1]** A multi-drop pass (**§11.0.3c**) spans several pockets; the blade-up drive between two pockets within a sweep shall be emitted as a **`MOVE`** segment (blade up), distinct from the optimized **`HAUL`** leg. `MOVE` distance is accumulated separately (`reposition_dist_m`) and shall **not** inflate the reported haul distance, though it is timed as travel (**§13.5**). Each `MOVE` covers **no ground** (blade up), so it is pure overhead: the compactness guard (**§11.0.2c-i**) keeps loads from spanning empty gaps and the nearest-neighbour fragment order (**§13.3.1b**) keeps each hop the shortest available, so a `MOVE` is bounded to a genuine pocket-to-pocket reposition rather than a long excursion that covers nothing.
 
-**[13.4.2]** *Obstacle detour waypoints (normative).* When exclusion zones are active (**§12.3**), after the raw cut/fill/grade waypoints are assembled the guidance builder shall walk consecutive waypoints and, for each leg whose action is blade-up travel (`RETURN`, `HAUL`, `MOVE`, but not `START`), test whether the straight segment crosses any buffered zone interior. If blocked, it shall insert the intermediate vertices of `path(prev, cur)` (excluding the endpoints) as additional waypoints with the same action and zero depth before emitting `cur`. Distance and time accounting (**§13.5**) shall follow the detour polyline on the raw geometry. Blade-down sweeps are not detoured.
+**[13.4.2]** *Obstacle detour waypoints (normative).* When exclusion zones are active (**§12.3**) and/or center-pivot scheduling is active (**§12.4**), after the raw cut/fill/grade waypoints are assembled the guidance builder shall walk consecutive waypoints and, for each leg whose action is blade-up travel (`RETURN`, `HAUL`, `MOVE`, but not `START`), test whether the straight segment crosses any buffered zone interior (static exclusion and/or the parked pivot arm for that pass). If blocked, it shall insert the intermediate vertices of `path(prev, cur)` (excluding the endpoints) as additional waypoints with the same action and zero depth before emitting `cur`. Distance and time accounting (**§13.5**) shall follow the detour polyline on the raw geometry. Blade-down sweeps are not detoured.
 
 ### 13.5 Guidance time estimate
 
@@ -706,6 +770,16 @@ diff >   0.80  ->  dark red   #B40000
 **[14.6.2]** Two render modes (`--animate-mode`): **`cutfill`** (default) renders the cut/fill map (which turns green as areas reach grade) via `diff_to_image`; **`topology`** renders the absolute elevation on a terrain ramp via `elevation_to_image`, with the color scale fixed to the initial surface range so the terrain visibly flattens toward grade.
 
 **[14.6.3]** Any assembled GIF shall **hold its final frame for 4 seconds** so the end result is visible before the loop restarts; intermediate frames use the normal cadence.
+
+### 14.7 Center-pivot maps and animation (optional)
+
+**[14.7.1]** On request (`--pivot`, **§12.4**), the implementation shall render pivot outputs using the same cut/fill palette (**§14.1**) or a fixed-scale topology ramp (**§14.6.2**), at `--pivot-ppb` pixels per area (default 6).
+
+**[14.7.2]** *Per-position maps.* For each pivot position, one PNG shall show the field state **immediately before** that position's first pass is applied (the surface after all prior passes), with: the swept irrigation circle (blue outline), the anchor (black/white dot), the held arm (black bar, yellow tip marker), an optional grey **ghost** of the previous bearing, faint orange haul lines for passes in that run, and a text banner (position index, pass range, bearing, move degrees, radius, anchor lat/lon, collided-pass count).
+
+**[14.7.3]** *Overview map.* `pivot_overview.png` shall show all arm bearings over a faded initial cut/fill map, colour-graded first (blue) → last (red), numbered at each tip.
+
+**[14.7.4]** *Leveling animation.* `animate_pivot_leveling` shall produce a GIF (default `<out>_pivot_leveling.gif`) and/or PNG frames (`--pivot-frames`): frame 0 is the untouched field with the first bearing; every `--pivot-anim-stride` applied passes emit a progress frame (current haul leg, arm at scheduled bearing, percent-to-grade banner); **every arm move** emits a dedicated longer-held frame (red arm, grey ghost, "PIVOT MOVE k/n" banner); the final frame holds 5 s.
 
 ---
 ## 15. Command-line interface
@@ -782,6 +856,21 @@ diff >   0.80  ->  dark red   #B40000
 --animate-stride INT          default 10
 --animate-ppb INT             default 8
 
+# Center-pivot irrigation (optional, default off)
+--pivot, --no-pivot           enable / disable pivot scheduling + outputs (§12.4)
+--pivot-center "lat,lon"      WGS-84 anchor; default = field centroid
+--pivot-wheelbase-ft FLOAT    default 14    (arm width, ft)
+--pivot-clearance-ft FLOAT    default 25    (extra clearance per side, ft)
+--pivot-move-cost FLOAT       default 25    (detour-equivalents per reposition)
+--pivot-dir DIR               per-position PNG maps; default <out>_pivot
+--pivot-csv [PATH]            move schedule; flag alone -> <out>_pivot.csv
+--pivot-mode {cutfill,topology}  default cutfill (maps + animation)
+--pivot-ppb INT               default 6     (pixels per area edge)
+--pivot-gif [PATH]            leveling animation w/ arm moves; default <out>_pivot_leveling.gif
+--no-pivot-gif                skip the pivot animation GIF
+--pivot-frames DIR            also write animation as individual PNG frames
+--pivot-anim-stride INT       default 15    (one frame per N passes; every move always framed)
+
 # Misc
 --seed INT                    default 1234
 --version
@@ -789,7 +878,7 @@ diff >   0.80  ->  dark red   #B40000
 
 **[15.0.3]** On success the program shall print an **OptiHaul-style report** (moved volume, pass count, haul heading, the four distances and achieved speeds, and the time breakdown incl. "Other" and TOTAL), write the plan PNG, and write any requested CSV/PNG/animation outputs, reporting each path. Invalid arguments shall produce a clear error and a non-zero exit code.
 
-**[15.0.4]** Flags that derive a path from `--out` (`--pairs-csv`, `--pairs-png`, `--guidance-csv`, `--guidance-png`, `--animate-gif`, and `--sequence-csv` when zones are on) shall, when passed without an explicit path, name the file from the `--out` stem.
+**[15.0.4]** Flags that derive a path from `--out` (`--pairs-csv`, `--pairs-png`, `--guidance-csv`, `--guidance-png`, `--animate-gif`, `--pivot-csv`, `--pivot-gif`, and `--sequence-csv` when zones are on) shall, when passed without an explicit path, name the file from the `--out` stem. **`--pivot-dir`** defaults to `<out>_pivot` when `--pivot` is set.
 
 ---
 
@@ -814,9 +903,10 @@ landlevel/
   routing.py      # §12 sequencing (NN + bounded 2-opt; direction-aware/grade-aware transition cost; obstacle-aware deadhead) + §12.2 windowed relocation refinement (refine_route_order)
   sequence.py     # §12.1 zone work order + CSV exports
   timemodel.py    # §13.0 OptiHaul-matched core time model
-  swaths.py       # §13.1–§13.6 Stage 7 blade-scale guidance (flow/heading lanes, route smoothing, obstacle detours §13.4.2, grade pass, turns, guidance time, CSV)
+  swaths.py       # §13.1–§13.6 Stage 7 blade-scale guidance (flow/heading lanes, route smoothing, obstacle + pivot-arm detours §13.4.2, grade pass, turns, guidance time, CSV)
   render.py       # §14 PNG (cut/fill + arrows), zone overlay, exclusion overlay, heat map, guidance lanes, frame renderers
   animate.py      # §14.6 leveling animation
+  pivot.py        # §12.4 center-pivot scheduling, arm obstacles, detour stats, pivot PNG maps + animation (§14.7)
   cli.py          # §15 command-line entry point
 tools/
   number_spec_paragraphs.py
@@ -849,8 +939,9 @@ tools/
 **[17.0.6]** 5. **Pass limits** — generated passes never exceed the scraper load limit (≈ 15.4 BCY) or 61 mm per area per pass, and volume is conserved per pass (**§11**).
 **[17.0.7]** 6. **Render geometry** — a known area maps to the expected pixel block and arrow center (**§14.3**).
 **[17.0.8]** 7. **Exclusion zones** — visibility-graph detour around a unit-square obstacle is longer than the straight line and clears the buffered zone; `apply_exclusions` removes the expected bin block and stores the polygon (**§7.2.8**, **§12.3**).
+**[17.0.9]** 8. **Center pivot** — DP schedule on a synthetic pass list produces the expected number of positions; `arm_ring` + `build_arm_obstacles` block a straight haul through the parked arm; routed detour length exceeds the straight line (**§12.4**).
 
-**[17.0.9]** The default field set shall include at least one field with explicit **`2PER`** boundary rows and one without, to exercise both masking paths (**§6.1**).
+**[17.0.10]** The default field set shall include at least one field with explicit **`2PER`** boundary rows and one without, to exercise both masking paths (**§6.1**).
 
 ---
 
@@ -874,14 +965,15 @@ tools/
 **[19.0.7]** - ☑ Contiguous patch passes (≈ 15.4 BCY / 61 mm), true haul leg, heading bias, **flow-aligned tube growth (§11.0.2c, default)**, **strip-biased lanes (§11.0.2b)**, **multi-drop (§11.0.3c)**, **cardinal heading snap (§11.0.3b-i)** per **§11**.
 **[19.0.8]** - ☑ Sequencing (NN + bounded 2-opt) and **direction-aware, grade-aware transition cost (§12.0.5)** per **§12**; zone work order + CSV per **§12.1**; **exclusion zones + visibility-graph routing (§12.3)** per **§12.3**.
 **[19.0.9]** - ☑ OptiHaul-matched core time model per **§13.0**.
-**[19.0.10]** - ☑ Stage 7 blade-scale guidance per **§13.1**–**§13.6**: flow/heading lanes, **route smoothing (§13.3a, display-only)**, **obstacle detours (§13.4.2)**, grade/compact pass, turning model, multi-drop `MOVE`, guidance time, guidance CSV/PNG.
+**[19.0.10]** - ☑ Stage 7 blade-scale guidance per **§13.1**–**§13.6**: flow/heading lanes, **route smoothing (§13.3a, display-only)**, **obstacle + pivot-arm detours (§13.4.2)**, grade/compact pass, turning model, multi-drop `MOVE`, guidance time, guidance CSV/PNG.
 **[19.0.11]** - ☑ PNG cut/fill, arrows, zone overlay, **exclusion overlay**, heat map, animation per **§14**.
-**[19.0.12]** - ☑ CLI per **§15** (incl. `--exclude-polygon`, `--equipment-width-ft`).
-**[19.0.13]** - ☑ Tests per **§17**; deterministic output per **§16.4**.
-**[19.0.14]** - ☑ All source and this spec stored UTF-8 without BOM.
+**[19.0.12]** - ☑ CLI per **§15** (incl. `--exclude-polygon`, `--equipment-width-ft`, **`--pivot` / `--no-pivot`**, **`--pivot-center`**, pivot animation/output flags).
+**[19.0.13]** - ☑ **Center-pivot scheduling** per **§12.4**: DP arm placement, per-pass arm obstacles, guidance detours (**§13.4.2**), detour time in report, CSV/PNG/animation (**§14.7**); module **`pivot.py`**.
+**[19.0.14]** - ☑ Tests per **§17**; deterministic output per **§16.4**.
+**[19.0.15]** - ☑ All source and this spec stored UTF-8 without BOM.
 
 ---
 
 ## 20. Summary
 
-**[20.0.1]** This v2 specification defines a Python program that turns an AGD field file plus equipment and time parameters into a haul plan, a rendered PNG, and optional sequencing/CSV/heat-map/animation/guidance outputs. The field is modeled on a **7.5 ft** grid (≈ one blade width; configurable, e.g. 15 ft to match an OptiHaul calculation grid); volumes are tracked in **BCY**, with **swell** applied only to convert the scraper's **LCY** capacity to a bank load limit (20 LCY ÷ 1.3 ≈ 15.4 BCY) and a **cut/fill ratio** for compaction. Haul directions come from an optimal-transport flow field traced into curving strips; the volume plan is produced by a shortest-haul-first matcher that, by **default**, grows each load **along the local transport flow** — cut traced upstream to the ridge, fill downstream into the sink — for long, curved, with-the-grain lanes (`--no-flow-aligned` reverts to one straight **blade-wide strip** along a cardinal-snapped heading via strip bias). The matcher keeps loading/spreading across nearby pockets via **multi-drop** (capped by **`--min-load-fill`** so it does not chase the last few percent into a U-turn blob, and kept **spatially compact** so no load spans an empty gap that would force a blade-up move covering nothing) and measures the per-pass **haul leg as the true transit** (cut-end → fill-start), **routing around any exclusion zone** via a **visibility graph + Dijkstra** when `--exclude-polygon` is set. **Exclusion zones** drop the bins covering each no-go polygon from the field mask (volume imbalance is treated as exported/imported) and buffer each polygon outward by half **`--equipment-width-ft`** (default 14 ft) so blade-up travel never crosses the zone. Passes are sequenced to minimize non-productive travel using a **direction-aware, grade-aware** transition cost that trades deadhead drive against turning, and costed with an **OptiHaul-matched** core time model. On request, a **blade-scale operator guidance** track (Stage 7) realizes the passes as turn-by-turn waypoints on a **smoothed, drivable GPS route** (corner radius tied to the turning circle; a steering-display transform that never alters distance/time, which stay on the raw coverage geometry), with **detour vertices on travel legs** around exclusion zones, a **grade/compact return pass** over every fill and a **realistic drivable time** that counts **turning** on the 45 ft circle — giving the honest field time, distinct from the OptiHaul-matched core figure. Sweeps that would still chain into an undriveable **knot** are re-profiled into **boustrophedon** parallel back-and-forth lanes (only where that strictly reduces hairpins, pocket-aware, and without changing any cell, load, haul, or the finished surface; `--no-knot-repair` disables it). Optional outputs also summarise the plan as a **zone work order** (with CSV and numbered PNG waypoints), export **per-pass lat/lon pairs** to CSV, render a **haul heat map** and the **guidance lanes**, and produce a frame-by-frame **leveling animation** in cut/fill or topology mode. The PNG reuses the existing AgGrade palette, arrow glyph, and image geometry so output is directly comparable to the current tools.
+**[20.0.1]** This v2 specification defines a Python program that turns an AGD field file plus equipment and time parameters into a haul plan, a rendered PNG, and optional sequencing/CSV/heat-map/animation/guidance/**pivot** outputs. The field is modeled on a **7.5 ft** grid (≈ one blade width; configurable, e.g. 15 ft to match an OptiHaul calculation grid); volumes are tracked in **BCY**, with **swell** applied only to convert the scraper's **LCY** capacity to a bank load limit (20 LCY ÷ 1.3 ≈ 15.4 BCY) and a **cut/fill ratio** for compaction. Haul directions come from an optimal-transport flow field traced into curving strips; the volume plan is produced by a shortest-haul-first matcher that, by **default**, grows each load **along the local transport flow** — cut traced upstream to the ridge, fill downstream into the sink — for long, curved, with-the-grain lanes (`--no-flow-aligned` reverts to one straight **blade-wide strip** along a cardinal-snapped heading via strip bias). The matcher keeps loading/spreading across nearby pockets via **multi-drop** (capped by **`--min-load-fill`** so it does not chase the last few percent into a U-turn blob, and kept **spatially compact** so no load spans an empty gap that would force a blade-up move covering nothing) and measures the per-pass **haul leg as the true transit** (cut-end → fill-start), **routing around any exclusion zone** via a **visibility graph + Dijkstra** when `--exclude-polygon` is set. **Exclusion zones** drop the bins covering each no-go polygon from the field mask (volume imbalance is treated as exported/imported) and buffer each polygon outward by half **`--equipment-width-ft`** (default 14 ft) so blade-up travel never crosses the zone. Passes are sequenced to minimize non-productive travel using a **direction-aware, grade-aware** transition cost that trades deadhead drive against turning, and costed with an **OptiHaul-matched** core time model. On request, a **center-pivot irrigation schedule** (**§12.4**, `--pivot`) places a pivot at the field centroid or a user-specified lat/lon, sizes it as large as fits, and uses **dynamic programming** to minimise arm moves vs haul detours; blade-up legs that cross the parked arm are routed around it in the **guidance track** (same visibility-graph mechanism, per pass), with extra loaded-haul time added to the report. On request, a **blade-scale operator guidance** track (Stage 7) realizes the passes as turn-by-turn waypoints on a **smoothed, drivable GPS route** (corner radius tied to the turning circle; a steering-display transform that never alters distance/time, which stay on the raw coverage geometry), with **detour vertices on travel legs** around exclusion zones and the parked pivot arm, a **grade/compact return pass** over every fill and a **realistic drivable time** that counts **turning** on the 45 ft circle — giving the honest field time, distinct from the OptiHaul-matched core figure. Sweeps that would still chain into an undriveable **knot** are re-profiled into **boustrophedon** parallel back-and-forth lanes (only where that strictly reduces hairpins, pocket-aware, and without changing any cell, load, haul, or the finished surface; `--no-knot-repair` disables it). Optional outputs also summarise the plan as a **zone work order** (with CSV and numbered PNG waypoints), export **per-pass lat/lon pairs** to CSV, render a **haul heat map** and the **guidance lanes**, produce a frame-by-frame **leveling animation** in cut/fill or topology mode, and — when `--pivot` is set — a **pivot move schedule** (CSV), **per-position PNG maps**, and a **pivot leveling animation** with a held frame at every arm move. The PNG reuses the existing AgGrade palette, arrow glyph, and image geometry so output is directly comparable to the current tools.
