@@ -24,6 +24,7 @@ import numpy as np
 from . import DEFAULT_MAX_DROP_HOP_FT, FEET_TO_METERS, M3_TO_CY
 from .flowfield import FlowField
 from .grid import Grid
+from .obstacles import EMPTY_OBSTACLES, ObstacleField
 from .strips import Strip, _bilinear, flow_direction_field, streamline_to
 
 Cell = Tuple[int, int]
@@ -130,6 +131,7 @@ def generate_passes(
     flow: Optional[FlowField] = None,
     flow_aligned: bool = False,
     min_load_frac: float = 1.0,
+    obstacles: Optional[ObstacleField] = None,
 ) -> PassResult:
     """Generate cut-haul-fill passes packed to ``max_load_bcy`` (spec §11).
 
@@ -168,6 +170,7 @@ def generate_passes(
     """
     tol_m = tolerance_mm / 1000.0
     min_load_frac = min(max(min_load_frac, 0.0), 1.0)
+    obstacles = obstacles if obstacles is not None else EMPTY_OBSTACLES
     led = _Ledger(grid, tol_m)
     cut_per_m = led.cut_bcy_per_m()
     fill_per_m = led.fill_bcy_per_m()
@@ -350,7 +353,7 @@ def generate_passes(
             continue
 
         pass_obj = _build_pass(grid, cut_cells, fill_cells, placed,
-                               ordered=fxs is not None)
+                               ordered=fxs is not None, obstacles=obstacles)
         pass_obj.cut_heading_deg = _flow_heading_for_cells(cut_cells)
         pass_obj.fill_heading_deg = _flow_heading_for_cells(fill_cells)
         passes.append(pass_obj)
@@ -696,7 +699,8 @@ def _nn_chain(cells, grid: Grid, start_idx: int = 0):
     return [cells[m] for m in order]
 
 
-def _build_pass(grid: Grid, cut_cells, fill_cells, load_bcy, ordered: bool = False) -> Pass:
+def _build_pass(grid: Grid, cut_cells, fill_cells, load_bcy, ordered: bool = False,
+                obstacles: Optional[ObstacleField] = None) -> Pass:
     # Order the cut sweep to *end* near the fill patch and the fill sweep to
     # *start* near where the cut ended, so the haul is the true transit leg
     # (cut end -> fill start) and not double-counted against the sweeps.
@@ -732,8 +736,12 @@ def _build_pass(grid: Grid, cut_cells, fill_cells, load_bcy, ordered: bool = Fal
     cut_start = grid.cell_center_xy(*cut_cells[0][0])
     fill_start = grid.cell_center_xy(*fill_cells[0][0])
     fill_end = grid.cell_center_xy(*fill_cells[-1][0])
-    # Haul: transit from the end of loading to the start of dumping.
-    haul = math.dist(cut_end, fill_start)
+    # Haul: transit from the end of loading to the start of dumping. Routed around
+    # any exclusion zone so the loaded transit never crosses a no-go polygon.
+    if obstacles is not None and obstacles.active:
+        haul = obstacles.path_length(cut_end, fill_start)
+    else:
+        haul = math.dist(cut_end, fill_start)
     return Pass(
         cut_cells=cut_cells,
         fill_cells=fill_cells,

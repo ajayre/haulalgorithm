@@ -4,7 +4,7 @@ A pipeline that reads an OptiSurface-style AGD field file, plans a sequence of
 cut-haul-fill operations to bring the field to its target grade with minimum
 haul distance, and renders a PNG of the cut/fill map plus haul-direction arrows.
 
-See LAND-LEVELING-SPEC.md for the authoritative specification.
+See LAND-LEVELING-SPEC-2.md for the authoritative specification.
 """
 
 from __future__ import annotations
@@ -51,6 +51,10 @@ DEFAULT_DECEL_TIME_S = 12.0
 DEFAULT_TURN_SPEED_MPH = 4.0        # speed through a turn (machine slows to turn)
 DEFAULT_GRADE_SPEED_MPH = 8.0       # speed of the grade/compact return pass over a fill
 DEFAULT_TURNING_CIRCLE_FT = 45.0    # tractor+scraper turning circle (diameter)
+# Equipment (machine) width used as the clearance buffer around exclusion zones:
+# the no-go polygon is offset outward by half this so the machine BODY, not just
+# the GPS centerline, stays out of the zone (spec §12.3).
+DEFAULT_EQUIPMENT_WIDTH_FT = 14.0
 # Heading changes below this are gentle bends taken in stride at travel speed
 # (no slowdown / no turn-time); only sharper turns incur the slow-arc cost.
 DEFAULT_TURN_THRESHOLD_DEG = 60.0

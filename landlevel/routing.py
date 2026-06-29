@@ -16,7 +16,7 @@ resulting order respects layer ordering by construction.
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import List, Optional, Tuple
 
 from . import (
@@ -26,6 +26,7 @@ from . import (
     FEET_TO_METERS,
     MPH_TO_MPS,
 )
+from .obstacles import EMPTY_OBSTACLES, ObstacleField
 from .passes import Pass
 
 
@@ -48,8 +49,12 @@ def _exit_xy(p: Pass, grade_return: bool):
     return p.fill_start_xy if grade_return else p.fill_end_xy
 
 
-def _deadhead(a: Pass, b: Pass, grade_return: bool = True) -> float:
-    return math.dist(_exit_xy(a, grade_return), b.cut_start_xy)
+def _deadhead(a: Pass, b: Pass, grade_return: bool = True,
+              obstacles: ObstacleField = EMPTY_OBSTACLES) -> float:
+    exit_pt = _exit_xy(a, grade_return)
+    if obstacles.active:
+        return obstacles.path_length(exit_pt, b.cut_start_xy)
+    return math.dist(exit_pt, b.cut_start_xy)
 
 
 def _unit(p0: Tuple[float, float], p1: Tuple[float, float]) -> Optional[Tuple[float, float]]:
@@ -98,11 +103,13 @@ class _TransitionModel:
     return_v: float
     turn_v: float
     R: float
+    obstacles: ObstacleField = field(default_factory=lambda: EMPTY_OBSTACLES)
 
     def cost(self, a: Pass, b: Pass) -> float:
         exit_pt = _exit_xy(a, self.grade_return)
         cut_start = b.cut_start_xy
-        dist = math.dist(exit_pt, cut_start)
+        dist = (self.obstacles.path_length(exit_pt, cut_start)
+                if self.obstacles.active else math.dist(exit_pt, cut_start))
         if not self.direction_aware:
             return dist
         drive_t = dist / self.return_v if self.return_v > 0 else dist
@@ -121,7 +128,8 @@ def sequence_passes(passes: List[Pass], two_opt_cap: int = 1500,
                     grade_return: bool = True, direction_aware: bool = True,
                     return_speed_mph: float = DEFAULT_RETURN_SPEED_MPH,
                     turn_speed_mph: float = DEFAULT_TURN_SPEED_MPH,
-                    turning_circle_ft: float = DEFAULT_TURNING_CIRCLE_FT) -> Route:
+                    turning_circle_ft: float = DEFAULT_TURNING_CIRCLE_FT,
+                    obstacles: ObstacleField = EMPTY_OBSTACLES) -> Route:
     n = len(passes)
     if n == 0:
         return Route(order=[], ordered_passes=[], total_deadhead_m=0.0)
@@ -134,6 +142,7 @@ def sequence_passes(passes: List[Pass], two_opt_cap: int = 1500,
         return_v=return_speed_mph * MPH_TO_MPS,
         turn_v=turn_speed_mph * MPH_TO_MPS,
         R=(turning_circle_ft * FEET_TO_METERS) / 2.0,
+        obstacles=obstacles,
     )
 
     # Nearest-neighbour construction starting from pass 0 (deterministic).
@@ -156,7 +165,7 @@ def sequence_passes(passes: List[Pass], two_opt_cap: int = 1500,
     if not direction_aware and n <= two_opt_cap:
         order = _two_opt(passes, order, grade_return=grade_return)
 
-    total = sum(_deadhead(passes[order[k]], passes[order[k + 1]], grade_return)
+    total = sum(_deadhead(passes[order[k]], passes[order[k + 1]], grade_return, obstacles)
                 for k in range(len(order) - 1))
     ordered = [passes[k] for k in order]
     return Route(order=order, ordered_passes=ordered, total_deadhead_m=total)
@@ -220,6 +229,7 @@ def refine_route_order(
     turn_speed_mph: float = DEFAULT_TURN_SPEED_MPH,
     turning_circle_ft: float = DEFAULT_TURNING_CIRCLE_FT,
     max_rounds: int = 12,
+    obstacles: ObstacleField = EMPTY_OBSTACLES,
 ) -> Tuple[float, float, int]:
     """Local-search refinement of the routed pass order to cut overall time.
 
@@ -247,6 +257,7 @@ def refine_route_order(
         return_v=return_speed_mph * MPH_TO_MPS,
         turn_v=turn_speed_mph * MPH_TO_MPS,
         R=(turning_circle_ft * FEET_TO_METERS) / 2.0,
+        obstacles=obstacles,
     )
     before = _route_objective(model, seq)
     if n < 3 or window < 2:
@@ -283,7 +294,7 @@ def refine_route_order(
     route.ordered_passes = [t[0] for t in tagged]
     route.order = [t[1] for t in tagged]
     route.total_deadhead_m = sum(
-        _deadhead(route.ordered_passes[k], route.ordered_passes[k + 1], grade_return)
+        _deadhead(route.ordered_passes[k], route.ordered_passes[k + 1], grade_return, obstacles)
         for k in range(len(route.ordered_passes) - 1)
     )
     after = _route_objective(model, route.ordered_passes)

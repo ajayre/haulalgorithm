@@ -39,6 +39,7 @@ from typing import List, Optional, Tuple
 from . import DEFAULT_TURNING_CIRCLE_FT, FEET_TO_METERS, M3_TO_CY
 from .agd import AgdField, latlon_from_utm
 from .grid import Grid
+from .obstacles import EMPTY_OBSTACLES, ObstacleField
 from .passes import Pass
 from .routing import Route
 
@@ -859,6 +860,7 @@ def build_guidance(
     smooth_route: bool = True,
     turn_radius_m: Optional[float] = None,
     smooth_scale: float = 0.7,
+    obstacles: ObstacleField = EMPTY_OBSTACLES,
 ) -> GuidanceResult:
     """Build the blade-scale operator guidance track from the optimized route.
 
@@ -993,6 +995,25 @@ def build_guidance(
                     raw.append((x, y, 0.0, MOVE, pass_no, rev_disp[i][0], rev_disp[i][1]))
                 else:
                     raw.append((x, y, 0.0, GRADE, pass_no, rev_disp[i][0], rev_disp[i][1]))
+
+    # Obstacle detour pass (§12.3): any blade-up travel leg (RETURN deadhead,
+    # loaded HAUL, multi-drop MOVE) whose straight line crosses an exclusion zone
+    # is replaced by the shortest visibility-graph path around it. Blade-down
+    # coverage (CUT/FILL/GRADE) is never rerouted - the blade legitimately works
+    # right up to the cleared bins abutting the zone. The optimizer already
+    # counted these detours in the haul/deadhead distances; this realizes them on
+    # the drivable track so the in-cab line bends around the no-go area.
+    if obstacles.active and len(raw) >= 2:
+        detoured: List[Tuple[float, float, float, str, int, float, float]] = [raw[0]]
+        for i in range(1, len(raw)):
+            x, y, d, action, pass_no, xs_, ys_ = raw[i]
+            prev = detoured[-1]
+            if action in _BLADE_UP and action != START:
+                chain = obstacles.path((prev[0], prev[1]), (x, y))
+                for vx, vy in chain[1:-1]:
+                    detoured.append((vx, vy, 0.0, action, pass_no, vx, vy))
+            detoured.append((x, y, d, action, pass_no, xs_, ys_))
+        raw = detoured
 
     # Second pass: distances, bearings, instructions. Distances/time are charged
     # on the RAW coverage geometry (xr, yr); the emitted point coordinates and the

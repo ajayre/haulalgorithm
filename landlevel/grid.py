@@ -210,6 +210,10 @@ class Grid:
     compaction: float = DEFAULT_COMPACTION
     max_depth_mm: float = DEFAULT_MAX_DEPTH_MM
 
+    # Exclusion polygons (projected xy rings) the machine may neither level nor
+    # drive across (spec §12.3). Stored for rendering and obstacle routing.
+    exclusions: List[List[Tuple[float, float]]] = field(default_factory=list)
+
     @property
     def area_m2(self) -> float:
         return self.grid_size_m * self.grid_size_m
@@ -323,6 +327,64 @@ def build_grid(
         compaction=compaction,
         max_depth_mm=max_depth_mm,
     )
+
+
+@dataclass
+class ExclusionResult:
+    """Outcome of removing exclusion-zone bins from the field mask (§12.3)."""
+
+    n_bins_removed: int
+    removed_supply_bcy: float   # cut volume that was inside the zones (now exported)
+    removed_demand_bcy: float   # fill volume that was inside the zones (not imported)
+
+
+def apply_exclusions(
+    grid: Grid,
+    rings: List[List[Tuple[float, float]]],
+) -> ExclusionResult:
+    """Drop the bins covering each exclusion polygon from the field mask.
+
+    An irregular polygon is mapped to the **rectangular block of bins** spanning
+    its projected bounding box (floor of the min corner, the bin containing the
+    max corner). That block's bounding box therefore entirely contains the
+    polygon (spec §12.3): every bin the polygon touches — and the few that round
+    it out to a rectangle — is excluded, so no cut/fill is ever planned inside the
+    zone even if the AGD carries bins there. The polygons are stored on the grid
+    for obstacle routing and rendering.
+    """
+    if not rings:
+        return ExclusionResult(0, 0.0, 0.0)
+
+    supply_before = grid.supply_grid()
+    demand_before = grid.demand_grid()
+    removed = np.zeros_like(grid.valid)
+
+    for ring in rings:
+        if len(ring) < 3:
+            continue
+        xs = [p[0] for p in ring]
+        ys = [p[1] for p in ring]
+        bx_lo = int(math.floor((min(xs) - grid.min_x) / grid.grid_size_m))
+        bx_hi = int(math.floor((max(xs) - grid.min_x) / grid.grid_size_m))
+        by_lo = int(math.floor((min(ys) - grid.min_y) / grid.grid_size_m))
+        by_hi = int(math.floor((max(ys) - grid.min_y) / grid.grid_size_m))
+        bx_lo = max(0, min(grid.width - 1, bx_lo))
+        bx_hi = max(0, min(grid.width - 1, bx_hi))
+        by_lo = max(0, min(grid.height - 1, by_lo))
+        by_hi = max(0, min(grid.height - 1, by_hi))
+        removed[by_lo:by_hi + 1, bx_lo:bx_hi + 1] = True
+
+    removed &= grid.valid  # only count bins that were part of the field
+    n = int(removed.sum())
+    rem_supply = float(supply_before[removed].sum())
+    rem_demand = float(demand_before[removed].sum())
+
+    grid.valid = grid.valid & (~removed)
+    grid.existing = np.where(grid.valid, grid.existing, np.nan)
+    grid.target = np.where(grid.valid, grid.target, np.nan)
+    grid.exclusions = [list(r) for r in rings if len(r) >= 3]
+    return ExclusionResult(n_bins_removed=n, removed_supply_bcy=rem_supply,
+                           removed_demand_bcy=rem_demand)
 
 
 def _mask_from_observed(occupied: np.ndarray) -> np.ndarray:

@@ -188,6 +188,19 @@ def _log_warning(message: str) -> None:
     sys.stderr.write(f"WARNING: {message}\n")
 
 
+def project_latlon_ring(latlon: List[Tuple[float, float]]) -> List[Tuple[float, float]]:
+    """Project a ring of (lat, lon) degree pairs to UTM (easting, northing) metres.
+
+    Used for exclusion polygons (§12.3). The same WGS-84 -> UTM projection as the
+    field points, so an exclusion polygon lands in the field's coordinate frame.
+    """
+    out: List[Tuple[float, float]] = []
+    for lat, lon in latlon:
+        c = utm_from_latlon(lat, lon)
+        out.append((c.easting, c.northing))
+    return out
+
+
 def parse_agd_file(path: Path) -> AgdField:
     """Parse an AGD file into projected interior + boundary points (spec §6.1)."""
     path = Path(path)

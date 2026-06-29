@@ -13,6 +13,7 @@ from . import (
     DEFAULT_COMPACTION,
     DEFAULT_DECEL_TIME_S,
     DEFAULT_DUMPING_SPEED_MPH,
+    DEFAULT_EQUIPMENT_WIDTH_FT,
     DEFAULT_FIELD_EFFICIENCY,
     DEFAULT_GRADE_SPEED_MPH,
     DEFAULT_GRID_SIZE_FT,
@@ -31,10 +32,11 @@ from . import (
     DEFAULT_TURNING_CIRCLE_FT,
     __version__,
 )
-from .agd import parse_agd_file
+from .agd import parse_agd_file, project_latlon_ring
 from .balance import balance
 from .flowfield import compute_flow_field
-from .grid import build_grid
+from .grid import apply_exclusions, build_grid
+from .obstacles import EMPTY_OBSTACLES, ObstacleField
 from .passes import estimate_slope_heading, generate_passes
 from .animate import animate_leveling
 from .render import (
@@ -53,6 +55,33 @@ from .swaths import (
 )
 from .strips import trace_strips
 from .timemodel import TimeParams, estimate_time
+
+
+def _parse_polygon_specs(specs: list[str]) -> list[list[tuple[float, float]]]:
+    """Parse ``--exclude-polygon`` strings into lat/lon rings.
+
+    Each spec is ``"lat,lon;lat,lon;..."`` with at least three vertices. Raises
+    ``ValueError`` with a clear message on malformed input.
+    """
+    rings: list[list[tuple[float, float]]] = []
+    for spec in specs:
+        verts: list[tuple[float, float]] = []
+        for chunk in spec.replace("\n", ";").split(";"):
+            chunk = chunk.strip()
+            if not chunk:
+                continue
+            parts = [c.strip() for c in chunk.split(",")]
+            if len(parts) != 2:
+                raise ValueError(
+                    f"exclusion vertex '{chunk}' must be 'lat,lon' (got {len(parts)} values)"
+                )
+            verts.append((float(parts[0]), float(parts[1])))
+        if len(verts) < 3:
+            raise ValueError(
+                f"exclusion polygon needs >= 3 vertices, got {len(verts)}: '{spec}'"
+            )
+        rings.append(verts)
+    return rings
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -193,6 +222,20 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--animate-mode", choices=["cutfill", "topology"], default="cutfill",
                    help="animation render: cutfill map (default) or topology "
                         "(elevation terrain that flattens to grade)")
+    p.add_argument("--equipment-width-ft", type=float, default=DEFAULT_EQUIPMENT_WIDTH_FT,
+                   help="machine (equipment) width in feet (default %(default)g). "
+                        "Exclusion zones are buffered outward by half this so the "
+                        "machine body, not just the GPS centerline, stays out of a "
+                        "no-go polygon when routing around it.")
+    p.add_argument("--exclude-polygon", action="append", default=None,
+                   metavar="\"lat,lon;lat,lon;...\"",
+                   help="an exclusion polygon (e.g. a well) the machine may neither "
+                        "level nor drive across, given as >=3 'lat,lon' vertices "
+                        "separated by ';'. Repeat the flag for multiple polygons. "
+                        "The bins whose bounding box contains the polygon are dropped "
+                        "from the field; every haul/return leg routes around it via a "
+                        "visibility graph. Any resulting volume imbalance is treated "
+                        "as exported from (or imported to) the field.")
     p.add_argument("--no-plan", action="store_true",
                    help="render the PNG from stages 1-3 only (skip passes/time)")
     p.add_argument("--seed", type=int, default=1234)
@@ -225,11 +268,46 @@ def main(argv: list[str] | None = None) -> int:
     n_valid = int(grid.valid.sum())
     sys.stderr.write(f"INFO: grid {grid.width} x {grid.height} ({n_valid} valid areas)\n")
 
-    bal = balance(grid, mode=args.balance_mode)
+    # Exclusion zones (§12.3): drop the bins covering each polygon and build the
+    # obstacle field used to route every haul/return leg around the no-go area.
+    obstacles = EMPTY_OBSTACLES
+    has_exclusions = False
+    if args.exclude_polygon:
+        try:
+            rings_latlon = _parse_polygon_specs(args.exclude_polygon)
+        except ValueError as exc:
+            sys.stderr.write(f"ERROR: {exc}\n")
+            return 2
+        rings_xy = [project_latlon_ring(r) for r in rings_latlon]
+        excl = apply_exclusions(grid, rings_xy)
+        n_valid = int(grid.valid.sum())
+        clearance_m = args.equipment_width_ft * FEET_TO_METERS / 2.0
+        obstacles = ObstacleField.from_rings(grid.exclusions, clearance_m)
+        has_exclusions = obstacles.active
+        sys.stderr.write(
+            f"INFO: {len(grid.exclusions)} exclusion zone(s): removed "
+            f"{excl.n_bins_removed} bins ({n_valid} valid areas remain); "
+            f"machine width {args.equipment_width_ft:g} ft -> {clearance_m:.2f} m clearance\n"
+        )
+
+    # With exclusions, any cut/fill imbalance is expected (the removed zone broke
+    # the field's balance); treat it as exported/imported rather than a warning.
+    bal = balance(grid, mode=args.balance_mode,
+                  **({"threshold": float("inf")} if has_exclusions else {}))
     sys.stderr.write(
         f"INFO: supply={bal.total_supply_bcy:.1f} BCY, demand={bal.total_demand_bcy:.1f} BCY, "
         f"imbalance={bal.relative_imbalance * 100:.2f}%\n"
     )
+    if has_exclusions:
+        net = bal.total_supply_bcy - bal.total_demand_bcy
+        if net >= 0:
+            sys.stderr.write(
+                f"INFO: net {net:,.1f} BCY surplus cut treated as EXPORTED from the field\n"
+            )
+        else:
+            sys.stderr.write(
+                f"INFO: net {-net:,.1f} BCY fill deficit treated as IMPORTED to the field\n"
+            )
 
     flow = compute_flow_field(grid, mode=args.transport_mode)
 
@@ -274,6 +352,7 @@ def main(argv: list[str] | None = None) -> int:
         flow=flow,
         flow_aligned=flow_aligned,
         min_load_frac=args.min_load_fill / 100.0,
+        obstacles=obstacles,
     )
     sys.stderr.write(
         f"INFO: {len(pass_result.passes)} passes in {pass_result.rounds} rounds "
@@ -288,6 +367,7 @@ def main(argv: list[str] | None = None) -> int:
         return_speed_mph=args.return_speed_mph,
         turn_speed_mph=args.turn_speed_mph,
         turning_circle_ft=args.turning_circle_ft,
+        obstacles=obstacles,
     )
 
     # Re-profile any undriveable knot sweeps as boustrophedon parallel passes
@@ -311,6 +391,7 @@ def main(argv: list[str] | None = None) -> int:
             return_speed_mph=args.return_speed_mph,
             turn_speed_mph=args.turn_speed_mph,
             turning_circle_ft=args.turning_circle_ft,
+            obstacles=obstacles,
         )
         if direction_aware:
             saved = (before - after) / 3600.0
@@ -432,6 +513,7 @@ def main(argv: list[str] | None = None) -> int:
             turn_threshold_deg=args.turn_threshold_deg,
             smooth_route=not args.no_route_smoothing,
             turn_radius_m=args.turning_circle_ft * 0.5 * FEET_TO_METERS,
+            obstacles=obstacles,
         )
         gtime = estimate_guidance_time(
             guidance,

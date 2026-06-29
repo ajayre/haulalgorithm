@@ -1,12 +1,14 @@
 # Land Leveling Haul Algorithm
 
-Reference implementation of **LAND-LEVELING-SPEC.md**: a Python pipeline that
+Reference implementation of **LAND-LEVELING-SPEC-2.md**: a Python pipeline that
 reads an OptiSurface-style **AGD** field file, plans a sequence of
 cut–haul–fill **passes** that bring the field to its target grade with minimum
 haul distance and time, and renders a **PNG** of the cut/fill map with overlaid
 haul-direction arrows. By default each load's cut and fill follow the local
 **transport flow** (curved, with-the-grain lanes); `--no-flow-aligned` reverts to
-straight lanes along a single global heading. It also produces an OptiHaul-style
+straight lanes along a single global heading. Optional **exclusion zones** (e.g.
+a well head) drop bins from the field and route blade-up travel around them via a
+**visibility graph + Dijkstra** shortest path. It also produces an OptiHaul-style
 time report and a range of optional outputs (zone work order, per-pass CSVs, a
 haul "heat map", a leveling animation, and a **blade-scale operator guidance**
 track — turn-by-turn waypoints on a **smoothed, drivable GPS route** — with a
@@ -101,6 +103,30 @@ python -m landlevel.cli --agd TheShop2_2ft.agd --out plan.png \
   --guidance-csv --reorder-window 50
 ```
 
+Exclude a well or other no-go polygon (lat/lon vertices, repeatable for
+multiple zones). Bins covering the polygon are dropped from the field; haul,
+deadhead, and guidance travel legs detour around it:
+
+```bash
+python -m landlevel.cli --agd TheShop2_2ft.agd --out plan.png \
+  --exclude-polygon "36.44769,-90.72366;36.44769,-90.72361;36.44773,-90.72360;36.44773,-90.72366" \
+  --equipment-width-ft 14 --guidance-png
+```
+
+Regenerate the leveling animation with a centred well exclusion (see
+`make_leveling_animation.py`):
+
+```bash
+python make_leveling_animation.py
+```
+
+Run the exclusion-zone test harness (15 ft × 15 ft square at field centre,
+assertions + routing PNGs):
+
+```bash
+python make_exclusion_test.py
+```
+
 ## Command-line options
 
 Full list also available via `python -m landlevel.cli --help`. Defaults come
@@ -137,6 +163,13 @@ from spec §6.2–§6.4.
 | `--heading-strength` | 0.5 | 0–0.95: how strongly fill selection follows the heading (0 disables heading bias) |
 | `--transport-mode` | `poisson` | flow field: `poisson` (L²) or `mincostflow` (L¹, needs networkx) |
 | `--balance-mode` | `check` | `check` (warn on imbalance) or `adjust` (re-level the target to balance) |
+
+### Exclusion zones (no-go polygons)
+
+| Option | Default | Meaning |
+|---|---|---|
+| `--equipment-width-ft` | 14 | machine (equipment) width in feet; each exclusion polygon is buffered outward by **half** this so the machine body, not just the GPS centerline, stays out of the zone when routing around it |
+| `--exclude-polygon` | (none) | a no-go polygon the machine may **neither level nor drive through**, as ≥ 3 `lat,lon` vertices separated by `;` (e.g. `"lat1,lon1;lat2,lon2;lat3,lon3"`). Repeat the flag for multiple polygons. Bins whose bounding box contains the polygon are dropped from the field; any resulting cut/fill imbalance is treated as **exported from** (or **imported to**) the field |
 
 ### Time model
 
@@ -264,6 +297,7 @@ centroid lat/lon, and the pass range each zone was worked over).
 
 ```
 AGD file ─► [1] Parse + grid (7.5 ft)         agd.py, grid.py   §6, §7
+         ─►     (optional) exclusion mask      grid.py, obstacles.py  §7.2.8, §12.3
          ─► [2] Volume balance (check/adjust)  balance.py        §8
          ─► [3] Flow field (optimal transport) flowfield.py      §9
          ─► [4] Strips (streamlines)           strips.py         §10
@@ -385,6 +419,20 @@ request via `--guidance-csv` / `--guidance-png`.
   cost is the extra headland turns (a few percent of time). `--no-knot-repair`
   disables it. (A thin GPS line with no cut/fill colour under it is a legitimate
   blade-**up** reposition between genuinely separate pockets, not a missed bin.)
+- **Exclusion zones (wells, structures).** One or more irregular **no-go
+  polygons** may be supplied with `--exclude-polygon` (lat/lon vertices,
+  repeatable). Each polygon is projected to UTM and mapped to the **rectangular
+  block of grid bins** whose bounding box contains it; those bins are dropped
+  from the field mask so no cut/fill is ever planned inside even if the AGD has
+  bins there. Any resulting volume imbalance is reported as **exported from** or
+  **imported to** the field rather than a warning. For routing, each polygon is
+  buffered outward by half **`--equipment-width-ft`** (default 14 ft). Blade-up
+  travel legs — loaded **HAUL**, deadhead **RETURN**, multi-drop **MOVE** — use
+  a **visibility graph + Dijkstra** shortest path that never crosses the buffered
+  interior; the same distances feed pass haul lengths, the sequencer transition
+  cost, and the guidance track (detour waypoints inserted on travel legs). Blade-down
+  coverage (`CUT`/`FILL`/`GRADE`) is never rerouted; cuts and fills may abut the
+  cleared perimeter. See spec **§12.3**.
 
 ## Tests
 
@@ -394,6 +442,7 @@ python -m pytest tests/ -q
 
 Tests cover AGD round-trip and `delta` sign, BCY conversions, the LCY→BCY
 scraper conversion, mass balance, ridge→valley flow direction, pass limits
-(≤ 15.4 BCY, ≤ 61 mm), the cut/fill palette and render geometry, and both
-masking paths (with and without `2PER` boundary rows). See spec §17.
+(≤ 15.4 BCY, ≤ 61 mm), the cut/fill palette and render geometry, both
+masking paths (with and without `2PER` boundary rows), and **exclusion zones**
+(visibility-graph detour, bin removal). See spec §17.
 

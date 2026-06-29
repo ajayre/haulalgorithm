@@ -190,6 +190,8 @@ def render_png(
                     length_px=length_px, base_half_width_px=base_half,
                 )
 
+    _draw_exclusions(image, grid, ppb)
+
     out_path = Path(out_path)
     image.save(out_path)
 
@@ -199,6 +201,50 @@ def _world_to_pixel(grid: Grid, x: float, y: float, ppb: int) -> Tuple[float, fl
     px = (x - grid.min_x) / grid.grid_size_m * ppb
     py = (grid.height - (y - grid.min_y) / grid.grid_size_m) * ppb
     return px, py
+
+
+def _draw_exclusions(
+    image: "Image.Image",
+    grid: Grid,
+    ppb: int,
+    fill=(70, 70, 70, 150),
+    outline=(0, 0, 0, 255),
+    label: str = "NO-GO",
+) -> None:
+    """Outline + shade each exclusion polygon (spec §12.3) on an RGBA image.
+
+    The polygon the machine may neither level nor drive across is drawn as a
+    hatched grey patch with a bold black outline so the routing detours and the
+    cuts/fills abutting it are obvious. Drawn on a transparent overlay then
+    composited, so the shading does not clobber the underlying map colours.
+    """
+    rings = getattr(grid, "exclusions", None)
+    if not rings:
+        return
+    overlay = Image.new("RGBA", image.size, (0, 0, 0, 0))
+    od = ImageDraw.Draw(overlay)
+    line_w = max(2, ppb // 4)
+    for ring in rings:
+        pts = [(_world_to_pixel(grid, x, y, ppb)) for x, y in ring]
+        poly = [(round(px), round(py)) for px, py in pts]
+        if len(poly) >= 3:
+            od.polygon(poly, fill=fill, outline=outline)
+            # Diagonal hatch for a clear "keep out" read.
+            xs = [p[0] for p in poly]
+            ys = [p[1] for p in poly]
+            x0, x1 = min(xs), max(xs)
+            y0, y1 = min(ys), max(ys)
+            step = max(6, ppb // 2)
+            d = x0 - y1
+            while d <= x1 - y0:
+                od.line([(max(x0, y0 + d), max(y0, x0 - d)),
+                         (min(x1, y1 + d), min(y1, x1 - d))],
+                        fill=(0, 0, 0, 120), width=1)
+                d += step
+            for px, py in poly:
+                od.line([(px, py), (px, py)], fill=outline, width=line_w)
+            od.line(poly + [poly[0]], fill=outline, width=line_w)
+    image.alpha_composite(overlay)
 
 
 # Hot ramp for haul-density rendering: even a single load (low end) is a clearly
@@ -319,6 +365,8 @@ def render_guidance_png(
                 fill=colors.get(action, (0, 0, 0, 255)), width=width,
             )
         prev = cur
+
+    _draw_exclusions(base, grid, ppb)
 
     base.save(Path(out_path))
 

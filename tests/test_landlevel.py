@@ -334,3 +334,65 @@ def test_utm_projection_reasonable():
     assert c.zone == 15
     assert c.is_northern is True
     assert 0 < c.easting < 1_000_000
+
+
+# ---------------------------------------------------------------------------
+# §17.0.9 Exclusion zones + obstacle-aware routing (spec §12.3)
+# ---------------------------------------------------------------------------
+
+def test_obstacle_visibility_detour():
+    from landlevel.obstacles import ObstacleField
+
+    # A unit square obstacle centred at the origin; clearance 0.5 -> buffered 2x2.
+    ring = [(-0.5, -0.5), (0.5, -0.5), (0.5, 0.5), (-0.5, 0.5)]
+    of = ObstacleField.from_rings([ring], clearance=0.5)
+    a, b = (-5.0, 0.0), (5.0, 0.0)
+    # Straight line through the middle is blocked; the detour is strictly longer.
+    assert of.blocked(a, b)
+    assert of.path_length(a, b) > math.dist(a, b)
+    # The detour clears the buffered zone (corner ~ (1,1)): length ~ 2*hypot(5,1).
+    assert of.path_length(a, b) == pytest.approx(2 * math.hypot(5.0, 1.0), rel=0.05)
+    # A leg that misses the zone is an exact straight line (no detour, O(1) reject).
+    c, d = (-5.0, 5.0), (5.0, 5.0)
+    assert not of.blocked(c, d)
+    assert of.path_length(c, d) == pytest.approx(math.dist(c, d))
+
+
+def test_empty_obstacle_field_is_passthrough():
+    from landlevel.obstacles import EMPTY_OBSTACLES
+
+    assert not EMPTY_OBSTACLES.active
+    a, b = (0.0, 0.0), (3.0, 4.0)
+    assert not EMPTY_OBSTACLES.blocked(a, b)
+    assert EMPTY_OBSTACLES.path_length(a, b) == pytest.approx(5.0)
+    assert EMPTY_OBSTACLES.path(a, b) == [a, b]
+
+
+def test_apply_exclusions_removes_block_and_exports(tmp_path):
+    from landlevel.grid import apply_exclusions
+
+    agd = tmp_path / "excl.agd"
+    _write_agd(agd, _ramp_field(with_boundary=True), with_boundary=True)
+    field = parse_agd_file(agd)
+    grid = build_grid(field)
+    before = int(grid.valid.sum())
+
+    # A square around the field centre, expressed in projected xy.
+    cx = grid.min_x + grid.width * grid.grid_size_m * 0.5
+    cy = grid.min_y + grid.height * grid.grid_size_m * 0.5
+    h = grid.grid_size_m * 0.75
+    ring = [(cx - h, cy - h), (cx + h, cy - h), (cx + h, cy + h), (cx - h, cy + h)]
+
+    res = apply_exclusions(grid, [ring])
+    after = int(grid.valid.sum())
+    assert res.n_bins_removed > 0
+    assert after == before - res.n_bins_removed
+    # Removed bins are no longer valid and never level inside the polygon.
+    from landlevel.obstacles import point_in_ring
+    for by in range(grid.height):
+        for bx in range(grid.width):
+            cxy = grid.cell_center_xy(bx, by)
+            if point_in_ring(cxy[0], cxy[1], ring):
+                assert not grid.valid[by, bx]
+    # The polygon is stored for downstream routing/rendering.
+    assert grid.exclusions and len(grid.exclusions[0]) >= 3

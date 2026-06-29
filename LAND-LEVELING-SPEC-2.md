@@ -2,7 +2,7 @@
 
 **[0.0.2]** This document is the authoritative specification (revision 2) for the **land leveling haul algorithm**: a Python program that reads an OptiSurface-style **AGD** field file, plans a sequence of cut–haul–fill operations that bring the field to its target grade with minimum haul distance and time, and renders a **PNG** of the cut/fill map with haul-direction arrows, plus optional sequencing CSVs, a haul "heat map" PNG, and a leveling animation.
 
-**[0.0.3]** This v2 supersedes **LAND-LEVELING-SPEC.md** (v0.0.1). It folds in the optimizations and outputs added during implementation: a **7.5 ft** default grid (≈ one blade width), **contiguous region-grown** cut/fill patches grown as long **blade-wide strips**, **multi-drop** cuts/fills across nearby pockets, the **true transit haul leg** (cut-end → fill-start), an optional **haul heading** bias (snapped to the nearest cardinal axis), an **OptiHaul-matched** time model, **direction-aware** turn-minimizing sequencing, a **blade-scale operator guidance** track (turn-by-turn waypoints, a grade/compact return pass, and a realistic drivable time that counts turning), **zone-level work sequencing**, per-pass **lat/lon CSV** export, a **pass-pairs heat-map** PNG, and a frame-by-frame **leveling animation**. Where v1 and the code disagreed, the code is treated as authoritative and this document is updated to match.
+**[0.0.3]** This v2 supersedes **LAND-LEVELING-SPEC.md** (v0.0.1). It folds in the optimizations and outputs added during implementation: a **7.5 ft** default grid (≈ one blade width), **contiguous region-grown** cut/fill patches grown as long **blade-wide strips**, **multi-drop** cuts/fills across nearby pockets, the **true transit haul leg** (cut-end → fill-start), an optional **haul heading** bias (snapped to the nearest cardinal axis), an **OptiHaul-matched** time model, **direction-aware** turn-minimizing sequencing, a **blade-scale operator guidance** track (turn-by-turn waypoints, a grade/compact return pass, and a realistic drivable time that counts turning), **zone-level work sequencing**, per-pass **lat/lon CSV** export, a **pass-pairs heat-map** PNG, a frame-by-frame **leveling animation**, and **exclusion zones** with **visibility-graph obstacle routing** around no-go polygons (wells, structures). Where v1 and the code disagreeed, the code is treated as authoritative and this document is updated to match.
 
 **[0.0.4]** The problem background and physical model are described in **LAND_LEVELING_PROBLEM.md**; this specification turns that description into an implementation-complete contract.
 
@@ -27,6 +27,7 @@
 | **2.5.0** | 2026-06-28 | **Spatially-compact loads (no pointless blade-up moves).** The flow-tube grower could integrate a long streamline that picked up a scatter of cells across empty ground, forcing a long blade-up `MOVE` covering nothing. A **compactness guard** (§11.0.2c-i) now keeps only the seed-connected fragment (within one multi-drop hop) and refunds the far cells to the ledger for a later local pass (volume conserved, surface unchanged). The lane builders also order multi-fragment sweeps by a **nearest-neighbour chain** instead of raw distance-to-junction (§13.3.1b). On TheShop2 this cut total reposition travel ≈28%, long no-coverage moves ≈75%, and shaved ≈1.5% off total time. No new flags (reuses `--max-drop-hop-ft`). |
 | **2.4.0** | 2026-06-28 | **Knot re-profiling + load-fullness cap.** Some compact multi-drop loads chain into an undriveable "knot" (a sweep that hairpins back on itself). After sequencing, the guidance now re-profiles such sweeps into a **boustrophedon** — parallel blade-width back-and-forth lanes — but only where the rendered sweep is still a knot **and** the boustrophedon strictly reduces hairpins, so clean flowing sweeps are never made worse; the re-profile is **pocket-aware** and **conservative** (no bin/load/haul/surface change, only the in-patch path) (§13.3b). `--no-knot-repair` disables it. New **`--min-load-fill`** (default 90%) caps multi-drop chasing once a load is "full enough", keeping more loads single clean lanes instead of U-turn blobs (§11.0.3c-i). New CLI flags in §15. |
 | **2.6.0** | 2026-06-28 | **Windowed order refinement (optional, default off).** After routing and knot re-profiling, an optional local search walks the passes one at a time and, for each, relocates it within a window of nearby passes whenever that lowers the order-dependent time (the §12.0.5 transition cost). Relocation (or-opt) never reverses a run, so — unlike 2-opt (§12.0.4) — it is safe with the asymmetric direction-aware turn cost, supplying the improvement step that the turn-aware nearest-neighbour construction otherwise lacks. Every accepted move strictly lowers the objective, so the search only ever reduces (never increases) total time, and the refined order flows into the time model, zone sequencing, pair exports, and guidance (§12.2). New **`--reorder-window`** flag in §15 (default 0 = disabled; typical value 50). |
+| **2.7.0** | 2026-06-29 | **Exclusion zones and obstacle-aware routing.** One or more irregular **no-go polygons** (e.g. a well head) may be supplied on the command line. Each polygon is projected to UTM, mapped to the rectangular block of grid bins whose bounding box contains it, and dropped from the field mask — no cut/fill is planned inside even if the AGD has bins there. Any resulting cut/fill imbalance is treated as **exported from** (or **imported to**) the field rather than a warning. Blade-up travel legs (loaded **HAUL**, deadhead **RETURN**, multi-drop **MOVE**) route **around** every zone using a **visibility graph + Dijkstra** shortest path on a clearance-buffered polygon (buffer = half **`--equipment-width-ft`**, default 14 ft). The same obstacle distances feed pass haul lengths, the sequencer transition cost, and the guidance track (detour waypoints inserted on travel legs). Optional hatched overlay on plan/guidance PNGs. New **`--exclude-polygon`** (repeatable) and **`--equipment-width-ft`** flags in §15; new module **`obstacles.py`** (§12.3, §16.1). |
 
 **[0.1.2]** This document follows [semantic versioning](https://semver.org/): **MAJOR** = incompatible normative change, **MINOR** = backward-compatible addition, **PATCH** = clarification.
 
@@ -60,6 +61,7 @@
 **[2.0.12]** 11. Optional **zone work-order sequencing**, **per-pass lat/lon CSV**, a **pass-pairs heat-map PNG**, and a **leveling animation** (**§12.1**, **§14.4**–**§14.6**).
 **[2.0.13]** 12. A documented **command-line interface** (**§15**).
 **[2.0.14]** 13. A **blade-scale operator guidance** track that turns the optimized passes into turn-by-turn waypoints (action, blade up/down, target depth, next bearing, instruction) plus a **realistic drivable time** that — unlike the OptiHaul-matched core model — counts **turning** and a **grade/compact return pass** over every fill (**§13.1**–**§13.6**). The guidance shall not worsen the optimized passes' haul/time; it realizes them at blade scale.
+**[2.0.15]** 14. Optional **exclusion zones**: one or more irregular no-go polygons (e.g. a well head) that are neither levelled nor driven through; blade-up travel routes around them via a visibility graph (**§12.3**).
 
 ## 3. Non-goals
 
@@ -93,7 +95,7 @@
 
 ### 4.4 Pass, segment, haul leg
 
-**[4.4.1]** A **pass** is one cut–haul–fill cycle. Its **cut segment** is the ordered set of cut cells (with depths) swept while loading; its **fill segment** is the ordered set of fill cells swept while dumping. The **haul leg** is the straight-line transit from the cut-segment **end** to the fill-segment **start** (**§11.0.3**).
+**[4.4.1]** A **pass** is one cut–haul–fill cycle. Its **cut segment** is the ordered set of cut cells (with depths) swept while loading; its **fill segment** is the ordered set of fill cells swept while dumping. The **haul leg** is the transit from the cut-segment **end** to the fill-segment **start** (**§11.0.3**). When exclusion zones are active (**§12.3**), the haul leg length is the **shortest obstacle-avoiding path** around every zone, not the straight-line distance.
 
 ### 4.5 Strip
 
@@ -147,6 +149,14 @@
 
 **[4.17.1]** **Route smoothing** rounds a sweep's **displayed** waypoint coordinates into a drivable curve whose corner radius respects the turning circle (**§13.3a**), because raw grid waypoints step in 45/90° jogs no tractor+scraper can track. Smoothing is a **steering-display transform only**: it never changes the distance, turn or time accounting, which stay on the raw coverage geometry (the blade must still cover the full cell band).
 
+### 4.18 Exclusion zone
+
+**[4.18.1]** An **exclusion zone** is an irregular polygon (given as lat/lon vertices) that the machine may **neither level nor drive through** — e.g. a well head, structure, or other permanent obstacle. Its bins are dropped from the field mask (**§7.2.8**); cut/fill work may abut the cleared perimeter but never occurs inside the zone.
+
+### 4.19 Clearance buffer and obstacle field
+
+**[4.19.1]** For routing, each exclusion polygon is offset outward by a **clearance** equal to half the configured **equipment width** (`--equipment-width-ft`, default 14 ft), so the machine **body**, not just the GPS centerline, stays clear of the zone. The set of buffered polygons forms an **obstacle field**; blade-up travel legs (**§12.3**) use a **visibility graph + Dijkstra** shortest path that never crosses any buffered interior.
+
 ---
 ## 5. High-level architecture
 
@@ -155,7 +165,8 @@
 **[5.0.2]**
 
 ```text
-AGD file ──► [1] Parse + grid (7.5 ft)         agd.py, grid.py   §6, §7
+AGD file           ──► [1] Parse + grid (7.5 ft)         agd.py, grid.py   §6, §7
+          ──►     (optional) exclusion mask      grid.py, obstacles.py  §7.2.8, §12.3
           ──► [2] Volume balance (check/adjust)  balance.py        §8
           ──► [3] Flow field (optimal transport) flowfield.py      §9
           ──► [4] Strips (streamlines)           strips.py         §10
@@ -215,7 +226,7 @@ Latitude (deg), Longitude (deg), Elevation Existing(m), Elevation Proposed(m), C
 
 **[6.1.12]** Boundary handling: if **`2PER`** rows are present they define the field perimeter polygon; areas whose centers fall outside it shall be invalid and excluded everywhere. If no **`2PER`** rows are present, the field mask shall be inferred from the observed points (row/column span fill, hole fill, largest connected component), consistent with **`fielddesign.py`**.
 
-**[6.1.13]** The reader shall also expose the inverse projection (UTM → lat/lon, `latlon_from_utm`) and the field's UTM **zone** and **hemisphere**, so downstream stages can emit geographic coordinates in the CSV outputs (**§14.4**).
+**[6.1.13]** The reader shall also expose the inverse projection (UTM → lat/lon, `latlon_from_utm`), the forward ring projection (`project_latlon_ring`: a list of lat/lon pairs → UTM metres, **§12.3**), and the field's UTM **zone** and **hemisphere**, so downstream stages can emit geographic coordinates in the CSV outputs (**§14.4**) and parse exclusion polygons.
 
 ### 6.2 Equipment specifications (normative)
 
@@ -240,6 +251,7 @@ Latitude (deg), Longitude (deg), Elevation Existing(m), Elevation Proposed(m), C
 | **Multi-drop hop** | 100 ft | Max blade-up drive to the next pocket to keep loading/spreading the same load (**§11.0.3c**); 0 disables multi-drop. |
 | **Minimum load fill** | 90% | Drivability vs load-fullness trade-off: once a load reaches this fraction of capacity, further multi-drop hops are skipped so it stays a single clean lane (**§11.0.3c-i**); 100 = chase every load to full. |
 | **Knot re-profiling** | on | Re-profile undriveable knot sweeps into boustrophedon parallel passes after sequencing (**§13.3b**); `--no-knot-repair` disables it. |
+| **Equipment width** | 14 ft | Machine width used as the clearance buffer around exclusion zones: each no-go polygon is offset outward by **half** this value for obstacle routing (**§12.3**). |
 
 ### 6.3 Time and motion parameters (normative)
 
@@ -266,6 +278,7 @@ Latitude (deg), Longitude (deg), Elevation Existing(m), Elevation Proposed(m), C
 | **Arrow stride** | 2 | Draw a haul arrow every N areas (0 disables). |
 | **Transport mode** | `poisson` | `poisson` (L²) or `mincostflow` (L¹) flow field (**§9**). |
 | **Balance mode** | `check` | `check` (warn) or `adjust` (re-level target, **§8**). |
+| **Exclusion polygons** | (none) | Zero or more no-go polygons, each ≥ 3 lat/lon vertices (**§7.2.8**, **§12.3**); repeat `--exclude-polygon` for multiple zones. |
 | **Zones** | 8 | Number of cut zones for the rough work order (0 disables) (**§12.1**). |
 | **Seed** | 1234 | Random seed for deterministic zone clustering (**§16.4**). |
 
@@ -307,6 +320,8 @@ repeat up to 2 * max(width, height) times, until no cell is still pending:
 
 **[7.2.7]** Blade width shall not affect the grid size; each area is atomic for cut, fill, and haul.
 
+**[7.2.8]** *Exclusion mask (normative).* When one or more **exclusion polygons** are supplied (**§6.4**, **§12.3**), each polygon shall be projected to UTM using the same projection as the field (**§7.1**). An irregular polygon shall be mapped to the **rectangular block of bins** spanning its projected axis-aligned bounding box: bin indices from `floor((min − origin) / grid_size)` through `floor((max − origin) / grid_size)` on each axis, clamped to the grid. That block's bounding box entirely contains the polygon, so every bin the polygon touches — and any rounding-out to a rectangle — is excluded. Those bins shall be removed from `valid`; their `existing` and `target` shall be set non-finite so they contribute neither cut nor fill. The projected rings shall be stored on the grid for downstream routing and rendering. No cut/fill pass may consume an excluded bin.
+
 ### 7.3 Cell quantities and BCY conversion (normative)
 
 **[7.3.1]** For each valid area, let `delta = existing − target` (m, positive = cut) and `A = grid_size²` (m²). `M3_TO_CY = 1.30795061931439` converts m³ to yd³.
@@ -340,9 +355,9 @@ demand_BCY    = fill_space_m3 * M3_TO_CY * cutfill_ratio   # bank cut volume to 
 
 **[8.0.1]** Because the target is supplied by the AGD file, total cut and fill (BCY) are normally consistent. The implementation shall still compute global `Σ supply_BCY` and `Σ demand_BCY` and report the relative imbalance.
 
-**[8.0.2]** In **`balance_mode = check`** (default) it shall warn if the relative imbalance exceeds a small threshold (default 2%) and continue.
+**[8.0.2]** In **`balance_mode = check`** (default) it shall warn if the relative imbalance exceeds a small threshold (default 2%) and continue. When one or more exclusion zones are active, the imbalance threshold shall be suppressed and any net surplus cut or fill deficit shall be reported as **exported from** or **imported to** the field respectively — the removed bins broke the field's volume closure and that material is assumed to leave or enter at the boundary.
 
-**[8.0.3]** In **`balance_mode = adjust`** it **may** apply a single global vertical offset to the target to drive `Σ supply_BCY` toward `Σ demand_BCY` (bisection on the offset), reporting the chosen offset. Tilting/re-fitting the plane is out of scope (**§3**).
+**[8.0.3]** In **`balance_mode = adjust`** it **may** apply a single global vertical offset to the target to drive `Σ supply_BCY` toward `Σ demand_BCY` (bisection on the offset), reporting the chosen offset. Tilting/re-fitting the plane is out of scope (**§3**). Exclusion-induced imbalance is not corrected by offset alone; the export/import reporting of **§8.0.2** still applies.
 
 ---
 
@@ -450,7 +465,7 @@ cut_chain  = nn_chain(cut cells, start = cut_start)
 cut_end    = center of last cell in cut_chain
 fill_start = fill cell NEAREST to cut_end                # dumping begins where hauling ends
 fill_chain = nn_chain(fill cells, start = fill_start)
-haul_distance = euclidean(cut_end, center of fill_start)
+haul_distance = obstacle_path_length(cut_end, fill_start)   # §12.3 when exclusions active; else euclidean
 ```
 
 **[11.0.15]** Centroid-to-centroid haul (which double-counts the sweeps) shall **not** be used. The loading distance is the swept length of `cut_chain`, the dumping distance the swept length of `fill_chain` (**§13**).
@@ -478,7 +493,7 @@ haul_distance = euclidean(cut_end, center of fill_start)
 
 **[12.0.3]** *Anti-dam ordering (informative).* Ordering should favor completing downhill flow first to avoid transient berms that could pond water; this is a soft preference, not a hard constraint in this version.
 
-**[12.0.4]** The ordering shall be a constructive heuristic followed by bounded local improvement. The deadhead metric between an earlier pass `a` and a later pass `b` is `deadhead(a, b) = euclidean(exit_xy(a), b.cut_start)` (for `exit_xy` see **§12.0.5**). Construction is **nearest-neighbour starting from pass index 0** (deterministic): repeatedly append the unvisited pass minimizing the transition cost from `current`. Then a **bounded 2-opt** pass improves the order: it is applied **only when direction-aware sequencing is off (§12.0.5) and the pass count ≤ 1500** (above either, the construction order is kept, to stay fast and deterministic), runs at most **30 sweeps**, and accepts a segment reversal only when it strictly reduces the summed deadhead (improvement threshold `1e-6` m), taking the first improving move in each sweep. Exact optimization is not required. The route shall expose the ordered passes, the original indices, and the total deadhead distance.
+**[12.0.4]** The ordering shall be a constructive heuristic followed by bounded local improvement. The deadhead metric between an earlier pass `a` and a later pass `b` is `deadhead(a, b) = path_length(exit_xy(a), b.cut_start)` (for `exit_xy` see **§12.0.5**), where `path_length` is the obstacle-aware shortest path of **§12.3** when exclusion zones are active and otherwise the Euclidean distance. Construction is **nearest-neighbour starting from pass index 0** (deterministic): repeatedly append the unvisited pass minimizing the transition cost from `current`. Then a **bounded 2-opt** pass improves the order: it is applied **only when direction-aware sequencing is off (§12.0.5) and the pass count ≤ 1500** (above either, the construction order is kept, to stay fast and deterministic), runs at most **30 sweeps**, and accepts a segment reversal only when it strictly reduces the summed deadhead (improvement threshold `1e-6` m), taking the first improving move in each sweep. Exact optimization is not required. The route shall expose the ordered passes, the original indices, and the total deadhead distance.
 
 **[12.0.5]** *Direction-aware, grade-aware transition cost (normative, default on).* The next cut should be cheap to **drive to and turn into**, not merely close. The transition cost from `a` to `b` is a **time** that combines the deadhead drive with the turn arcs, using the same turning-circle model as the guidance (**§13.1**):
 
@@ -486,7 +501,7 @@ haul_distance = euclidean(cut_end, center of fill_start)
 
 ```text
 exit_xy(a)  = a.fill_start  if grade_return else a.fill_end   # where the machine ends
-dist        = euclidean(exit_xy(a), b.cut_start)
+dist        = path_length(exit_xy(a), b.cut_start)           # §12.3 when exclusions active
 drive_t     = dist / return_speed
 angle       = turn(exit_dir(a) → deadhead_dir) + turn(deadhead_dir → cut_dir(b))
 turn_t      = (turning_circle/2) * angle / turn_speed
@@ -518,6 +533,37 @@ cost(a, b)  = drive_t + turn_t
 **[12.2.4]** *Window and sweep (normative).* On request (`--reorder-window N`, default **0** = disabled), with `N ≥ 2` and at least 3 passes, the implementation shall walk the passes **one at a time**. For the pass at position `k` it shall evaluate relocating that pass to each slot whose index lies within `N` positions of `k` (i.e. the window `[max(0, k−N), min(last, k+N)]`), and shall apply the single **strictly improving** relocation of greatest benefit (improvement threshold `1e-7`). Because every accepted move strictly lowers the **§12.2.2** objective and no move ever raises it, the search **monotonically converges**; it shall repeat full sweeps until a sweep makes no move or a bounded **round cap (12)** is reached.
 
 **[12.2.5]** *Placement and effects.* The refinement shall run **after** routing (**§12.0**) and knot re-profiling (**§13.3b**) and **before** the time model (**§13.0**), zone sequencing (**§12.1**), pair exports (**§14**), and the blade-scale guidance (**§13.1**), so all downstream outputs reflect the refined order. It shall mutate the route in place — the ordered passes, the original indices, and the total deadhead distance — and shall report the number of relocations and the before/after objective. It shall **not** add, remove, split, or alter any pass, cut/fill bin, load, or haul leg, so the moved volume and the finished surface are unchanged. `--reorder-window 0` (the default) skips the refinement entirely, leaving the route exactly as **§12.0** produced it.
+
+### 12.3 Exclusion zones and obstacle-aware routing
+
+**[12.3.1]** *Purpose.* A field may contain areas the machine must **neither level nor drive through** — e.g. a well head in the middle of the paddock. Such areas are supplied as one or more **exclusion polygons** (**§4.18**, **§7.2.8**). Two consequences follow from one polygon: (1) no cut/fill is planned inside the zone; (2) every **blade-up travel leg** (loaded **HAUL**, deadhead **RETURN**, multi-drop **MOVE**) must **detour around** the zone rather than crossing it in a straight line.
+
+**[12.3.2]** *Clearance buffer (normative).* Each exclusion polygon shall be offset outward by a **clearance** equal to half the configured **equipment width** (`--equipment-width-ft`, default **14 ft**), producing a larger **buffer ring** in projected metres. The buffer ensures the machine **body**, not merely the GPS centerline, stays out of the no-go area. Offsetting shall use a convex miter join on the CCW-oriented ring (`obstacles.py`).
+
+**[12.3.3]** *Visibility graph + Dijkstra (normative).* The implementation shall build an **obstacle field** (`ObstacleField`) over all buffer rings:
+
+**[12.3.4]**
+
+```text
+nodes  = all vertices of all buffer rings
+edge(i,j) exists iff straight segment (node_i, node_j) does not cross any buffer interior
+         (segment–polygon intersection test; endpoints on the perimeter are allowed)
+```
+
+**[12.3.5]** For a travel leg from point `A` to point `B`, if the straight segment is blocked the shortest path shall be found by **Dijkstra** on the visibility graph with temporary nodes at `A` and `B` connected to every visible graph node. The returned polyline includes `A` and `B`; its summed edge lengths is **`path_length(A, B)`**. When no exclusion zones are active, or the straight segment is clear, `path_length` shall equal the Euclidean distance (O(1) axis-aligned bounding-box reject before any graph work).
+
+**[12.3.6]** *Where obstacle distances apply (normative).* The same `ObstacleField` instance shall be threaded through:
+
+**[12.3.7]** 1. **Pass haul length** — `haul_distance` in **§11.0.14** (`passes.py`, `_build_pass`).
+**[12.3.8]** 2. **Sequencer transition cost** — `dist` in **§12.0.5–§12.0.6** and total deadhead (`routing.py`).
+**[12.3.9]** 3. **Windowed refinement** — **§12.2** objective when `--reorder-window` is on.
+**[12.3.10]** 4. **Guidance travel legs** — before emitting waypoints, each consecutive blade-up leg (`RETURN`, `HAUL`, `MOVE`) whose straight line crosses a zone shall have the detour vertices of `path(A, B)` inserted into the track (**§13.4.2**). Blade-down coverage (`CUT`, `FILL`, `GRADE`) is **never** rerouted — the blade legitimately works up to the bins abutting the cleared perimeter.
+
+**[12.3.11]** *Volume balance (normative).* Removing exclusion bins breaks the field's cut/fill closure. When any exclusion zone is active, the balance check (**§8.0.2**) shall suppress the relative-imbalance warning and report any net surplus cut as **exported from the field** and any net fill deficit as **imported to the field**.
+
+**[12.3.12]** *CLI input format (normative).* Each `--exclude-polygon` value is a string of **`lat,lon` vertices separated by `;`**, with at least three vertices per polygon. The flag may be repeated for multiple polygons. Vertices are projected with `project_latlon_ring` (**§6.1**, `agd.py`). Malformed input shall produce a clear error and a non-zero exit code.
+
+**[12.3.13]** *Rendering (informative).* When exclusion zones are present, the plan and guidance PNG renderers **may** draw the no-go polygon as a hatched overlay (**§14**). This is visual only and does not affect the plan.
 
 ---
 
@@ -589,6 +635,8 @@ else:                                   # triangular: peak speed vp < v
 ### 13.4 Multi-drop repositioning (`MOVE`)
 
 **[13.4.1]** A multi-drop pass (**§11.0.3c**) spans several pockets; the blade-up drive between two pockets within a sweep shall be emitted as a **`MOVE`** segment (blade up), distinct from the optimized **`HAUL`** leg. `MOVE` distance is accumulated separately (`reposition_dist_m`) and shall **not** inflate the reported haul distance, though it is timed as travel (**§13.5**). Each `MOVE` covers **no ground** (blade up), so it is pure overhead: the compactness guard (**§11.0.2c-i**) keeps loads from spanning empty gaps and the nearest-neighbour fragment order (**§13.3.1b**) keeps each hop the shortest available, so a `MOVE` is bounded to a genuine pocket-to-pocket reposition rather than a long excursion that covers nothing.
+
+**[13.4.2]** *Obstacle detour waypoints (normative).* When exclusion zones are active (**§12.3**), after the raw cut/fill/grade waypoints are assembled the guidance builder shall walk consecutive waypoints and, for each leg whose action is blade-up travel (`RETURN`, `HAUL`, `MOVE`, but not `START`), test whether the straight segment crosses any buffered zone interior. If blocked, it shall insert the intermediate vertices of `path(prev, cur)` (excluding the endpoints) as additional waypoints with the same action and zero depth before emitting `cur`. Distance and time accounting (**§13.5**) shall follow the detour polyline on the raw geometry. Blade-down sweeps are not detoured.
 
 ### 13.5 Guidance time estimate
 
@@ -689,6 +737,10 @@ diff >   0.80  ->  dark red   #B40000
 --transport-mode {poisson,mincostflow}   default poisson
 --balance-mode {check,adjust}            default check
 
+# Exclusion zones (no-go polygons)
+--equipment-width-ft FLOAT    default 14    (machine width; clearance buffer = half this)
+--exclude-polygon "lat,lon;..."  repeatable; >= 3 vertices per polygon (§12.3)
+
 # Time model
 --field-efficiency FLOAT      default 0.8
 --loading-speed-mph FLOAT     default 4
@@ -752,17 +804,18 @@ diff >   0.80  ->  dark red   #B40000
 ```text
 landlevel/
   __init__.py     # constants/defaults (grid size, swell, capacities, speeds)
-  agd.py          # §6.1 AGD reader, §7.1 projection (utm_from_latlon, latlon_from_utm)
-  grid.py         # §7.2 binning, §7.3 BCY conversions, cell_center_xy
+  agd.py          # §6.1 AGD reader, §7.1 projection (utm_from_latlon, latlon_from_utm, project_latlon_ring)
+  grid.py         # §7.2 binning, §7.2.8 exclusion mask (apply_exclusions), §7.3 BCY conversions, cell_center_xy
   balance.py      # §8 volume balance
   flowfield.py    # §9 optimal transport (poisson + mincostflow)
   strips.py       # §10 streamline tracing; flow_direction_field + streamline_to (for §11.0.2c)
-  passes.py       # §11 contiguous patch matcher: flow-aligned tube (default) + single-heading strip bias, multi-drop, heading snap, 61 mm layering
-  routing.py      # §12 sequencing (NN + bounded 2-opt; direction-aware/grade-aware transition cost) + §12.2 windowed relocation refinement (refine_route_order)
+  passes.py       # §11 contiguous patch matcher: flow-aligned tube (default) + single-heading strip bias, multi-drop, heading snap, 61 mm layering, obstacle-aware haul (§12.3)
+  obstacles.py    # §12.3 exclusion zones: clearance buffer, visibility graph, Dijkstra path_length/path/blocked
+  routing.py      # §12 sequencing (NN + bounded 2-opt; direction-aware/grade-aware transition cost; obstacle-aware deadhead) + §12.2 windowed relocation refinement (refine_route_order)
   sequence.py     # §12.1 zone work order + CSV exports
   timemodel.py    # §13.0 OptiHaul-matched core time model
-  swaths.py       # §13.1–§13.6 Stage 7 blade-scale guidance (flow/heading lanes, route smoothing, grade pass, turns, guidance time, CSV)
-  render.py       # §14 PNG (cut/fill + arrows), zone overlay, heat map, guidance lanes, frame renderers
+  swaths.py       # §13.1–§13.6 Stage 7 blade-scale guidance (flow/heading lanes, route smoothing, obstacle detours §13.4.2, grade pass, turns, guidance time, CSV)
+  render.py       # §14 PNG (cut/fill + arrows), zone overlay, exclusion overlay, heat map, guidance lanes, frame renderers
   animate.py      # §14.6 leveling animation
   cli.py          # §15 command-line entry point
 tools/
@@ -795,8 +848,9 @@ tools/
 **[17.0.5]** 4. **Flow field** — for a one-ridge-one-valley field, Poisson flow points ridge → valley (**§9**).
 **[17.0.6]** 5. **Pass limits** — generated passes never exceed the scraper load limit (≈ 15.4 BCY) or 61 mm per area per pass, and volume is conserved per pass (**§11**).
 **[17.0.7]** 6. **Render geometry** — a known area maps to the expected pixel block and arrow center (**§14.3**).
+**[17.0.8]** 7. **Exclusion zones** — visibility-graph detour around a unit-square obstacle is longer than the straight line and clears the buffered zone; `apply_exclusions` removes the expected bin block and stores the polygon (**§7.2.8**, **§12.3**).
 
-**[17.0.8]** The default field set shall include at least one field with explicit **`2PER`** boundary rows and one without, to exercise both masking paths (**§6.1**).
+**[17.0.9]** The default field set shall include at least one field with explicit **`2PER`** boundary rows and one without, to exercise both masking paths (**§6.1**).
 
 ---
 
@@ -818,11 +872,11 @@ tools/
 **[19.0.5]** - ☑ Poisson flow field per **§9.1**; min-cost-flow mode per **§9.2**.
 **[19.0.6]** - ☑ Streamline strips per **§10**.
 **[19.0.7]** - ☑ Contiguous patch passes (≈ 15.4 BCY / 61 mm), true haul leg, heading bias, **flow-aligned tube growth (§11.0.2c, default)**, **strip-biased lanes (§11.0.2b)**, **multi-drop (§11.0.3c)**, **cardinal heading snap (§11.0.3b-i)** per **§11**.
-**[19.0.8]** - ☑ Sequencing (NN + bounded 2-opt) and **direction-aware, grade-aware transition cost (§12.0.5)** per **§12**; zone work order + CSV per **§12.1**.
+**[19.0.8]** - ☑ Sequencing (NN + bounded 2-opt) and **direction-aware, grade-aware transition cost (§12.0.5)** per **§12**; zone work order + CSV per **§12.1**; **exclusion zones + visibility-graph routing (§12.3)** per **§12.3**.
 **[19.0.9]** - ☑ OptiHaul-matched core time model per **§13.0**.
-**[19.0.10]** - ☑ Stage 7 blade-scale guidance per **§13.1**–**§13.6**: flow/heading lanes, **route smoothing (§13.3a, display-only)**, grade/compact pass, turning model, multi-drop `MOVE`, guidance time, guidance CSV/PNG.
-**[19.0.11]** - ☑ PNG cut/fill, arrows, zone overlay, heat map, animation per **§14**.
-**[19.0.12]** - ☑ CLI per **§15**.
+**[19.0.10]** - ☑ Stage 7 blade-scale guidance per **§13.1**–**§13.6**: flow/heading lanes, **route smoothing (§13.3a, display-only)**, **obstacle detours (§13.4.2)**, grade/compact pass, turning model, multi-drop `MOVE`, guidance time, guidance CSV/PNG.
+**[19.0.11]** - ☑ PNG cut/fill, arrows, zone overlay, **exclusion overlay**, heat map, animation per **§14**.
+**[19.0.12]** - ☑ CLI per **§15** (incl. `--exclude-polygon`, `--equipment-width-ft`).
 **[19.0.13]** - ☑ Tests per **§17**; deterministic output per **§16.4**.
 **[19.0.14]** - ☑ All source and this spec stored UTF-8 without BOM.
 
@@ -830,4 +884,4 @@ tools/
 
 ## 20. Summary
 
-**[20.0.1]** This v2 specification defines a Python program that turns an AGD field file plus equipment and time parameters into a haul plan, a rendered PNG, and optional sequencing/CSV/heat-map/animation/guidance outputs. The field is modeled on a **7.5 ft** grid (≈ one blade width; configurable, e.g. 15 ft to match an OptiHaul calculation grid); volumes are tracked in **BCY**, with **swell** applied only to convert the scraper's **LCY** capacity to a bank load limit (20 LCY ÷ 1.3 ≈ 15.4 BCY) and a **cut/fill ratio** for compaction. Haul directions come from an optimal-transport flow field traced into curving strips; the volume plan is produced by a shortest-haul-first matcher that, by **default**, grows each load **along the local transport flow** — cut traced upstream to the ridge, fill downstream into the sink — for long, curved, with-the-grain lanes (`--no-flow-aligned` reverts to one straight **blade-wide strip** along a cardinal-snapped heading via strip bias). The matcher keeps loading/spreading across nearby pockets via **multi-drop** (capped by **`--min-load-fill`** so it does not chase the last few percent into a U-turn blob, and kept **spatially compact** so no load spans an empty gap that would force a blade-up move covering nothing) and measures the per-pass **haul leg as the true transit** (cut-end → fill-start). Passes are sequenced to minimize non-productive travel using a **direction-aware, grade-aware** transition cost that trades deadhead drive against turning, and costed with an **OptiHaul-matched** core time model. On request, a **blade-scale operator guidance** track (Stage 7) realizes the passes as turn-by-turn waypoints on a **smoothed, drivable GPS route** (corner radius tied to the turning circle; a steering-display transform that never alters distance/time, which stay on the raw coverage geometry), with a **grade/compact return pass** over every fill and a **realistic drivable time** that counts **turning** on the 45 ft circle — giving the honest field time, distinct from the OptiHaul-matched core figure. Sweeps that would still chain into an undriveable **knot** are re-profiled into **boustrophedon** parallel back-and-forth lanes (only where that strictly reduces hairpins, pocket-aware, and without changing any cell, load, haul, or the finished surface; `--no-knot-repair` disables it). Optional outputs also summarise the plan as a **zone work order** (with CSV and numbered PNG waypoints), export **per-pass lat/lon pairs** to CSV, render a **haul heat map** and the **guidance lanes**, and produce a frame-by-frame **leveling animation** in cut/fill or topology mode. The PNG reuses the existing AgGrade palette, arrow glyph, and image geometry so output is directly comparable to the current tools.
+**[20.0.1]** This v2 specification defines a Python program that turns an AGD field file plus equipment and time parameters into a haul plan, a rendered PNG, and optional sequencing/CSV/heat-map/animation/guidance outputs. The field is modeled on a **7.5 ft** grid (≈ one blade width; configurable, e.g. 15 ft to match an OptiHaul calculation grid); volumes are tracked in **BCY**, with **swell** applied only to convert the scraper's **LCY** capacity to a bank load limit (20 LCY ÷ 1.3 ≈ 15.4 BCY) and a **cut/fill ratio** for compaction. Haul directions come from an optimal-transport flow field traced into curving strips; the volume plan is produced by a shortest-haul-first matcher that, by **default**, grows each load **along the local transport flow** — cut traced upstream to the ridge, fill downstream into the sink — for long, curved, with-the-grain lanes (`--no-flow-aligned` reverts to one straight **blade-wide strip** along a cardinal-snapped heading via strip bias). The matcher keeps loading/spreading across nearby pockets via **multi-drop** (capped by **`--min-load-fill`** so it does not chase the last few percent into a U-turn blob, and kept **spatially compact** so no load spans an empty gap that would force a blade-up move covering nothing) and measures the per-pass **haul leg as the true transit** (cut-end → fill-start), **routing around any exclusion zone** via a **visibility graph + Dijkstra** when `--exclude-polygon` is set. **Exclusion zones** drop the bins covering each no-go polygon from the field mask (volume imbalance is treated as exported/imported) and buffer each polygon outward by half **`--equipment-width-ft`** (default 14 ft) so blade-up travel never crosses the zone. Passes are sequenced to minimize non-productive travel using a **direction-aware, grade-aware** transition cost that trades deadhead drive against turning, and costed with an **OptiHaul-matched** core time model. On request, a **blade-scale operator guidance** track (Stage 7) realizes the passes as turn-by-turn waypoints on a **smoothed, drivable GPS route** (corner radius tied to the turning circle; a steering-display transform that never alters distance/time, which stay on the raw coverage geometry), with **detour vertices on travel legs** around exclusion zones, a **grade/compact return pass** over every fill and a **realistic drivable time** that counts **turning** on the 45 ft circle — giving the honest field time, distinct from the OptiHaul-matched core figure. Sweeps that would still chain into an undriveable **knot** are re-profiled into **boustrophedon** parallel back-and-forth lanes (only where that strictly reduces hairpins, pocket-aware, and without changing any cell, load, haul, or the finished surface; `--no-knot-repair` disables it). Optional outputs also summarise the plan as a **zone work order** (with CSV and numbered PNG waypoints), export **per-pass lat/lon pairs** to CSV, render a **haul heat map** and the **guidance lanes**, and produce a frame-by-frame **leveling animation** in cut/fill or topology mode. The PNG reuses the existing AgGrade palette, arrow glyph, and image geometry so output is directly comparable to the current tools.
