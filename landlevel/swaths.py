@@ -406,6 +406,50 @@ def _connected_pockets(cell_list: List[Tuple[Cell, float]]) -> List[List[Tuple[C
     return [[(c, d) for c, d in cell_list if c in comp] for comp in comps]
 
 
+def _nn_order(
+    cents: List[XY],
+    orient_start_xy: Optional[XY] = None,
+    orient_end_xy: Optional[XY] = None,
+) -> List[int]:
+    """Greedy nearest-neighbour visiting order over fragment centroids.
+
+    The matcher builds a multi-pocket load as a short-hop chain, but the lane
+    builders used to re-sort fragments purely by distance to the haul junction,
+    which can place two far-apart fragments next to each other and force a long
+    blade-up reposition that covers nothing. This instead chains fragments by
+    nearest neighbour so each inter-fragment hop is the shortest available, while
+    still anchoring the sweep to the haul junction: the **cut** sweep (``orient_
+    end_xy``) finishes at the fragment nearest the fill; the **fill** sweep
+    (``orient_start_xy``) starts at the fragment nearest the haul arrival.
+    """
+    n = len(cents)
+    if n <= 1:
+        return list(range(n))
+    remaining = set(range(n))
+    if orient_end_xy is not None:
+        # End-anchored: fix the last fragment (nearest the fill) and grow the
+        # chain backwards by nearest neighbour from the current front.
+        last = min(remaining, key=lambda i: _d2(cents[i], orient_end_xy))
+        chain = [last]
+        remaining.discard(last)
+        while remaining:
+            front = chain[0]
+            nxt = min(remaining, key=lambda i: _d2(cents[i], cents[front]))
+            chain.insert(0, nxt)
+            remaining.discard(nxt)
+        return chain
+    src = orient_start_xy if orient_start_xy is not None else cents[0]
+    first = min(remaining, key=lambda i: _d2(cents[i], src))
+    chain = [first]
+    remaining.discard(first)
+    while remaining:
+        back = chain[-1]
+        nxt = min(remaining, key=lambda i: _d2(cents[i], cents[back]))
+        chain.append(nxt)
+        remaining.discard(nxt)
+    return chain
+
+
 def _ordered_runs(cell_list: List[Tuple[Cell, float]]) -> List[List[Tuple[Cell, float]]]:
     """Split a flow strip into maximal runs of consecutive 8-adjacent cells.
 
@@ -455,7 +499,7 @@ def _lanes_flow(
 
     pts: List[Tuple[float, float, float]] = []
     if orient_end_xy is not None:
-        order = sorted(range(len(segs)), key=lambda i: -_d2(cents[i], orient_end_xy))
+        order = _nn_order(cents, orient_end_xy=orient_end_xy)
         for rank, i in enumerate(order):
             tgt = orient_end_xy if rank == len(order) - 1 else cents[order[rank + 1]]
             s = segs[i]
@@ -464,7 +508,7 @@ def _lanes_flow(
             pts += s
     else:
         src = orient_start_xy if orient_start_xy is not None else cents[0]
-        order = sorted(range(len(segs)), key=lambda i: _d2(cents[i], src))
+        order = _nn_order(cents, orient_start_xy=orient_start_xy)
         for rank, i in enumerate(order):
             st = src if rank == 0 else cents[order[rank - 1]]
             s = segs[i]
@@ -524,16 +568,16 @@ def _lanes_multi(
     cents = [_centroid([grid.cell_center_xy(*c) for c, _d in pk]) for pk in pockets]
     pts: List[Tuple[float, float, float]] = []
     if orient_end_xy is not None:
-        # Cut side: visit farthest-from-fill first, finish nearest the fill.
-        order = sorted(range(len(pockets)), key=lambda i: -_d2(cents[i], orient_end_xy))
+        # Cut side: chain pockets by nearest neighbour, finishing nearest the fill.
+        order = _nn_order(cents, orient_end_xy=orient_end_xy)
         for rank, i in enumerate(order):
             tgt = orient_end_xy if rank == len(order) - 1 else cents[order[rank + 1]]
             pts += _lanes_for_patch(pockets[i], grid, blade_m, heading_deg, overlap,
                                     orient_end_xy=tgt)
     else:
-        # Fill side: start nearest the haul arrival, then chain outward.
+        # Fill side: start nearest the haul arrival, then chain by nearest neighbour.
         src = orient_start_xy if orient_start_xy is not None else cents[0]
-        order = sorted(range(len(pockets)), key=lambda i: _d2(cents[i], src))
+        order = _nn_order(cents, orient_start_xy=orient_start_xy)
         for rank, i in enumerate(order):
             st = src if rank == 0 else cents[order[rank - 1]]
             pts += _lanes_for_patch(pockets[i], grid, blade_m, heading_deg, overlap,
@@ -674,13 +718,13 @@ def _boustrophedon_cells(
     cents = [_centroid([grid.cell_center_xy(*c) for c, _d in pk]) for pk in pockets]
     out: List[Tuple[Cell, float]] = []
     if orient_end_xy is not None:
-        order = sorted(range(len(pockets)), key=lambda i: -_d2(cents[i], orient_end_xy))
+        order = _nn_order(cents, orient_end_xy=orient_end_xy)
         for rank, i in enumerate(order):
             tgt = orient_end_xy if rank == len(order) - 1 else cents[order[rank + 1]]
             out += _boustrophedon_one(pockets[i], grid, blade_m, orient_end_xy=tgt)
     else:
         src = orient_start_xy if orient_start_xy is not None else cents[0]
-        order = sorted(range(len(pockets)), key=lambda i: _d2(cents[i], src))
+        order = _nn_order(cents, orient_start_xy=orient_start_xy)
         for rank, i in enumerate(order):
             st = src if rank == 0 else cents[order[rank - 1]]
             out += _boustrophedon_one(pockets[i], grid, blade_m, orient_start_xy=st)

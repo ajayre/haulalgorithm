@@ -316,6 +316,18 @@ request via `--guidance-csv` / `--guidance-png`.
   few percent into a *laterally offset* pocket (which blobs the lane into tight
   U-turns), `--min-load-fill` (default 90%) caps load fullness — keeping more
   loads as a single clean lane.
+- **Compact loads (no pointless blade-up moves).** A flow streamline can wander a
+  long way and pick up a scatter of cells separated by empty ground (the cells in
+  between are already on grade). Sweeping such a load would force a long blade-up
+  reposition that **covers nothing** — wasted travel and diesel, and a GPS line
+  with no cut/fill beneath it. So after growing each load the matcher keeps only
+  the fragment connected (within one `--max-drop-hop-ft` hop) to the seed and
+  **refunds the far cells** to be cut by a later pass anchored near them. Volume
+  is conserved and the finished surface is unchanged — only the load's footprint
+  becomes compact, so no sweep needs a blade-up move longer than a multi-drop hop.
+  The guidance also orders multi-pocket sweeps by a **nearest-neighbour chain**
+  (not raw distance to the haul junction), keeping each pocket-to-pocket hop the
+  shortest available.
 - **Direction-aware sequencing.** The sequencer orders passes by a *time* cost
   that combines the empty deadhead drive with the **turn arc** needed to leave one
   pass and swing into the next cut (same 45 ft circle / turn-speed model as the

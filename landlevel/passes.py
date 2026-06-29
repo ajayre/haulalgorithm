@@ -172,6 +172,11 @@ def generate_passes(
     cut_per_m = led.cut_bcy_per_m()
     fill_per_m = led.fill_bcy_per_m()
     W, H = grid.width, grid.height
+    # A flow tube must stay spatially compact: never let one load span an empty
+    # gap wider than a multi-drop hop (those force long blade-up repositions that
+    # cover nothing). 1.5 cells keeps a load contiguous even when multi-drop is
+    # off. The dropped far cells are refunded for a later, locally-anchored pass.
+    prune_gap_cells = max(max_drop_hop_m / grid.grid_size_m, 1.5)
 
     hvec = _heading_vector(heading_deg) if heading_deg is not None else None
     k_head = max(0.0, min(0.95, heading_strength)) if hvec is not None else 0.0
@@ -256,7 +261,8 @@ def generate_passes(
             if fxs is not None:
                 cells, got = _grow_flow_tube(led.remaining_cut, led.max_depth_m, tol_m,
                                              seed, load_cap - load, cut_per_m, W, H,
-                                             fxs, fys, grid.valid, signs=(-1.0,))
+                                             fxs, fys, grid.valid, signs=(-1.0,),
+                                             max_gap_cells=prune_gap_cells)
             else:
                 cells, got = _grow_region(led.remaining_cut, led.max_depth_m, tol_m,
                                           seed, load_cap - load, cut_per_m, W, H,
@@ -297,7 +303,8 @@ def generate_passes(
             if fxs is not None:
                 cells, got = _grow_flow_tube(led.remaining_fill, led.max_depth_m, tol_m,
                                              fseed, load - placed, fill_per_m, W, H,
-                                             fxs, fys, grid.valid, signs=(1.0,))
+                                             fxs, fys, grid.valid, signs=(1.0,),
+                                             max_gap_cells=prune_gap_cells)
             else:
                 cells, got = _grow_region(led.remaining_fill, led.max_depth_m, tol_m,
                                           fseed, load - placed, fill_per_m, W, H,
@@ -510,10 +517,77 @@ def _grow_region(remaining, max_depth, tol, seed_cell, target_bcy, per_m, width,
     return used, acc
 
 
+def _prune_far_fragments(ordered, acc, remaining, per_m, max_gap_cells, seed_cell=None):
+    """Keep one spatially compact fragment of a flow tube; refund the rest.
+
+    A streamline can run a long way and pick up a scatter of cells separated by
+    empty ground (cells in between are already on grade). Sweeping such a load
+    forces a blade-up reposition across the gap that covers *nothing* - wasted
+    travel and diesel. This splits the consumed cells into fragments connected
+    only when within ``max_gap_cells`` of each other, keeps the fragment holding
+    the ``seed_cell`` (the haul anchor; the largest-volume fragment if the seed
+    was not consumed), and refunds every dropped cell to ``remaining`` so a later
+    pass anchored nearby cuts it (a short local haul). The finished surface is
+    unchanged; only this load's footprint becomes compact. Returns the kept
+    (streamline-ordered) cells and the adjusted accumulated BCY.
+    """
+    n = len(ordered)
+    if n <= 1 or max_gap_cells is None:
+        return ordered, acc
+    cells = [c for c, _d in ordered]
+    parent = list(range(n))
+
+    def find(i):
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    g2 = max_gap_cells * max_gap_cells
+    for i in range(n):
+        xi, yi = cells[i]
+        for j in range(i + 1, n):
+            dx = xi - cells[j][0]
+            dy = yi - cells[j][1]
+            if dx * dx + dy * dy <= g2:
+                ri, rj = find(i), find(j)
+                if ri != rj:
+                    parent[ri] = rj
+
+    groups: dict = {}
+    for i in range(n):
+        groups.setdefault(find(i), []).append(i)
+    if len(groups) <= 1:
+        return ordered, acc
+
+    # Keep the fragment that holds the seed (the haul anchor) so the seed is
+    # never refunded and re-grown next iteration; fall back to the largest.
+    keep_root = None
+    if seed_cell is not None:
+        for i, c in enumerate(cells):
+            if c == seed_cell:
+                keep_root = find(i)
+                break
+    if keep_root is None:
+        keep_root = max(groups,
+                        key=lambda r: sum(ordered[i][1] for i in groups[r]))
+    keep = set(groups[keep_root])
+    kept: List[Tuple[Cell, float]] = []
+    removed_bcy = 0.0
+    for i, (c, d) in enumerate(ordered):
+        if i in keep:
+            kept.append((c, d))
+        else:
+            remaining[c[1], c[0]] += d
+            removed_bcy += d * per_m
+    return kept, acc - removed_bcy
+
+
 def _grow_flow_tube(remaining, max_depth, tol, seed_cell, target_bcy, per_m,
                     width, height, fxs, fys, valid, step: float = 0.5,
                     max_steps: int = 4000, miss_gap: int = 4,
-                    signs: Tuple[float, ...] = (1.0, -1.0)):
+                    signs: Tuple[float, ...] = (1.0, -1.0),
+                    max_gap_cells: Optional[float] = None):
     """Consume one load along the *curving streamline* through ``seed_cell``.
 
     Integrates the smoothed flow, taking one ``max_depth`` layer from each cell
@@ -591,7 +665,11 @@ def _grow_flow_tube(remaining, max_depth, tol, seed_cell, target_bcy, per_m,
     down = _trace(1.0) if 1.0 in signs else []    # toward the fill (with the flow)
     up = _trace(-1.0) if -1.0 in signs else []     # toward the ridge (against flow)
     ordered = list(reversed(up)) + seed_entry + down
-    return ordered, acc
+    # Keep the load spatially compact: drop any fragment the streamline picked up
+    # across an empty gap wider than a multi-drop hop (refunded for a later local
+    # pass), so the rendered sweep never needs a long blade-up reposition.
+    return _prune_far_fragments(ordered, acc, remaining, per_m, max_gap_cells,
+                                seed_cell=(sx, sy))
 
 
 def _centroid(points) -> Tuple[float, float]:
