@@ -162,6 +162,134 @@ def sequence_passes(passes: List[Pass], two_opt_cap: int = 1500,
     return Route(order=order, ordered_passes=ordered, total_deadhead_m=total)
 
 
+def _cost_or0(model: _TransitionModel, a: Optional[Pass], b: Optional[Pass]) -> float:
+    """Transition cost between two passes, or 0 when either end is missing.
+
+    A missing end is the start (before the first pass) or finish (after the last
+    pass) of the route, where there is no inter-pass transition to charge.
+    """
+    if a is None or b is None:
+        return 0.0
+    return model.cost(a, b)
+
+
+def _route_objective(model: _TransitionModel, passes: List[Pass]) -> float:
+    """Total order-dependent cost of a route: the sum of every consecutive
+    pass-to-pass transition (return drive + turn-into-cut when direction-aware,
+    else plain deadhead distance). This is exactly the part of the overall job
+    time that reordering passes can change - each pass's own cut/haul/fill/grade
+    sweep is fixed by its geometry - so minimizing it minimizes overall time.
+    """
+    return sum(model.cost(passes[k], passes[k + 1]) for k in range(len(passes) - 1))
+
+
+def _relocate_delta(model: _TransitionModel, seq: List[Pass], s: int, d: int) -> float:
+    """Change in :func:`_route_objective` from moving ``seq[s]`` to new index ``d``.
+
+    ``d`` is the index the element will occupy in the list *after* it is removed
+    from ``s`` (0..len-1; len reproduces an append). Only the few transitions
+    around the source and destination change, so the delta is O(1): all other
+    edges are untouched. A negative result is an improvement.
+    """
+    n = len(seq)
+    x = seq[s]
+    prev_s = seq[s - 1] if s > 0 else None
+    next_s = seq[s + 1] if s < n - 1 else None
+    removed = _cost_or0(model, prev_s, x) + _cost_or0(model, x, next_s)
+    bridge = _cost_or0(model, prev_s, next_s)        # prev/next join once x leaves
+
+    def orig(p: int) -> Optional[Pass]:
+        # element at new position p in the list with index s removed
+        if p < 0 or p > n - 2:
+            return None
+        return seq[p] if p < s else seq[p + 1]
+
+    left = orig(d - 1)
+    right = orig(d)
+    removed_ins = _cost_or0(model, left, right)      # edge broken to insert x
+    added_ins = _cost_or0(model, left, x) + _cost_or0(model, x, right)
+    return (bridge - removed) + (added_ins - removed_ins)
+
+
+def refine_route_order(
+    route: Route,
+    window: int = 50,
+    grade_return: bool = True,
+    direction_aware: bool = True,
+    return_speed_mph: float = DEFAULT_RETURN_SPEED_MPH,
+    turn_speed_mph: float = DEFAULT_TURN_SPEED_MPH,
+    turning_circle_ft: float = DEFAULT_TURNING_CIRCLE_FT,
+    max_rounds: int = 12,
+) -> Tuple[float, float, int]:
+    """Local-search refinement of the routed pass order to cut overall time.
+
+    The constructive nearest-neighbour sequencer leaves no improvement step for
+    the direction-aware (asymmetric) cost, because the 2-opt that would refine it
+    reverses segments - flipping every internal heading - which is unsafe with
+    directed turn costs. This walks the route one pass at a time and, for each
+    pass, considers the window of the next ``window`` passes ahead, relocating the
+    pass to the best slot within that window. Relocation (or-opt: lift one pass
+    and re-insert it) never reverses a run, so it preserves each pass's internal
+    heading and is safe with the directed turn cost. Every accepted move strictly
+    lowers :func:`_route_objective` (the order-dependent time), so the search
+    converges; it repeats until a full sweep finds no improvement (or ``max_rounds``).
+
+    Mutates ``route`` in place (``ordered_passes``, ``order`` and
+    ``total_deadhead_m``). Returns ``(objective_before, objective_after, n_moves)``;
+    the objective is route transition time in seconds when ``direction_aware``,
+    else deadhead distance in metres.
+    """
+    seq = route.ordered_passes
+    n = len(seq)
+    model = _TransitionModel(
+        grade_return=grade_return,
+        direction_aware=direction_aware,
+        return_v=return_speed_mph * MPH_TO_MPS,
+        turn_v=turn_speed_mph * MPH_TO_MPS,
+        R=(turning_circle_ft * FEET_TO_METERS) / 2.0,
+    )
+    before = _route_objective(model, seq)
+    if n < 3 or window < 2:
+        return before, before, 0
+
+    # Track the original pass index alongside each pass so ``route.order`` stays
+    # consistent after the permutation.
+    tagged = list(zip(seq, route.order))
+    moves = 0
+    eps = 1e-7
+    for _round in range(max_rounds):
+        improved = False
+        k = 0
+        while k < len(tagged):
+            cur = [t[0] for t in tagged]
+            lo = max(0, k - window)
+            hi = min(len(tagged) - 1, k + window)
+            best_d, best_delta = k, -eps
+            for d in range(lo, hi + 1):
+                if d == k:
+                    continue
+                delta = _relocate_delta(model, cur, k, d)
+                if delta < best_delta:
+                    best_delta, best_d = delta, d
+            if best_d != k:
+                item = tagged.pop(k)
+                tagged.insert(best_d, item)
+                moves += 1
+                improved = True
+            k += 1
+        if not improved:
+            break
+
+    route.ordered_passes = [t[0] for t in tagged]
+    route.order = [t[1] for t in tagged]
+    route.total_deadhead_m = sum(
+        _deadhead(route.ordered_passes[k], route.ordered_passes[k + 1], grade_return)
+        for k in range(len(route.ordered_passes) - 1)
+    )
+    after = _route_objective(model, route.ordered_passes)
+    return before, after, moves
+
+
 def _two_opt(passes: List[Pass], order: List[int], max_iter: int = 30,
              grade_return: bool = True) -> List[int]:
     n = len(order)

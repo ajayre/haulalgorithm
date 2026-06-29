@@ -93,6 +93,14 @@ python -m landlevel.cli --agd TheShop2_2ft.agd --out plan.png \
   --guidance-csv --guidance-png
 ```
 
+Refine the pass order to shave deadhead/turn time (windowed relocation search;
+off by default, `50` is a typical window):
+
+```bash
+python -m landlevel.cli --agd TheShop2_2ft.agd --out plan.png \
+  --guidance-csv --reorder-window 50
+```
+
 ## Command-line options
 
 Full list also available via `python -m landlevel.cli --help`. Defaults come
@@ -157,6 +165,7 @@ grade/compact return pass, and the turn-aware sequencing.
 | `--no-route-smoothing` | off | emit raw grid-stepped guidance waypoints instead of smoothing each cut/fill sweep's displayed line into a drivable curve (corner radius tied to the turning circle). Smoothing is display-only: it never changes distance/turn/time |
 | `--no-knot-repair` | off | leave undriveable "knot" sweeps as-is. By default each cut/fill sweep that is still a tangled knot is re-profiled into **boustrophedon** parallel back-and-forth lanes (only when that strictly reduces hairpins); the load, haul, cells and finished surface are unchanged — only the in-patch path |
 | `--no-direction-aware` | off | disable direction-aware sequencing (turn-into-cut penalty); fall back to pure deadhead-distance ordering + 2-opt |
+| `--reorder-window` | 0 (off) | after sequencing, refine the pass order with a windowed relocation local search: walk the passes one at a time and relocate each within a window of N nearby passes whenever it lowers the overall time (return drive + turn-into-cut). Relocation never reverses a run, so it is safe with the direction-aware turn cost where 2-opt is not, and it never increases time. Disabled by default; a typical value is 50 |
 | `--lane-overlap` | 0.0 | 0–0.9: fractional overlap between adjacent blade lanes (0 = lanes butt edge-to-edge) |
 | `--guidance-csv [PATH]` | off | write the blade-scale operator guidance track (turn-by-turn waypoints with depth/heading/instruction); pass the flag **alone** for `<out>_guidance.csv` |
 | `--guidance-png [PATH]` | off | render the blade-scale guidance lanes over the cut/fill map; pass the flag **alone** for `<out>_guidance.png` |
@@ -334,6 +343,19 @@ request via `--guidance-csv` / `--guidance-png`.
   guidance), so it minimizes turning, not just distance. With a grade/compact pass
   the machine ends at the fill's cut-side edge, so the grade return doubles as
   travel toward the next cut (`--no-direction-aware` reverts to distance + 2-opt).
+- **Windowed order refinement (optional, `--reorder-window N`).** The turn-aware
+  nearest-neighbour route has no local-improvement step, because the 2-opt that
+  would refine it reverses segments — flipping every interior heading — which is
+  unsafe with the directed turn cost. With `--reorder-window N` the planner walks
+  the passes one at a time and, for each, relocates it within a window of `N`
+  nearby passes whenever doing so lowers the order-dependent time (return drive +
+  turn-into-cut). Relocation lifts a single pass and re-inserts it (it never
+  reverses a run), so it preserves each pass's headings and is sound where 2-opt
+  is not. Every accepted move strictly lowers the objective, so the search only
+  ever reduces — never increases — total time and converges. It only re-orders
+  passes: the loads, hauls, cut/fill bins and finished surface are unchanged.
+  Disabled by default (`0`); a typical value is `50`, with diminishing returns
+  beyond that as the route is already fairly tight.
 - **Blade-scale guidance (drivable plan).** `--guidance-csv` / `--guidance-png`
   translate the optimized passes into turn-by-turn operator waypoints (action,
   blade up/down, target depth, next bearing, instruction) and a **realistic

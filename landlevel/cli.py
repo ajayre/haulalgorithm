@@ -43,7 +43,7 @@ from .render import (
     render_pass_pairs_png,
     render_png,
 )
-from .routing import sequence_passes
+from .routing import refine_route_order, sequence_passes
 from .sequence import sequence_cut_zones, write_pass_pairs_csv, write_sequence_csv
 from .swaths import (
     build_guidance,
@@ -168,6 +168,14 @@ def build_parser() -> argparse.ArgumentParser:
                    help="emit raw grid-stepped guidance waypoints instead of "
                         "smoothing each cut/fill sweep into a drivable curve "
                         "(corner radius tied to the turning circle)")
+    p.add_argument("--reorder-window", type=int, default=0,
+                   help="after sequencing, refine the pass order with a local "
+                        "search: walk the passes one at a time and, for each, "
+                        "relocate it within a window of the next N passes if doing "
+                        "so lowers the overall time (return drive + turn-into-cut). "
+                        "Relocation never reverses a run, so it is safe with the "
+                        "direction-aware turn cost where 2-opt is not. Disabled by "
+                        "default (0); a typical value is 50.")
     p.add_argument("--no-direction-aware", action="store_true",
                    help="disable direction-aware sequencing (penalising the turn "
                         "needed to leave a pass and enter the next cut); falls back "
@@ -292,6 +300,32 @@ def main(argv: list[str] | None = None) -> int:
                                        lane_overlap=args.lane_overlap)
         sys.stderr.write(f"INFO: re-profiled {n_reprofiled} knot sweeps as "
                          f"boustrophedon parallel passes\n")
+
+    if args.reorder_window and args.reorder_window > 0:
+        direction_aware = not args.no_direction_aware
+        before, after, n_moves = refine_route_order(
+            route,
+            window=args.reorder_window,
+            grade_return=not args.no_grade_return,
+            direction_aware=direction_aware,
+            return_speed_mph=args.return_speed_mph,
+            turn_speed_mph=args.turn_speed_mph,
+            turning_circle_ft=args.turning_circle_ft,
+        )
+        if direction_aware:
+            saved = (before - after) / 3600.0
+            sys.stderr.write(
+                f"INFO: window reorder (n={args.reorder_window}): {n_moves} pass "
+                f"relocations, transition time {before / 3600.0:.2f} -> "
+                f"{after / 3600.0:.2f} h (saved {saved:.2f} h)\n"
+            )
+        else:
+            saved = (before - after) / 1609.344
+            sys.stderr.write(
+                f"INFO: window reorder (n={args.reorder_window}): {n_moves} pass "
+                f"relocations, deadhead {before / 1609.344:.2f} -> "
+                f"{after / 1609.344:.2f} mi (saved {saved:.2f} mi)\n"
+            )
 
     zone_steps = []
     if args.zones and args.zones > 0:

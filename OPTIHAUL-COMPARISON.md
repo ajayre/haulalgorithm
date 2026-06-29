@@ -33,27 +33,28 @@ use 8.5 ft.
 | Metric | OptiHaul (8.5 ft) | Ours — core (15 ft grid) | Ours — +guidance (8.5 ft) |
 |---|---|---|---|
 | Field Area (ac) | 36.7 | 37.4 | 37.1 |
-| Move Vol. (BCY) | 46,278 | 46,960 | 46,538 |
-| Passes | ~3,005 | 3,058 | 3,034 |
+| Move Vol. (BCY) | 46,278 | 46,953 | 46,536 |
+| Passes | ~3,005 | 3,071 | 3,051 |
 | **Distances (mi)** | | | |
-| Loading | 176.2 | 82.5 | 141.2 |
-| Hauling | 107.2 | 230.6 | 204.0 |
-| Dumping | 151.3 | 73.6 | 120.1 |
-| Returning (deadhead) | 434.8 | 386.6 | 270.8 |
-| Grade/compact return | — | — | 120.1 |
-| Multi-drop reposition | — | — | 50.0 |
+| Loading | 176.2 | 86.5 | 139.9 |
+| Hauling | 107.2 | 185.5 | 136.5 |
+| Dumping | 151.3 | 71.1 | 122.6 |
+| Returning (deadhead) | 434.8 | 343.1 | 251.3 |
+| Grade/compact return | — | — | 122.6 |
+| Multi-drop reposition | — | — | 34.1 |
 | **Times (hr)** | | | |
-| Loading | 44.1 | 20.6 | 35.3 |
-| Hauling † | 19.7 | 32.9 | 44.4 |
-| Dumping | 30.3 | 14.7 | 24.0 |
-| Grading/compaction | — | — | 15.0 |
-| Returning | 65.5 | 58.6 | 31.1 |
-| Turning | — | — | 35.2 |
-| Other (20% field eff.) | 39.9 | 31.7 | 46.3 |
-| **TOTAL** | **199.5** | **158.5** | **231.3** |
+| Loading | 44.1 | 21.6 | 35.0 |
+| Hauling † | 19.7 | 28.2 | 35.4 |
+| Dumping | 30.3 | 14.2 | 24.5 |
+| Grading/compaction | — | — | 15.3 |
+| Returning | 65.5 | 54.8 | 29.7 |
+| Turning | — | — | 24.0 |
+| Other (20% field eff.) | 39.9 | 29.7 | 41.1 |
+| **TOTAL** | **199.5** | **148.7** | **205.0** |
 
 † Our guidance "Hauling" time includes the multi-drop reposition hops
-(blade-up moves between pockets within a single load).
+(blade-up moves between pockets within a single load); its distance is broken
+out on the separate "Multi-drop reposition" row.
 
 Run commands:
 
@@ -66,6 +67,10 @@ python -m landlevel.cli --agd TheShop2_2ft.agd --out out/shop2_core15.png \
 python -m landlevel.cli --agd TheShop2_2ft.agd --out out/shop2_85.png \
   --grid-size-ft 8.5 --blade-width-mm 2590.8 --heading-deg 270 --guidance-csv
 ```
+
+(The default passes are flow-aligned; `--heading-deg 270` only sets the fallback
+heading where the flow is flat. An optional `--reorder-window` refinement of the
+pass order is available — see the **Optional order refinement** section below.)
 
 ## Reading the table
 
@@ -97,14 +102,14 @@ our core reads **lower** — even though the grid size is unchanged. The reason 
 
 Everything else is the same formula — both compute
 `returning = loading + hauling + dumping` (OptiHaul's 434.8 mi = 176.2 + 107.2 +
-151.3; our core's 386.6 = 82.5 + 230.6 + 73.6).
+151.3; our core's 343.1 = 86.5 + 185.5 + 71.1).
 
 The two load/dump distances only agree when **blade width ≈ grid size**:
 
 | Config | OptiHaul (blade-based) | Our core, 15 ft grid (blade-blind) | Result |
 |---|---|---|---|
-| 15 ft blade | load 99.9 / dump 85.8 mi | load 82.5 / dump 73.6 mi | close → totals matched (147.8 vs 158.5) |
-| 8.5 ft blade | load 176.2 / dump 151.3 mi | load 82.5 / dump 73.6 mi | diverge (199.5 vs 158.5) |
+| 15 ft blade | load 99.9 / dump 85.8 mi | load 86.5 / dump 71.1 mi | close → totals matched (147.8 vs 148.7) |
+| 8.5 ft blade | load 176.2 / dump 151.3 mi | load 86.5 / dump 71.1 mi | diverge (199.5 vs 148.7) |
 
 When OptiHaul ran a **15 ft blade on a 15 ft grid**, its blade-based sweep length
 roughly equaled our grid-based sweep length, so the totals lined up. Switching to
@@ -116,13 +121,13 @@ does not.
 
 **Honest caveat — this is a coarse-grid artifact, not a real efficiency gain.** A
 15 ft grid under-resolves the true sweep length of an 8.5 ft blade. Our core also
-scales with resolution: run it on a **7.5 ft grid** (≈ the 8.5 ft blade) and our
-loading jumps to **≈ 173 mi**, essentially matching OptiHaul's blade-based 176 mi.
-In our model the **grid** plays the role the **blade** plays in OptiHaul, so to
-compare apples-to-apples the grid should be set near the blade width. The
-genuinely blade-accurate figure is our **8.5 ft guidance run (231.3 hr)**. Where we
+scales with resolution: run it on an **8.5 ft grid** (≈ the 8.5 ft blade) and our
+planned loading sweep is **177.1 mi**, essentially matching OptiHaul's blade-based
+176.2 mi. In our model the **grid** plays the role the **blade** plays in OptiHaul,
+so to compare apples-to-apples the grid should be set near the blade width. The
+genuinely blade-accurate figure is our **8.5 ft guidance run (205.0 hr)**. Where we
 are *legitimately* better than OptiHaul is the **deadhead** — direction-aware
-sequencing cuts the empty return to 270.8 mi vs OptiHaul's 434.8 mi — not the
+sequencing cuts the empty return to 251.3 mi vs OptiHaul's 434.8 mi — not the
 load/dump distance.
 
 ## Why OptiHaul's 199.5 hr is a floor, not the real time
@@ -132,33 +137,53 @@ of the **load + haul + dump + return** work. It is not the achievable field time
 because it prices two mandatory operations at **zero**:
 
 1. **Grade/compact return pass (your spec).** The machine must drive back over
-   each fill to grade and compact it. At the 8.5 ft dumping distance (151.3 mi)
-   this is **+15–19 hr** depending on grade speed (8 MPH default).
+   each fill to grade and compact it. At the 8.5 ft dumping distance (122.6 mi)
+   our guidance measures this at **15.3 hr** (8 MPH default grade speed).
 2. **Turning.** A 45 ft turning circle forces the machine to slow to 4 MPH at
-   every lane-end and at the haul→fill and grade→return swings. Across ~3,005
-   loads this is **tens of hours** (our model measures 35.2 hr from 13,137 tight
-   turns).
+   every lane-end and at the haul→fill and grade→return swings. Across ~3,000
+   loads our guidance measures **24.0 hr from 8,874 tight turns** (≥ 60°).
 
-Adding only these unavoidable operations to OptiHaul's own productive legs
-(159.6 hr) and re-applying the 80% field-efficiency factor:
+Adding only these two unavoidable operations — at the *measured* rates of our own
+(already deadhead-optimized) plan — to OptiHaul's own productive legs and
+re-applying the 80% field-efficiency factor gives a conservative floor for
+OptiHaul's real field time:
 
-| Scenario | Extra productive | Total |
+| Scenario | Productive (hr) | Total (hr) |
 |---|---|---|
-| OptiHaul (as reported) | 0 | 199.5 hr |
-| Generous floor — grade @ 13 MPH + 1×90° turn/load | +16.6 hr | **220.3 hr** |
-| Realistic — grade @ 8 MPH + ~35 hr turning | +53.9 hr | **266.9 hr** |
+| OptiHaul as reported (no grade, no turning) | 159.6 | 199.5 |
+| OptiHaul + grade (15.3) + turning (24.0) | 198.9 | **≈ 248.6** |
+| Ours — full drivable (grade + turning included) | 163.9 | **205.0** |
 
-Even under physically impossible generosity (grading at 13 MPH, a single 90° turn
-per load), the floor is **≈ 220 hr**. Our full blade-scale estimate of **231.3 hr**
-sits in this band — consistent with the proven floor and substantially better on
-deadhead than OptiHaul (270.8 mi vs 434.8 mi) because of direction-aware
-sequencing.
+The floor of **≈ 249 hr** is conservative: OptiHaul's own route has nearly **twice
+our deadhead** (434.8 mi vs 251.3 mi) and correspondingly more turning, so its true
+turning time would *exceed* the 24.0 hr we borrowed from our tighter plan. The key
+result is that our **full, drivable** estimate (**205.0 hr**) — which already prices
+the grade pass and every turn — comes in only **~5.5 hr above** OptiHaul's
+turning-free, grade-free **199.5 hr**, and well **below** OptiHaul's realistic floor,
+because direction-aware sequencing nearly halves the empty return travel.
+
+## Optional order refinement (`--reorder-window`)
+
+The optional windowed relocation refinement (`--reorder-window N`, §12.2;
+disabled by default) was run on this field at `N = 50`. It performed ~1,380 pass
+relocations and lowered the route's **order-dependent transition-time surrogate**
+(return drive + turn-into-cut) from **26.38 h to 26.27 h**. On a field this dense
+(~3,000 passes) the realized blade-scale drivable **TOTAL is unchanged to within
+±0.1 hr** (205.0 → 205.1 hr): the direction-aware nearest-neighbour route is
+already near-optimal here, the deadhead distance is unmoved at 251.3 mi, and the
+small surrogate turn-angle reduction does not lower the count of
+Ramer–Douglas–Peucker-measured tight turns. The refinement is provably monotone
+(it never increases its objective) and yields larger *relative* gains on smaller
+or sparser fields, where the constructive route has more slack; it is therefore
+left **off by default** and is not used in the comparison figures above.
 
 ## Bottom line
 
 - Our **core time model agrees with OptiHaul** on the four productive legs once
   the blade width is correct (the earlier 147.8 hr OptiHaul figure used a 15 ft
   blade — twice reality — and was off by ~2× on load/dump).
-- The honest, drivable field time for The Shop 2 is **~231 hr**, with the gap above
-  OptiHaul being the **grade/compact pass and turning** that an operator actually
-  has to perform.
+- The honest, drivable field time for The Shop 2 is **~205 hr** — only slightly
+  above OptiHaul's grade- and turn-free 199.5 hr, and far below OptiHaul's
+  realistic floor (~249 hr), because direction-aware sequencing cuts the deadhead
+  from 434.8 mi to 251.3 mi. The remaining gap above OptiHaul's optimistic number
+  is the **grade/compact pass and turning** an operator must actually perform.
