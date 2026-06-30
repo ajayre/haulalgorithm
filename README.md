@@ -1,9 +1,8 @@
 # Land Leveling Haul Algorithm
 
 A complete implementation of the **LAND-LEVELING-SPEC-2** pipeline for agricultural land
-leveling — taking an OptiSurface-style AGD survey file and producing a minimum-haul
-cut/fill plan, sequenced scraper passes, operator guidance, and time estimates that match
-the OptiHaul methodology.
+leveling — taking an AGD survey file and producing a minimum-haul
+cut/fill plan, sequenced scraper passes, operator guidance, and time estimates.
 
 Available in two implementations:
 
@@ -34,7 +33,7 @@ and produces a complete earthmoving plan:
 6. **Sequences and routes passes** — orders passes with a direction-aware cost that
    combines deadhead distance with the turn arc needed to swing into the next cut, then
    optionally refines the order with a windowed relocation search.
-7. **Estimates time** — uses the OptiHaul methodology: constant speeds for loading and
+7. **Estimates time** — constant speeds for loading and
    dumping, trapezoidal haul/return speed profiles, and an 80% field-efficiency factor
    for non-productive time.
 8. **Produces blade-scale guidance** — emits turn-by-turn operator waypoints with depth,
