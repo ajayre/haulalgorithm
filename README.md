@@ -79,8 +79,8 @@ and produces a complete earthmoving plan:
 
 ## Performance
 
-Benchmark on a **38-acre field** (177×173 grid, ~46 400 BCY moved), single desktop
-core, Release build, using CLI / `HaulBuilderOptions` defaults:
+Representative timings on a **38-acre field** (177×173 grid, ~46 400 BCY moved), single
+desktop core, Release build, CLI / `HaulBuilderOptions` defaults:
 
 ```bash
 python DotNET/Bench/bench_theshop2.py
@@ -89,18 +89,18 @@ dotnet run -c Release --project DotNET/Bench/Bench.csproj -- DotNET/TheShop2_2ft
 
 | Stage | Python | C# |
 |---|---|---|
-| Parse + grid | 2.8 s | 0.03 s |
-| Flow field (Poisson) | 5.0 s | 0.32 s |
-| Strip tracing | 0.7 s | 0.04 s |
-| Pass generation | 57.6 s | 14.7 s |
-| Routing + knots | 12.0 s | 0.72 s |
-| **Total** | **~78 s** | **~17 s** |
+| Parse + grid | 2.5 s | 0.03 s |
+| Flow field (Poisson) | 1.0 s | 0.31 s |
+| Strip tracing | 0.9 s | 0.04 s |
+| Pass generation | 55.2 s | 17.2 s |
+| Routing + knots | 11.7 s | 0.73 s |
+| **Total** | **~72 s** | **~19 s** |
 
-C# is roughly **4.7× faster** end-to-end on this field. Pass generation — previously
-the bottleneck — is now faster in C# thanks to the native nanoflann KD-tree; all other
-stages also run substantially faster in C#.
+C# runs the full plan+route pipeline in roughly **one quarter** of the Python wall time
+(~3.8× faster). Pass generation — the heaviest stage — is about **3.2× faster** in C#
+thanks to the native nanoflann KD-tree; every other stage is also significantly faster.
 
-Both implementations produce numerically consistent results on the same input:
+On the same input, both implementations agree on the overall earthmoving plan:
 
 | Metric | Python | C# |
 |---|---|---|
