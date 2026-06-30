@@ -1,0 +1,49 @@
+# Build outputs
+[Bb]in/
+[Oo]bj/
+[Dd]ebug/
+[Rr]elease/
+artifacts/
+out/
+
+# Native CMake/MSBuild output
+Native/build/
+
+# IDE
+.vs/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# NuGet / MSBuild cache
+project.lock.json
+project.fragment.lock.json
+*.nuget.dgspec.json
+*.nuget.cache
+project.assets.json
+
+# Generated / local outputs
+parity_test_output.txt
+TheShop2_out.*
+*_bench*.txt
+*profile*.txt
+slow_test.txt
+py_bench.txt
+TheShop2_out_cut_sequence.csv
+
+# Temp / debug artifacts
+_tmp*
+_dbg*
+*.ilk
+*.pdb
+*.dll
+*.exe
+!Native/third_party/**
+
+# Docs (tracked elsewhere)
+*.md
+
+# OS
+Thumbs.db
+.DS_Store

@@ -379,6 +379,7 @@ def render_single_pair_png(
     pixels_per_bin: int = 26,
     pad_cells: int = 4,
     show_route: bool = True,
+    curve_joint: bool = True,
 ) -> None:
     """Render ONE pass's guidance (cut strip -> haul leg -> fill strip), cropped.
 
@@ -408,10 +409,12 @@ def render_single_pair_png(
 
     if len(cut_pts) >= 2:
         draw.line([(round(x), round(y)) for x, y in (px(p) for p in cut_pts)],
-                  fill=(200, 0, 0, 255), width=blade_px, joint="curve")
+                  fill=(200, 0, 0, 255), width=blade_px,
+                  joint="curve" if curve_joint else None)
     if len(fill_pts) >= 2:
         draw.line([(round(x), round(y)) for x, y in (px(p) for p in fill_pts)],
-                  fill=(0, 90, 220, 255), width=blade_px, joint="curve")
+                  fill=(0, 90, 220, 255), width=blade_px,
+                  joint="curve" if curve_joint else None)
 
     # Haul leg: cut-segment end -> fill-segment start (the true transit).
     if cut_pts and fill_pts:

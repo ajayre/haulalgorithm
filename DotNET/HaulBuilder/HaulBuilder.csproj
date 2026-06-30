@@ -1,0 +1,73 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+
+
+  <PropertyGroup>
+
+    <TargetFramework>net8.0</TargetFramework>
+
+    <AssemblyName>HaulBuilder</AssemblyName>
+
+    <Description>Land leveling haul algorithm — AGD to haul plan (C# port of landlevel).</Description>
+
+    <Version>0.0.1</Version>
+
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+
+    <NativeRoot>$(MSBuildThisFileDirectory)..\Native</NativeRoot>
+
+    <NativeBuildDir>$(NativeRoot)\build\Release</NativeBuildDir>
+
+    <NativeDll>$(NativeBuildDir)\haul_kdtree.dll</NativeDll>
+
+    <NativeSo>$(NativeRoot)\build\libhaul_kdtree.so</NativeSo>
+
+    <NativeDylib>$(NativeRoot)\build\libhaul_kdtree.dylib</NativeDylib>
+
+  </PropertyGroup>
+
+
+
+  <ItemGroup>
+
+    <PackageReference Include="CSparse" Version="4.3.0" />
+
+    <PackageReference Include="SixLabors.ImageSharp" Version="2.1.7" />
+
+  </ItemGroup>
+
+
+
+  <ItemGroup>
+
+    <None Include="$(NativeDll)" CopyToOutputDirectory="PreserveNewest" Link="haul_kdtree.dll" Condition="Exists('$(NativeDll)')" />
+
+    <None Include="$(NativeSo)" CopyToOutputDirectory="PreserveNewest" Link="libhaul_kdtree.so" Condition="Exists('$(NativeSo)')" />
+
+    <None Include="$(NativeDylib)" CopyToOutputDirectory="PreserveNewest" Link="libhaul_kdtree.dylib" Condition="Exists('$(NativeDylib)')" />
+
+  </ItemGroup>
+
+
+
+  <Target Name="CopyNativeKdTree" AfterTargets="Build">
+    <Copy SourceFiles="$(NativeDll)" DestinationFolder="$(OutputPath)" SkipUnchangedFiles="true" Condition="Exists('$(NativeDll)')" />
+    <Copy SourceFiles="$(NativeSo)" DestinationFolder="$(OutputPath)" SkipUnchangedFiles="true" Condition="Exists('$(NativeSo)')" />
+    <Copy SourceFiles="$(NativeDylib)" DestinationFolder="$(OutputPath)" SkipUnchangedFiles="true" Condition="Exists('$(NativeDylib)')" />
+  </Target>
+
+  <Target Name="BuildNativeKdTree" BeforeTargets="Build">
+
+    <Message Importance="high" Text="Building native haul_kdtree..." />
+
+    <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;$(NativeRoot)\build_native.ps1&quot; -Configuration Release" Condition="'$(OS)' == 'Windows_NT'" />
+
+    <Exec Command="cmake -S &quot;$(NativeRoot)&quot; -B &quot;$(NativeRoot)/build&quot; -DCMAKE_BUILD_TYPE=Release &amp;&amp; cmake --build &quot;$(NativeRoot)/build&quot; --target haul_kdtree" Condition="'$(OS)' != 'Windows_NT'" />
+
+  </Target>
+
+
+
+</Project>
+
+

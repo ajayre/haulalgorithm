@@ -1,0 +1,15 @@
+<Project>
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>HaulBuilder</RootNamespace>
+    <Authors>Andy</Authors>
+    <Company>HaulBuilder</Company>
+    <Product>HaulBuilder</Product>
+    <Copyright>Copyright © Andy</Copyright>
+    <Deterministic>true</Deterministic>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+  </PropertyGroup>
+</Project>
