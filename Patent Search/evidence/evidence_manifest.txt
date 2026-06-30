@@ -1,5 +1,5 @@
 Patent Search Evidence Manifest
-Generated (UTC): 2026-06-29 05:06:08 UTC
+Generated (UTC): 2026-06-30 23:25:36 UTC
 TSA: freetsa.org (RFC 3161)
 Hash algorithm: SHA-256
 
@@ -77,4 +77,19 @@ File: Screenshot 2026-06-28 220302.png
 SHA-256: 7d29eee468924b9a2f291206eb7fda6658cee4b526c3220d4e941fb1dbeb56c1
 RFC 3161 timestamp (UTC): Jun 29 05:06:07 2026 GMT
 Timestamp response: evidence\Screenshot_2026-06-28_220302.tsr
+
+File: Screenshot 2026-06-30 094957.png
+SHA-256: 4045a08a135f9e497dab25f132800353cb459df300c8d3bb79c6c7d8047497ac
+RFC 3161 timestamp (UTC): Jun 30 23:25:37 2026 GMT
+Timestamp response: evidence\Screenshot_2026-06-30_094957.tsr
+
+File: Screenshot 2026-06-30 095041.png
+SHA-256: 9de4486661ad945e2de7cd0180f5a88c1d8d8d886f8f377876e5d03972d98548
+RFC 3161 timestamp (UTC): Jun 30 23:25:38 2026 GMT
+Timestamp response: evidence\Screenshot_2026-06-30_095041.tsr
+
+File: Screenshot 2026-06-30 095255.png
+SHA-256: 80f4a74a03c24d8b442f9b10ec2e3f9f5bb69954f9a9f637f96d28b47f3805a8
+RFC 3161 timestamp (UTC): Jun 30 23:25:38 2026 GMT
+Timestamp response: evidence\Screenshot_2026-06-30_095255.tsr
 

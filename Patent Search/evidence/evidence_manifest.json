@@ -1,5 +1,5 @@
 {
-  "generated_at_utc": "2026-06-29 05:06:08 UTC",
+  "generated_at_utc": "2026-06-30 23:25:36 UTC",
   "tsa": "freetsa.org",
   "protocol": "RFC 3161",
   "hash_algorithm": "SHA-256",
@@ -137,6 +137,33 @@
       "timestamp_request": "Screenshot_2026-06-28_220302.tsq",
       "timestamp_response": "Screenshot_2026-06-28_220302.tsr",
       "hash_file": "Screenshot_2026-06-28_220302.sha256",
+      "verified": true
+    },
+    {
+      "source_file": "Screenshot 2026-06-30 094957.png",
+      "sha256": "4045a08a135f9e497dab25f132800353cb459df300c8d3bb79c6c7d8047497ac",
+      "rfc3161_timestamp_utc": "Jun 30 23:25:37 2026 GMT",
+      "timestamp_request": "Screenshot_2026-06-30_094957.tsq",
+      "timestamp_response": "Screenshot_2026-06-30_094957.tsr",
+      "hash_file": "Screenshot_2026-06-30_094957.sha256",
+      "verified": true
+    },
+    {
+      "source_file": "Screenshot 2026-06-30 095041.png",
+      "sha256": "9de4486661ad945e2de7cd0180f5a88c1d8d8d886f8f377876e5d03972d98548",
+      "rfc3161_timestamp_utc": "Jun 30 23:25:38 2026 GMT",
+      "timestamp_request": "Screenshot_2026-06-30_095041.tsq",
+      "timestamp_response": "Screenshot_2026-06-30_095041.tsr",
+      "hash_file": "Screenshot_2026-06-30_095041.sha256",
+      "verified": true
+    },
+    {
+      "source_file": "Screenshot 2026-06-30 095255.png",
+      "sha256": "80f4a74a03c24d8b442f9b10ec2e3f9f5bb69954f9a9f637f96d28b47f3805a8",
+      "rfc3161_timestamp_utc": "Jun 30 23:25:38 2026 GMT",
+      "timestamp_request": "Screenshot_2026-06-30_095255.tsq",
+      "timestamp_response": "Screenshot_2026-06-30_095255.tsr",
+      "hash_file": "Screenshot_2026-06-30_095255.sha256",
       "verified": true
     }
   ]

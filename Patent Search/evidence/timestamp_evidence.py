@@ -15,6 +15,7 @@ OPENSSL = Path(r"C:\Program Files\Git\usr\bin\openssl.exe")
 TSA_URL = "https://freetsa.org/tsr"
 CA_URL = "https://freetsa.org/files/cacert.pem"
 TSA_CERT_URL = "https://freetsa.org/files/tsa.crt"
+EVIDENCE_EXTENSIONS = {".pdf", ".png"}
 
 
 def run_openssl(args: list[str]) -> subprocess.CompletedProcess[str]:
@@ -105,25 +106,15 @@ def timestamp_file(source: Path, evidence_dir: Path, ca_file: Path, tsa_cert: Pa
     }
 
 
-def main() -> int:
-    if not OPENSSL.is_file():
-        print(f"OpenSSL not found at {OPENSSL}", file=sys.stderr)
-        return 1
+def load_existing_manifest(manifest_path: Path) -> list[dict]:
+    if not manifest_path.exists():
+        return []
+    data = json.loads(manifest_path.read_text(encoding="utf-8"))
+    return data.get("files", [])
 
-    folder = Path(__file__).resolve().parent.parent
-    evidence_dir = folder / "evidence"
-    evidence_dir.mkdir(exist_ok=True)
 
-    ca_file = evidence_dir / "freetsa-cacert.pem"
-    tsa_cert = evidence_dir / "freetsa-tsa.crt"
-    download(CA_URL, ca_file)
-    download(TSA_CERT_URL, tsa_cert)
-
-    sources = sorted(path for path in folder.iterdir() if path.is_file())
-    manifest = [timestamp_file(source, evidence_dir, ca_file, tsa_cert) for source in sources]
-
+def write_manifest(manifest_path: Path, manifest: list[dict]) -> None:
     generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S %Z")
-    manifest_path = evidence_dir / "evidence_manifest.json"
     manifest_path.write_text(
         json.dumps(
             {
@@ -156,9 +147,45 @@ def main() -> int:
                 "",
             ]
         )
-    (evidence_dir / "evidence_manifest.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    (manifest_path.parent / "evidence_manifest.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
-    for entry in manifest:
+
+def main() -> int:
+    if not OPENSSL.is_file():
+        print(f"OpenSSL not found at {OPENSSL}", file=sys.stderr)
+        return 1
+
+    folder = Path(__file__).resolve().parent.parent
+    evidence_dir = folder / "evidence"
+    evidence_dir.mkdir(exist_ok=True)
+    manifest_path = evidence_dir / "evidence_manifest.json"
+
+    ca_file = evidence_dir / "freetsa-cacert.pem"
+    tsa_cert = evidence_dir / "freetsa-tsa.crt"
+    download(CA_URL, ca_file)
+    download(TSA_CERT_URL, tsa_cert)
+
+    existing = load_existing_manifest(manifest_path)
+    indexed = {entry["source_file"]: entry for entry in existing}
+
+    sources = sorted(
+        path
+        for path in folder.iterdir()
+        if path.is_file() and path.suffix.lower() in EVIDENCE_EXTENSIONS and path.name not in indexed
+    )
+    if not sources:
+        print("No new evidence files to timestamp.")
+        return 0
+
+    new_entries = [timestamp_file(source, evidence_dir, ca_file, tsa_cert) for source in sources]
+    for entry in new_entries:
+        indexed[entry["source_file"]] = entry
+
+    manifest = sorted(indexed.values(), key=lambda entry: entry["source_file"].lower())
+
+    write_manifest(manifest_path, manifest)
+
+    for entry in new_entries:
         print(f"OK: {entry['source_file']} -> {entry['sha256']}")
     print(f"\nManifest: {manifest_path}")
     return 0
