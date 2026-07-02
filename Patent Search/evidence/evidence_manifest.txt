@@ -1,5 +1,5 @@
 Patent Search Evidence Manifest
-Generated (UTC): 2026-06-30 23:25:36 UTC
+Generated (UTC): 2026-07-02 22:23:10 UTC
 TSA: freetsa.org (RFC 3161)
 Hash algorithm: SHA-256
 
@@ -72,6 +72,56 @@ File: screencapture-ppubs-uspto-gov-pubwebapp-2026-06-28-20_17_53.pdf
 SHA-256: a4de0626202b7652aeda12855e80906c99299493769caf030f3804d229626320
 RFC 3161 timestamp (UTC): Jun 29 05:06:07 2026 GMT
 Timestamp response: evidence\screencapture-ppubs-uspto-gov-pubwebapp-2026-06-28-20_17_53.tsr
+
+File: screencapture-worldwide-espacenet-patent-search-2026-07-02-15_16_40.pdf
+SHA-256: c607bcdb5a05f5e63dd809a84dcd64c49fbc6777bcfa924cbd8f4ed017675686
+RFC 3161 timestamp (UTC): Jul  2 22:23:06 2026 GMT
+Timestamp response: evidence\screencapture-worldwide-espacenet-patent-search-2026-07-02-15_16_40.tsr
+
+File: screencapture-worldwide-espacenet-patent-search-2026-07-02-15_17_53.pdf
+SHA-256: fb36f7f49d285a477cb6ae64feaa2fb01273d67925f4b00add51aa42557b2b99
+RFC 3161 timestamp (UTC): Jul  2 22:23:06 2026 GMT
+Timestamp response: evidence\screencapture-worldwide-espacenet-patent-search-2026-07-02-15_17_53.tsr
+
+File: screencapture-worldwide-espacenet-patent-search-2026-07-02-15_18_07.pdf
+SHA-256: 2cd047e864bcba151b643988ed1dd4c59d61a221d3e05d18345179fabdc89592
+RFC 3161 timestamp (UTC): Jul  2 22:23:07 2026 GMT
+Timestamp response: evidence\screencapture-worldwide-espacenet-patent-search-2026-07-02-15_18_07.tsr
+
+File: screencapture-worldwide-espacenet-patent-search-2026-07-02-15_18_32.pdf
+SHA-256: 3874074ca65e41875a03ca0862ced0b86c738bdc076322038585b478b3ccb44f
+RFC 3161 timestamp (UTC): Jul  2 22:23:07 2026 GMT
+Timestamp response: evidence\screencapture-worldwide-espacenet-patent-search-2026-07-02-15_18_32.tsr
+
+File: screencapture-worldwide-espacenet-patent-search-2026-07-02-15_18_45.pdf
+SHA-256: ed54e3e52c5b014b5fc75c3bd6432cdd4403db2c9935ec891b957bea3b2d02f1
+RFC 3161 timestamp (UTC): Jul  2 22:23:08 2026 GMT
+Timestamp response: evidence\screencapture-worldwide-espacenet-patent-search-2026-07-02-15_18_45.tsr
+
+File: screencapture-worldwide-espacenet-patent-search-2026-07-02-15_19_00.pdf
+SHA-256: f6735687db245dbfc07a72853723765d2260103410c333cd73f9ecfc9ff851e2
+RFC 3161 timestamp (UTC): Jul  2 22:23:08 2026 GMT
+Timestamp response: evidence\screencapture-worldwide-espacenet-patent-search-2026-07-02-15_19_00.tsr
+
+File: screencapture-worldwide-espacenet-patent-search-2026-07-02-15_19_23.pdf
+SHA-256: 351586ad71b4dd3136ca111abc6788347c58627f5b8b8d688771a30236489afb
+RFC 3161 timestamp (UTC): Jul  2 22:23:08 2026 GMT
+Timestamp response: evidence\screencapture-worldwide-espacenet-patent-search-2026-07-02-15_19_23.tsr
+
+File: screencapture-worldwide-espacenet-patent-search-2026-07-02-15_19_54.pdf
+SHA-256: 03cab0c2df593387469dcefd794474ab51cf6b5efd2bc17c1fc50f380e61d459
+RFC 3161 timestamp (UTC): Jul  2 22:23:09 2026 GMT
+Timestamp response: evidence\screencapture-worldwide-espacenet-patent-search-2026-07-02-15_19_54.tsr
+
+File: screencapture-worldwide-espacenet-patent-search-2026-07-02-15_20_26.pdf
+SHA-256: b20365bff6ff2e42ba25dbfa652c559fbcb4b7fbf7f922bf5e441e65aca2ebab
+RFC 3161 timestamp (UTC): Jul  2 22:23:09 2026 GMT
+Timestamp response: evidence\screencapture-worldwide-espacenet-patent-search-2026-07-02-15_20_26.tsr
+
+File: screencapture-worldwide-espacenet-patent-search-family-058544262-publication-US11482043B2-2026-07-02-15_16_16.pdf
+SHA-256: f1d7d34aed3bbc1a5ba87d5671d5a0143825c198f973d13656963513f5422390
+RFC 3161 timestamp (UTC): Jul  2 22:23:09 2026 GMT
+Timestamp response: evidence\screencapture-worldwide-espacenet-patent-search-family-058544262-publication-US11482043B2-2026-07-02-15_16_16.tsr
 
 File: Screenshot 2026-06-28 220302.png
 SHA-256: 7d29eee468924b9a2f291206eb7fda6658cee4b526c3220d4e941fb1dbeb56c1
