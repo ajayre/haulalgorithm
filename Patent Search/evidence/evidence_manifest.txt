@@ -1,5 +1,5 @@
 Patent Search Evidence Manifest
-Generated (UTC): 2026-07-02 22:23:10 UTC
+Generated (UTC): 2026-07-03 04:42:21 UTC
 TSA: freetsa.org (RFC 3161)
 Hash algorithm: SHA-256
 
@@ -118,10 +118,60 @@ SHA-256: b20365bff6ff2e42ba25dbfa652c559fbcb4b7fbf7f922bf5e441e65aca2ebab
 RFC 3161 timestamp (UTC): Jul  2 22:23:09 2026 GMT
 Timestamp response: evidence\screencapture-worldwide-espacenet-patent-search-2026-07-02-15_20_26.tsr
 
+File: screencapture-worldwide-espacenet-patent-search-2026-07-02-21_33_13.pdf
+SHA-256: b56821feb9c52d98c382a522cde497eb99666c11f440c940253c99508ccf9ae5
+RFC 3161 timestamp (UTC): Jul  3 04:42:17 2026 GMT
+Timestamp response: evidence\screencapture-worldwide-espacenet-patent-search-2026-07-02-21_33_13.tsr
+
+File: screencapture-worldwide-espacenet-patent-search-2026-07-02-21_33_34.pdf
+SHA-256: ef413fafa885c2ca0d923ae2e4b6e124f0795bdf79f0c3dbad98a5bba8212d1d
+RFC 3161 timestamp (UTC): Jul  3 04:42:17 2026 GMT
+Timestamp response: evidence\screencapture-worldwide-espacenet-patent-search-2026-07-02-21_33_34.tsr
+
+File: screencapture-worldwide-espacenet-patent-search-2026-07-02-21_35_19.pdf
+SHA-256: 494df1be21c456789d9d1cb2719e786c20e8154d9b15271d596bb7ea463026d9
+RFC 3161 timestamp (UTC): Jul  3 04:42:17 2026 GMT
+Timestamp response: evidence\screencapture-worldwide-espacenet-patent-search-2026-07-02-21_35_19.tsr
+
+File: screencapture-worldwide-espacenet-patent-search-2026-07-02-21_36_09.pdf
+SHA-256: 526634a45dc5da0c5b091a9f260819c1e3225ce82a881a6d38bb59764280e4f5
+RFC 3161 timestamp (UTC): Jul  3 04:42:17 2026 GMT
+Timestamp response: evidence\screencapture-worldwide-espacenet-patent-search-2026-07-02-21_36_09.tsr
+
+File: screencapture-worldwide-espacenet-patent-search-2026-07-02-21_36_31.pdf
+SHA-256: 672e2de4373a1cf60c4a025d964440c954330d4378ceb6f5e21fa1c419f15962
+RFC 3161 timestamp (UTC): Jul  3 04:42:18 2026 GMT
+Timestamp response: evidence\screencapture-worldwide-espacenet-patent-search-2026-07-02-21_36_31.tsr
+
+File: screencapture-worldwide-espacenet-patent-search-2026-07-02-21_36_55.pdf
+SHA-256: 7cfdcb2193467f07de00fc2f0fdaf35029138d106f46a03fa5bef2e27b126b9f
+RFC 3161 timestamp (UTC): Jul  3 04:42:18 2026 GMT
+Timestamp response: evidence\screencapture-worldwide-espacenet-patent-search-2026-07-02-21_36_55.tsr
+
+File: screencapture-worldwide-espacenet-patent-search-2026-07-02-21_40_00.pdf
+SHA-256: eefc245336e313d2db1e786cdf53766209d02080840350e45db72b431ccd8da4
+RFC 3161 timestamp (UTC): Jul  3 04:42:18 2026 GMT
+Timestamp response: evidence\screencapture-worldwide-espacenet-patent-search-2026-07-02-21_40_00.tsr
+
+File: screencapture-worldwide-espacenet-patent-search-family-058408316-publication-NZ605113A-2026-07-02-21_39_21.pdf
+SHA-256: 2b6317aeb1fd41ea5b9ce55c654f39ade583c0cf88a0b02bff89c2f2969f86e9
+RFC 3161 timestamp (UTC): Jul  3 04:42:18 2026 GMT
+Timestamp response: evidence\screencapture-worldwide-espacenet-patent-search-family-058408316-publication-NZ605113A-2026-07-02-21_39_21.tsr
+
 File: screencapture-worldwide-espacenet-patent-search-family-058544262-publication-US11482043B2-2026-07-02-15_16_16.pdf
 SHA-256: f1d7d34aed3bbc1a5ba87d5671d5a0143825c198f973d13656963513f5422390
 RFC 3161 timestamp (UTC): Jul  2 22:23:09 2026 GMT
 Timestamp response: evidence\screencapture-worldwide-espacenet-patent-search-family-058544262-publication-US11482043B2-2026-07-02-15_16_16.tsr
+
+File: screencapture-worldwide-espacenet-searchResults-2026-07-02-21_23_43.pdf
+SHA-256: 5f17c442c23b17b24c5be03fea0ea19338e14b47218cc617fbed232bd9021cc6
+RFC 3161 timestamp (UTC): Jul  3 04:42:19 2026 GMT
+Timestamp response: evidence\screencapture-worldwide-espacenet-searchResults-2026-07-02-21_23_43.tsr
+
+File: screencapture-worldwide-espacenet-searchResults-2026-07-02-21_24_02.pdf
+SHA-256: 1faf33d4c676f1e88d87f4c7385dd736334aec1f8c5b1543b55abd867ed8cd15
+RFC 3161 timestamp (UTC): Jul  3 04:42:19 2026 GMT
+Timestamp response: evidence\screencapture-worldwide-espacenet-searchResults-2026-07-02-21_24_02.tsr
 
 File: Screenshot 2026-06-28 220302.png
 SHA-256: 7d29eee468924b9a2f291206eb7fda6658cee4b526c3220d4e941fb1dbeb56c1

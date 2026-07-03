@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
 import subprocess
@@ -42,7 +43,24 @@ def verify_timestamp(tsr: Path, tsq: Path, ca_file: Path, tsa_cert: Path) -> boo
     return result.returncode == 0
 
 
+def evidence_files(folder: Path) -> list[str]:
+    return sorted(
+        path.name
+        for path in folder.iterdir()
+        if path.is_file() and path.suffix.lower() in EVIDENCE_EXTENSIONS
+    )
+
+
 def main() -> int:
+    parser = argparse.ArgumentParser(description="Validate Patent Search evidence files.")
+    parser.add_argument(
+        "-v",
+        "--verbose",
+        action="store_true",
+        help="Print SHA-256 hash and RFC 3161 timestamp for each file.",
+    )
+    args = parser.parse_args()
+
     if not OPENSSL.is_file():
         print(f"ERROR: OpenSSL not found at {OPENSSL}", file=sys.stderr)
         return 1
@@ -60,10 +78,14 @@ def main() -> int:
 
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     entries = manifest.get("files", [])
+    generated_at = manifest.get("generated_at_utc", "unknown")
 
     print()
     print("Patent Search Evidence Validation")
     print("=================================")
+    print(f"Manifest updated (UTC): {generated_at}")
+    print(f"Evidence files on disk: {len(evidence_files(folder))}")
+    print(f"Manifest entries: {len(entries)}")
     print()
 
     passed = 0
@@ -101,22 +123,22 @@ def main() -> int:
             failed += 1
             continue
 
-        print(f"[OK]   {source_name}")
+        if args.verbose:
+            print(f"[OK]   {source_name}")
+            print(f"         SHA-256: {actual_hash}")
+            print(f"         Timestamp (UTC): {entry.get('rfc3161_timestamp_utc', 'unknown')}")
+        else:
+            print(f"[OK]   {source_name}")
         passed += 1
 
     manifest_names = {entry["source_file"] for entry in entries}
-    source_files = sorted(
-        path.name
-        for path in folder.iterdir()
-        if path.is_file() and path.suffix.lower() in EVIDENCE_EXTENSIONS
-    )
-    missing_evidence = [name for name in source_files if name not in manifest_names]
+    missing_evidence = [name for name in evidence_files(folder) if name not in manifest_names]
 
     if missing_evidence:
         print()
         print("Untimestamped evidence files:")
         for name in missing_evidence:
-            print(f"[WARN] {name} - no manifest entry (run timestamp_evidence.py)")
+            print(f"[WARN] {name} - no manifest entry (run: python evidence\\timestamp_evidence.py)")
         failed += len(missing_evidence)
 
     print()

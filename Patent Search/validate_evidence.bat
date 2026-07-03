@@ -12,5 +12,5 @@ if errorlevel 1 (
     exit /b 1
 )
 
-python "%~dp0evidence\validate_evidence.py"
+python "%~dp0evidence\validate_evidence.py" %*
 exit /b %ERRORLEVEL%
