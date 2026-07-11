@@ -233,34 +233,14 @@ namespace HaulBuilder
             Double TReturn = 0.0;
             foreach (Pass P in Route.OrderedPasses)
             {
-                List<(Double X, Double Y)> CutXy = new List<(Double X, Double Y)>();
-                foreach (((Int32 Bx, Int32 By) Cell, Double DepthM) Cell in P.CutCells)
-                {
-                    CutXy.Add(Grid.CellCenterXy(Cell.Cell.Bx, Cell.Cell.By));
-                }
-
-                List<(Double X, Double Y)> FillXy = new List<(Double X, Double Y)>();
-                foreach (((Int32 Bx, Int32 By) Cell, Double DepthM) Cell in P.FillCells)
-                {
-                    FillXy.Add(Grid.CellCenterXy(Cell.Cell.Bx, Cell.Cell.By));
-                }
-
-                Double CutLen = SegmentLength(CutXy);
-                Double FillLen = SegmentLength(FillXy);
-                Double HaulLen = P.HaulDistanceM;
-                DLoad += CutLen;
-                DHaul += HaulLen;
-                DDump += FillLen;
-
-                // Loading and dumping use constant speeds.
-                TLoad += (LoadV > 0.0) ? (CutLen / LoadV) : 0.0;
-                TDump += (DumpV > 0.0) ? (FillLen / DumpV) : 0.0;
-
-                // Hauling and returning use trapezoidal profile.
-                THaul += MoveTime(HaulLen, HaulVMax, Ta, Td);
-                TReturn += MoveTime(CutLen, ReturnVMax, Ta, Td);
-                TReturn += MoveTime(HaulLen, ReturnVMax, Ta, Td);
-                TReturn += MoveTime(FillLen, ReturnVMax, Ta, Td);
+                PassTimeBreakdown Breakdown = EstimatePassBreakdown(Grid, P, LoadV, HaulVMax, DumpV, ReturnVMax, Ta, Td);
+                DLoad += Breakdown.LoadingDistM;
+                DHaul += Breakdown.HaulingDistM;
+                DDump += Breakdown.DumpingDistM;
+                TLoad += Breakdown.LoadingTimeS;
+                THaul += Breakdown.HaulingTimeS;
+                TDump += Breakdown.DumpingTimeS;
+                TReturn += Breakdown.ReturningTimeS;
             }
 
             Double DReturn = DLoad + DHaul + DDump;
@@ -272,6 +252,141 @@ namespace HaulBuilder
             Double AvgReturn = (TReturn > 0.0) ? (DReturn / TReturn / Constants.MPH_TO_MPS) : Params.ReturnSpeedMph;
 
             return new TimeResult(Total, DLoad, DHaul, DDump, DReturn, AvgHaul, AvgReturn, TLoad, THaul, TDump, TReturn, Other);
+        }
+
+        /// <summary>
+        /// Estimates time to complete one routed pass, including field-efficiency overhead.
+        /// </summary>
+        /// <param name="Grid">Grid model.</param>
+        /// <param name="Pass">Pass to estimate.</param>
+        /// <param name="Params">Time-model parameters.</param>
+        /// <returns>Estimated route time in seconds.</returns>
+        static public Double EstimatePassTime
+            (
+            Grid Grid,
+            Pass Pass,
+            TimeParams Params
+            )
+        {
+            // Per-route time uses the same productive segments as the job total, scaled by efficiency.
+            Double LoadV = Params.LoadingSpeedMph * Constants.MPH_TO_MPS;
+            Double HaulVMax = Params.HaulSpeedMph * Constants.MPH_TO_MPS;
+            Double DumpV = Params.DumpingSpeedMph * Constants.MPH_TO_MPS;
+            Double ReturnVMax = Params.ReturnSpeedMph * Constants.MPH_TO_MPS;
+            PassTimeBreakdown Breakdown = EstimatePassBreakdown(
+                Grid,
+                Pass,
+                LoadV,
+                HaulVMax,
+                DumpV,
+                ReturnVMax,
+                Params.AccelTimeS,
+                Params.DecelTimeS);
+            Double Productive = Breakdown.LoadingTimeS
+                + Breakdown.HaulingTimeS
+                + Breakdown.DumpingTimeS
+                + Breakdown.ReturningTimeS;
+            Double Eff = ((Params.FieldEfficiency > 0.0) && (Params.FieldEfficiency <= 1.0)) ? Params.FieldEfficiency : 1.0;
+            return Productive / Eff;
+        }
+
+        /// <summary>
+        /// Computes cut volume moved on one pass in BCY.
+        /// </summary>
+        /// <param name="Grid">Grid model.</param>
+        /// <param name="Pass">Pass to measure.</param>
+        /// <returns>Cut volume in BCY.</returns>
+        static public Double PassCutBcy
+            (
+            Grid Grid,
+            Pass Pass
+            )
+        {
+            return PassCellVolumeBcy(Grid, Pass.CutCells);
+        }
+
+        /// <summary>
+        /// Computes fill volume moved on one pass in BCY.
+        /// </summary>
+        /// <param name="Grid">Grid model.</param>
+        /// <param name="Pass">Pass to measure.</param>
+        /// <returns>Fill volume in BCY.</returns>
+        static public Double PassFillBcy
+            (
+            Grid Grid,
+            Pass Pass
+            )
+        {
+            return PassCellVolumeBcy(Grid, Pass.FillCells);
+        }
+
+        /// <summary>
+        /// Computes per-pass distance and time segments used by the job-level estimator.
+        /// </summary>
+        /// <param name="Grid">Grid model.</param>
+        /// <param name="Pass">Pass to estimate.</param>
+        /// <param name="LoadV">Loading speed in m/s.</param>
+        /// <param name="HaulVMax">Max haul speed in m/s.</param>
+        /// <param name="DumpV">Dumping speed in m/s.</param>
+        /// <param name="ReturnVMax">Max return speed in m/s.</param>
+        /// <param name="AccelS">Acceleration time in seconds.</param>
+        /// <param name="DecelS">Deceleration time in seconds.</param>
+        /// <returns>Per-pass distance and time breakdown.</returns>
+        static private PassTimeBreakdown EstimatePassBreakdown
+            (
+            Grid Grid,
+            Pass Pass,
+            Double LoadV,
+            Double HaulVMax,
+            Double DumpV,
+            Double ReturnVMax,
+            Double AccelS,
+            Double DecelS
+            )
+        {
+            List<(Double X, Double Y)> CutXy = new List<(Double X, Double Y)>();
+            foreach (((Int32 Bx, Int32 By) Cell, Double DepthM) Cell in Pass.CutCells)
+            {
+                CutXy.Add(Grid.CellCenterXy(Cell.Cell.Bx, Cell.Cell.By));
+            }
+
+            List<(Double X, Double Y)> FillXy = new List<(Double X, Double Y)>();
+            foreach (((Int32 Bx, Int32 By) Cell, Double DepthM) Cell in Pass.FillCells)
+            {
+                FillXy.Add(Grid.CellCenterXy(Cell.Cell.Bx, Cell.Cell.By));
+            }
+
+            Double CutLen = SegmentLength(CutXy);
+            Double FillLen = SegmentLength(FillXy);
+            Double HaulLen = Pass.HaulDistanceM;
+            Double TLoad = (LoadV > 0.0) ? (CutLen / LoadV) : 0.0;
+            Double TDump = (DumpV > 0.0) ? (FillLen / DumpV) : 0.0;
+            Double THaul = MoveTime(HaulLen, HaulVMax, AccelS, DecelS);
+            Double TReturn = MoveTime(CutLen, ReturnVMax, AccelS, DecelS)
+                + MoveTime(HaulLen, ReturnVMax, AccelS, DecelS)
+                + MoveTime(FillLen, ReturnVMax, AccelS, DecelS);
+            return new PassTimeBreakdown(CutLen, FillLen, HaulLen, TLoad, THaul, TDump, TReturn);
+        }
+
+        /// <summary>
+        /// Sums bank volume from pass cell depths.
+        /// </summary>
+        /// <param name="Grid">Grid model.</param>
+        /// <param name="Cells">Pass cells and depths.</param>
+        /// <returns>Volume in BCY.</returns>
+        static private Double PassCellVolumeBcy
+            (
+            Grid Grid,
+            List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Cells
+            )
+        {
+            Double VolumeBcy = 0.0;
+            foreach (((Int32 Bx, Int32 By) Cell, Double DepthM) Entry in Cells)
+            {
+                VolumeBcy += Entry.DepthM * Grid.AreaM2 * Constants.M3_TO_CY;
+            }
+
+            return VolumeBcy;
         }
 
         /// <summary>
@@ -336,6 +451,77 @@ namespace HaulBuilder
             Double Vp = Math.Sqrt((2.0 * LengthM) / ((1.0 / A) + (1.0 / B)));
             return (Vp / A) + (Vp / B);
         }
+    }
+
+    /// <summary>
+    /// Per-pass distance and time segments for one cut-haul-fill cycle.
+    /// </summary>
+    internal readonly struct PassTimeBreakdown
+    {
+        /// <summary>
+        /// Initializes a new instance of the <see cref="PassTimeBreakdown"/> struct.
+        /// </summary>
+        /// <param name="LoadingDistM">Loading distance in metres.</param>
+        /// <param name="DumpingDistM">Dumping distance in metres.</param>
+        /// <param name="HaulingDistM">Hauling distance in metres.</param>
+        /// <param name="LoadingTimeS">Loading time in seconds.</param>
+        /// <param name="HaulingTimeS">Hauling time in seconds.</param>
+        /// <param name="DumpingTimeS">Dumping time in seconds.</param>
+        /// <param name="ReturningTimeS">Returning time in seconds.</param>
+        public PassTimeBreakdown
+            (
+            Double LoadingDistM,
+            Double DumpingDistM,
+            Double HaulingDistM,
+            Double LoadingTimeS,
+            Double HaulingTimeS,
+            Double DumpingTimeS,
+            Double ReturningTimeS
+            )
+        {
+            this.LoadingDistM = LoadingDistM;
+            this.DumpingDistM = DumpingDistM;
+            this.HaulingDistM = HaulingDistM;
+            this.LoadingTimeS = LoadingTimeS;
+            this.HaulingTimeS = HaulingTimeS;
+            this.DumpingTimeS = DumpingTimeS;
+            this.ReturningTimeS = ReturningTimeS;
+        }
+
+        /// <summary>
+        /// Gets loading distance in metres.
+        /// </summary>
+        public Double LoadingDistM { get; }
+
+        /// <summary>
+        /// Gets dumping distance in metres.
+        /// </summary>
+        public Double DumpingDistM { get; }
+
+        /// <summary>
+        /// Gets hauling distance in metres.
+        /// </summary>
+        public Double HaulingDistM { get; }
+
+        /// <summary>
+        /// Gets loading time in seconds.
+        /// </summary>
+        public Double LoadingTimeS { get; }
+
+        /// <summary>
+        /// Gets hauling time in seconds.
+        /// </summary>
+        public Double HaulingTimeS { get; }
+
+        /// <summary>
+        /// Gets dumping time in seconds.
+        /// </summary>
+        public Double DumpingTimeS { get; }
+
+        /// <summary>
+        /// Gets returning time in seconds.
+        /// </summary>
+        public Double ReturningTimeS { get; }
     }
 
     /// <summary>

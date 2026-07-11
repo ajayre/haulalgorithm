@@ -525,6 +525,58 @@ namespace HaulBuilder.Tests
         }
 
         /// <summary>
+        /// Verifies cut/fill pair rows expose cumulative progress and per-route time.
+        /// </summary>
+        [Fact]
+        [Trait("Category", "Slow")]
+        public void CutFillPair_Includes_Cumulative_Volumes_And_Route_Time
+            (
+            )
+        {
+            // Pair rows should report pre-route progress and route duration for operator dashboards.
+            String FixturePath = Path.Combine(AppContext.BaseDirectory, "Fixtures", "TheShop2_2ft.agd");
+            Assert.True(File.Exists(FixturePath), $"Missing fixture: {FixturePath}");
+            HaulBuilderEngine Engine = new HaulBuilderEngine();
+            HaulBuilderOptions Options = new HaulBuilderOptions
+            {
+                AgdPath = FixturePath,
+                GridSizeFt = 7.5,
+                PixelsPerBin = 8,
+                NoPlan = false,
+                PairsCsvPath = "__IN_MEMORY__",
+            };
+            HaulBuilderResult Result = Engine.Run(Options);
+            Assert.NotNull(Result.Route);
+            Assert.True(Result.CutFillPairs.Count > 1);
+            Assert.NotNull(Result.TimeResult);
+
+            CutFillPair First = Result.CutFillPairs[0];
+            Assert.Equal(0.0, First.TotalCutBcyBefore, 6);
+            Assert.Equal(0.0, First.TotalFillBcyBefore, 6);
+            Assert.True(First.RouteTimeS > 0.0);
+
+            Double CutBefore = 0.0;
+            Double FillBefore = 0.0;
+            Double RouteTimeSum = 0.0;
+            for (Int32 Iter = 0; Iter < Result.CutFillPairs.Count; Iter += 1)
+            {
+                CutFillPair Pair = Result.CutFillPairs[Iter];
+                Pass Pass = Result.Route!.OrderedPasses[Iter];
+                Assert.Equal(CutBefore, Pair.TotalCutBcyBefore, 4);
+                Assert.Equal(FillBefore, Pair.TotalFillBcyBefore, 4);
+                CutBefore += TimeModel.PassCutBcy(Result.Grid!, Pass);
+                FillBefore += TimeModel.PassFillBcy(Result.Grid!, Pass);
+                RouteTimeSum += Pair.RouteTimeS;
+            }
+
+            Assert.Equal(Result.TimeResult!.TotalTimeS, RouteTimeSum, 3);
+            String Csv = Result.CsvTextByName["cut_fill_pairs"];
+            Assert.Contains("total_cut_bcy_before", Csv, StringComparison.Ordinal);
+            Assert.Contains("total_fill_bcy_before", Csv, StringComparison.Ordinal);
+            Assert.Contains("route_time_s", Csv, StringComparison.Ordinal);
+        }
+
+        /// <summary>
         /// Builds guidance for the synthetic east-up ramp.
         /// </summary>
         private static (Grid Grid, Route Route, GuidanceResult Guidance) GuidanceForRamp

@@ -195,9 +195,20 @@ namespace HaulBuilder
             )
         {
             // Pair rows are built explicitly so the engine never relies on file-backed CSV helpers.
+            TimeParams TimeParams = new TimeParams(
+                options.LoadingSpeedMph,
+                options.HaulSpeedMph,
+                options.DumpingSpeedMph,
+                options.ReturnSpeedMph,
+                options.AccelTimeS,
+                options.DecelTimeS,
+                options.FieldEfficiency);
+            Double TotalCutBcyBefore = 0.0;
+            Double TotalFillBcyBefore = 0.0;
             for (Int32 Iter = 0; Iter < route.OrderedPasses.Count; Iter += 1)
             {
                 Pass Pass = route.OrderedPasses[Iter];
+                Double RouteTimeS = TimeModel.EstimatePassTime(grid, Pass, TimeParams);
                 result.CutFillPairs.Add(
                     new CutFillPair(
                         Iter + 1,
@@ -206,7 +217,12 @@ namespace HaulBuilder
                         Pass.CutStartXy,
                         Pass.CutEndXy,
                         Pass.FillStartXy,
-                        Pass.FillEndXy));
+                        Pass.FillEndXy,
+                        TotalCutBcyBefore,
+                        TotalFillBcyBefore,
+                        RouteTimeS));
+                TotalCutBcyBefore += TimeModel.PassCutBcy(grid, Pass);
+                TotalFillBcyBefore += TimeModel.PassFillBcy(grid, Pass);
             }
 
             if (options.PairsCsvPath is not null)
@@ -600,7 +616,7 @@ namespace HaulBuilder
         {
             // Pair CSV mirrors the Python writer while remaining pure in-memory.
             StringBuilder Sb = new StringBuilder();
-            Sb.AppendLine("order,load_bcy,haul_m,cut_start_lat,cut_start_lon,cut_end_lat,cut_end_lon,fill_start_lat,fill_start_lon,fill_end_lat,fill_end_lon");
+            Sb.AppendLine("order,load_bcy,haul_m,total_cut_bcy_before,total_fill_bcy_before,route_time_s,cut_start_lat,cut_start_lon,cut_end_lat,cut_end_lon,fill_start_lat,fill_start_lon,fill_end_lat,fill_end_lon");
             for (Int32 Iter = 0; Iter < pairs.Count; Iter += 1)
             {
                 CutFillPair P = pairs[Iter];
@@ -608,7 +624,23 @@ namespace HaulBuilder
                 (Double CeLat, Double CeLon) = Agd.LatLonFromUtm(P.CutEndXy.X, P.CutEndXy.Y, field.Zone, field.IsNorthern);
                 (Double FsLat, Double FsLon) = Agd.LatLonFromUtm(P.FillStartXy.X, P.FillStartXy.Y, field.Zone, field.IsNorthern);
                 (Double FeLat, Double FeLon) = Agd.LatLonFromUtm(P.FillEndXy.X, P.FillEndXy.Y, field.Zone, field.IsNorthern);
-                Sb.AppendFormat(CultureInfo.InvariantCulture, "{0},{1:F2},{2:F1},{3:F7},{4:F7},{5:F7},{6:F7},{7:F7},{8:F7},{9:F7},{10:F7}", P.Order, P.LoadBcy, P.HaulDistanceM, CsLat, CsLon, CeLat, CeLon, FsLat, FsLon, FeLat, FeLon);
+                Sb.AppendFormat(
+                    CultureInfo.InvariantCulture,
+                    "{0},{1:F2},{2:F1},{3:F2},{4:F2},{5:F1},{6:F7},{7:F7},{8:F7},{9:F7},{10:F7},{11:F7},{12:F7},{13:F7}",
+                    P.Order,
+                    P.LoadBcy,
+                    P.HaulDistanceM,
+                    P.TotalCutBcyBefore,
+                    P.TotalFillBcyBefore,
+                    P.RouteTimeS,
+                    CsLat,
+                    CsLon,
+                    CeLat,
+                    CeLon,
+                    FsLat,
+                    FsLon,
+                    FeLat,
+                    FeLon);
                 Sb.AppendLine();
             }
 

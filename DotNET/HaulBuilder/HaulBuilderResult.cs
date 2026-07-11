@@ -158,6 +158,9 @@ namespace HaulBuilder
         /// <param name="cutEndXy">Cut-end world coordinates.</param>
         /// <param name="fillStartXy">Fill-start world coordinates.</param>
         /// <param name="fillEndXy">Fill-end world coordinates.</param>
+        /// <param name="totalCutBcyBefore">Cumulative cut BCY completed before this route.</param>
+        /// <param name="totalFillBcyBefore">Cumulative fill BCY completed before this route.</param>
+        /// <param name="routeTimeS">Estimated time to complete this route in seconds.</param>
         public CutFillPair
             (
             Int32 order,
@@ -166,7 +169,10 @@ namespace HaulBuilder
             (Double X, Double Y) cutStartXy,
             (Double X, Double Y) cutEndXy,
             (Double X, Double Y) fillStartXy,
-            (Double X, Double Y) fillEndXy
+            (Double X, Double Y) fillEndXy,
+            Double totalCutBcyBefore,
+            Double totalFillBcyBefore,
+            Double routeTimeS
             )
         {
             // Pair rows keep both scalar metrics and world geometry for exporters and UIs.
@@ -177,6 +183,9 @@ namespace HaulBuilder
             CutEndXy = cutEndXy;
             FillStartXy = fillStartXy;
             FillEndXy = fillEndXy;
+            TotalCutBcyBefore = totalCutBcyBefore;
+            TotalFillBcyBefore = totalFillBcyBefore;
+            RouteTimeS = routeTimeS;
         }
 
         /// <summary>
@@ -213,6 +222,21 @@ namespace HaulBuilder
         /// Gets fill-segment end world point.
         /// </summary>
         public (Double X, Double Y) FillEndXy { get; }
+
+        /// <summary>
+        /// Gets cumulative cut BCY completed before this route.
+        /// </summary>
+        public Double TotalCutBcyBefore { get; }
+
+        /// <summary>
+        /// Gets cumulative fill BCY completed before this route.
+        /// </summary>
+        public Double TotalFillBcyBefore { get; }
+
+        /// <summary>
+        /// Gets estimated time to complete this route in seconds.
+        /// </summary>
+        public Double RouteTimeS { get; }
     }
 
     /// <summary>
