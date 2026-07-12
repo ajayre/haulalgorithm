@@ -115,7 +115,255 @@ namespace HaulBuilder
             BuildAnimations(Result, Grid, Route, Opt);
             BuildPivot(Result, Grid, Route, Obstacles, Opt);
 
+            // TEMP: route-2 parity diagnostics — remove after host settings are aligned.
+            LogRoute2ParityDebug(Result, Opt, Grid, HeadingDeg, FlowAligned, ScraperBcy, StripList.Count);
+
             return Result;
+        }
+
+        /// <summary>
+        /// TEMP debug dump of effective settings and sequenced route-2 identity for host vs test parity.
+        /// </summary>
+        /// <param name="result">Pipeline result to annotate.</param>
+        /// <param name="opt">Effective options used for this run.</param>
+        /// <param name="grid">Built grid.</param>
+        /// <param name="headingDeg">Resolved heading degrees.</param>
+        /// <param name="flowAligned">Whether flow-aligned growth was used.</param>
+        /// <param name="scraperBcy">Bank load limit used by the matcher.</param>
+        /// <param name="stripCount">Number of traced strips.</param>
+        static private void LogRoute2ParityDebug
+            (
+            HaulBuilderResult result,
+            HaulBuilderOptions opt,
+            Grid grid,
+            Double headingDeg,
+            Boolean flowAligned,
+            Double scraperBcy,
+            Int32 stripCount
+            )
+        {
+            const String Prefix = "HAULBUILDER_DEBUG";
+            List<String> Lines = new List<String>();
+
+            void Add
+                (
+                String Line
+                )
+            {
+                String Text = Prefix + " " + Line;
+                Lines.Add(Text);
+                result.Messages.Add(Text);
+                Console.WriteLine(Text);
+                System.Diagnostics.Trace.WriteLine(Text);
+            }
+
+            Add("===== BEGIN route-2 parity dump (TEMP) =====");
+            Add(String.Format(CultureInfo.InvariantCulture, "agd={0}", opt.AgdPath));
+            Add(String.Format(
+                CultureInfo.InvariantCulture,
+                "grid={0}x{1} GridSizeFt={2} GridSizeM={3:F6}",
+                grid.Width,
+                grid.Height,
+                opt.GridSizeFt,
+                grid.GridSizeM));
+            Add(String.Format(
+                CultureInfo.InvariantCulture,
+                "settings: ToleranceMm={0} ScraperLCY={1} Swell={2} ScraperBCY={3:F6} CutFillRatio={4} MaxDepthMm={5} BladeWidthMm={6}",
+                opt.ToleranceMm,
+                opt.ScraperCapacityLcy,
+                opt.SwellFactor,
+                scraperBcy,
+                opt.CutFillRatio,
+                opt.MaxDepthMm,
+                opt.BladeWidthMm));
+            Add(String.Format(
+                CultureInfo.InvariantCulture,
+                "settings: FlowAligned={0} NoFlowAligned={1} HeadingDeg={2:F3} HeadingStrength={3} StripBias={4} MaxDropHopFt={5} MinLoadFillPct={6}",
+                flowAligned,
+                opt.NoFlowAligned,
+                headingDeg,
+                opt.HeadingStrength,
+                opt.StripBias,
+                opt.MaxDropHopFt,
+                opt.MinLoadFillPct));
+            Add(String.Format(
+                CultureInfo.InvariantCulture,
+                "settings: TransportMode={0} BalanceMode={1} NoGradeReturn={2} NoDirectionAware={3} NoKnotRepair={4} ReorderWindow={5} LaneOverlap={6} NoRouteSmoothing={7}",
+                opt.TransportMode,
+                opt.BalanceMode,
+                opt.NoGradeReturn,
+                opt.NoDirectionAware,
+                opt.NoKnotRepair,
+                opt.ReorderWindow,
+                opt.LaneOverlap,
+                opt.NoRouteSmoothing));
+            Add(String.Format(
+                CultureInfo.InvariantCulture,
+                "settings: ReturnMph={0} TurnMph={1} TurningCircleFt={2} ExcludePolygons={3} StripCount={4}",
+                opt.ReturnSpeedMph,
+                opt.TurnSpeedMph,
+                opt.TurningCircleFt,
+                opt.ExcludePolygonSpecs.Count,
+                stripCount));
+
+            // Expected TheShop2@7.5ft fingerprint from the parity suite.
+            Add("expected_theshop2_7p5ft: passes=3102 order1=2199 route2_haul_m~63.763 route2_ncut=5 route2_uniq=5 route2_first=(64,2) grid~177x173");
+            Add(String.Format(
+                CultureInfo.InvariantCulture,
+                "expected_defaults: ToleranceMm={0} MaxDepthMm={1} BladeWidthMm={2} CutFillRatio={3}",
+                Constants.DEFAULT_TOLERANCE_MM,
+                Constants.DEFAULT_MAX_DEPTH_MM,
+                Constants.DEFAULT_BLADE_WIDTH_MM,
+                Constants.DEFAULT_COMPACTION));
+            Add(String.Format(
+                CultureInfo.InvariantCulture,
+                "delta: ToleranceMm={0:F6} MaxDepthMm={1:F6} BladeWidthMm={2:F6} (host-expected)",
+                opt.ToleranceMm - Constants.DEFAULT_TOLERANCE_MM,
+                opt.MaxDepthMm - Constants.DEFAULT_MAX_DEPTH_MM,
+                opt.BladeWidthMm - Constants.DEFAULT_BLADE_WIDTH_MM));
+
+            if (result.PassResult is null || result.Route is null)
+            {
+                Add("plan missing (NoPlan or early exit)");
+                Add("===== END route-2 parity dump =====");
+                return;
+            }
+
+            PassResult PassResult = result.PassResult;
+            Route Route = result.Route;
+            Double TotalHaul = PassResult.Passes.Sum(Pass => Pass.HaulDistanceM);
+            Double TotalBcy = PassResult.Passes.Sum(Pass => Pass.LoadBcy);
+            Add(String.Format(
+                CultureInfo.InvariantCulture,
+                "plan: passes={0} moved_bcy={1:F2} total_haul_m={2:F1} deadhead_m={3:F1}",
+                PassResult.Passes.Count,
+                TotalBcy,
+                TotalHaul,
+                Route.TotalDeadheadM));
+
+            Int32 OrderTake = Math.Min(20, Route.Order.Count);
+            Add("order[:20]=" + String.Join(",", Route.Order.Take(OrderTake)));
+
+            for (Int32 Gen = 0; Gen < Math.Min(3, PassResult.Passes.Count); Gen += 1)
+            {
+                Pass GenPass = PassResult.Passes[Gen];
+                (Int32 Bx, Int32 By) First = GenPass.CutCells.Count > 0 ? GenPass.CutCells[0].Cell : (-1, -1);
+                Add(String.Format(
+                    CultureInfo.InvariantCulture,
+                    "gen[{0}]: ncut={1} nfill={2} haul_m={3:F6} load_bcy={4:F6} first_cut=({5},{6}) cut_h={7}",
+                    Gen,
+                    GenPass.CutCells.Count,
+                    GenPass.FillCells.Count,
+                    GenPass.HaulDistanceM,
+                    GenPass.LoadBcy,
+                    First.Bx,
+                    First.By,
+                    GenPass.CutHeadingDeg.HasValue ? GenPass.CutHeadingDeg.Value.ToString("F3", CultureInfo.InvariantCulture) : "null"));
+            }
+
+            if (Route.OrderedPasses.Count >= 2)
+            {
+                Pass Route2 = Route.OrderedPasses[1];
+                Int32 Uniq = Route2.CutCells.Select(Entry => (Entry.Cell.Bx, Entry.Cell.By)).Distinct().Count();
+                (Int32 Bx, Int32 By) First = Route2.CutCells.Count > 0 ? Route2.CutCells[0].Cell : (-1, -1);
+                (Int32 Bx, Int32 By) Last = Route2.CutCells.Count > 0 ? Route2.CutCells[Route2.CutCells.Count - 1].Cell : (-1, -1);
+                String FirstCuts = String.Join(",", Route2.CutCells.Take(8).Select(Entry =>
+                    String.Format(CultureInfo.InvariantCulture, "({0},{1},{2:F4})", Entry.Cell.Bx, Entry.Cell.By, Entry.DepthM)));
+                Add(String.Format(
+                    CultureInfo.InvariantCulture,
+                    "route2: order_index={0} ncut={1} uniq_cut={2} nfill={3} haul_m={4:F6} load_bcy={5:F6} first=({6},{7}) last=({8},{9}) cut_h={10}",
+                    Route.Order[1],
+                    Route2.CutCells.Count,
+                    Uniq,
+                    Route2.FillCells.Count,
+                    Route2.HaulDistanceM,
+                    Route2.LoadBcy,
+                    First.Bx,
+                    First.By,
+                    Last.Bx,
+                    Last.By,
+                    Route2.CutHeadingDeg.HasValue ? Route2.CutHeadingDeg.Value.ToString("F3", CultureInfo.InvariantCulture) : "null"));
+                Add(String.Format(
+                    CultureInfo.InvariantCulture,
+                    "route2: cut_start=({0:F3},{1:F3}) cut_end=({2:F3},{3:F3}) fill_start=({4:F3},{5:F3}) fill_end=({6:F3},{7:F3})",
+                    Route2.CutStartXy.X,
+                    Route2.CutStartXy.Y,
+                    Route2.CutEndXy.X,
+                    Route2.CutEndXy.Y,
+                    Route2.FillStartXy.X,
+                    Route2.FillStartXy.Y,
+                    Route2.FillEndXy.X,
+                    Route2.FillEndXy.Y));
+                Add("route2: first8_cuts=" + FirstCuts);
+
+                Boolean MatchFingerprint =
+                    (Route.Order[1] == 2199)
+                    && (Math.Abs(Route2.HaulDistanceM - 63.763) < 0.1)
+                    && (Route2.CutCells.Count == 5)
+                    && (Uniq == 5)
+                    && (First.Bx == 64)
+                    && (First.By == 2)
+                    && (grid.Width == 177)
+                    && (grid.Height == 173);
+                Boolean SettingsOk =
+                    (Math.Abs(opt.GridSizeFt - Constants.DEFAULT_GRID_SIZE_FT) < 1e-9)
+                    && (Math.Abs(opt.ToleranceMm - Constants.DEFAULT_TOLERANCE_MM) < 1e-9)
+                    && (Math.Abs(opt.MaxDepthMm - Constants.DEFAULT_MAX_DEPTH_MM) < 1e-9)
+                    && (Math.Abs(opt.BladeWidthMm - Constants.DEFAULT_BLADE_WIDTH_MM) < 1e-9);
+                if (MatchFingerprint)
+                {
+                    Add("COMPARE: MATCHES TheShop2@7.5ft parity fingerprint");
+                }
+                else if (!SettingsOk)
+                {
+                    Add("COMPARE: DOES NOT MATCH — set ToleranceMm=10, MaxDepthMm=61, BladeWidthMm=2271 (host still has converted inch values)");
+                }
+                else
+                {
+                    Add("COMPARE: DOES NOT MATCH TheShop2@7.5ft parity fingerprint — settings look right; check AGD identity / DLL build");
+                }
+            }
+            else
+            {
+                Add("route2: unavailable (fewer than 2 ordered passes)");
+            }
+
+            if ((result.Guidance is not null) && (result.Guidance.Points.Count > 0))
+            {
+                Int32 Route2Cuts = result.Guidance.Points.Count(Point => (Point.PassNo == 2) && (Point.Action == "CUT"));
+                Int32 Route2All = result.Guidance.Points.Count(Point => Point.PassNo == 2);
+                Add(String.Format(
+                    CultureInfo.InvariantCulture,
+                    "guidance: total_pts={0} route2_pts={1} route2_CUT={2}",
+                    result.Guidance.Points.Count,
+                    Route2All,
+                    Route2Cuts));
+            }
+
+            if (result.Metrics is not null)
+            {
+                Add(String.Format(
+                    CultureInfo.InvariantCulture,
+                    "metrics: hours={0:F3} haul_m={1:F1} moved_bcy={2:F2}",
+                    result.Metrics.TotalHours,
+                    result.TimeResult is not null ? result.TimeResult.HaulingDistM : 0.0,
+                    result.Metrics.MoveVolumeBcy));
+            }
+
+            Add("===== END route-2 parity dump =====");
+
+            try
+            {
+                String LogPath = Path.Combine(Path.GetTempPath(), "haulbuilder_route2_debug.log");
+                File.WriteAllLines(LogPath, Lines);
+                String PathMsg = Prefix + " wrote " + LogPath;
+                result.Messages.Add(PathMsg);
+                Console.WriteLine(PathMsg);
+            }
+            catch (Exception Ex)
+            {
+                Add("log_file_write_failed: " + Ex.Message);
+            }
         }
 
         /// <summary>

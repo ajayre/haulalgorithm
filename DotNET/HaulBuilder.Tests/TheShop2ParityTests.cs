@@ -27,11 +27,12 @@ namespace HaulBuilder.Tests
                 MinLoadFillPct = 90.0,
             };
             HaulBuilderResult Result = Engine.Run(Options);
-            // Python reference (7.5 ft, flow-aligned, min_load 90%): 3049 passes, ~46448 BCY, ~200103 m haul, ~214 h.
-            Assert.Equal(3049, Result.PassResult!.Passes.Count);
-            Assert.Equal(46448.0, Result.Metrics!.MoveVolumeBcy, 1.0);
-            Assert.Equal(200103.4, Result.TimeResult!.HaulingDistM, 5.0);
-            Assert.Equal(214.0, Result.Metrics.TotalHours, 1.0);
+            // Shared Python/C# plan after no-within-pass-restack (7.5 ft, flow-aligned, min_load 90%):
+            // 3102 passes, ~46449 BCY, ~210171 m haul, ~225 h.
+            Assert.Equal(3102, Result.PassResult!.Passes.Count);
+            Assert.Equal(46449.0, Result.Metrics!.MoveVolumeBcy, 1.0);
+            Assert.Equal(210170.7, Result.TimeResult!.HaulingDistM, 5.0);
+            Assert.Equal(225.0, Result.Metrics.TotalHours, 1.0);
         }
     }
 }

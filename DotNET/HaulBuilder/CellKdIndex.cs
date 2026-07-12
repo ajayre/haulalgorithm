@@ -150,6 +150,8 @@ namespace HaulBuilder
             Double BestDistSq = NearestDistSq[0];
             for (Int32 Iter = 1; Iter < CutCount; Iter += 1)
             {
+                // Strict less-than keeps the first minimum; with cutCells sorted
+                // (by, bx) that matches Python np.argmin on argwhere order.
                 if (NearestDistSq[Iter] < BestDistSq)
                 {
                     BestDistSq = NearestDistSq[Iter];

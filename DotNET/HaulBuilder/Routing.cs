@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 
 using static HaulBuilder.Obstacles;
 
@@ -115,7 +116,9 @@ namespace HaulBuilder
             {
                 Double BestCost = Double.PositiveInfinity;
                 Int32 Best = -1;
-                foreach (Int32 Candidate in Unvisited)
+                // Ascending index order matches CPython set(range(n)) iteration so
+                // equal transition costs pick the same successor as Python.
+                foreach (Int32 Candidate in Unvisited.OrderBy(Index => Index))
                 {
                     Double Cost = Model.Cost(Passes[Current], Passes[Candidate]);
                     if (Cost < BestCost)

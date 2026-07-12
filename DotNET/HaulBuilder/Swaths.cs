@@ -396,6 +396,11 @@ namespace HaulBuilder
         private const Double EPSILON = 1e-12;
         private const Double DEFAULT_TURNING_CIRCLE_FT = 45.0;
 
+        /// <summary>
+        /// Soft-bend length budget in half-turns of R (1 => πR) plus the chord.
+        /// </summary>
+        private const Double SOFT_BEND_MAX_HALF_TURNS = 1.0;
+
         private sealed class RawPoint
         {
             /// <summary>
@@ -758,6 +763,9 @@ namespace HaulBuilder
                 }
             }
 
+            // Hard turning-radius bound on blade-down sweeps before obstacle detours.
+            Raw = EnforceMinTurnRadius(Raw, EffectiveTurnRadiusM, turnThresholdDeg, Math.Max(grid.GridSizeM, 0.5));
+
             if ((Raw.Count >= 2) && (Obstacles.Active || (armObstacles != null)))
             {
                 // Insert detour vertices only on blade-up legs so blade-down coverage remains untouched.
@@ -792,13 +800,40 @@ namespace HaulBuilder
 
             Double Cum = 0.0;
             (Double X, Double Y)? PrevRaw = null;
+            (Double X, Double Y)? PrevCoverageRaw = null;
             Int32 Seq = 0;
 
             for (Int32 Index = 0; Index < Raw.Count; Index += 1)
             {
                 RawPoint Entry = Raw[Index];
                 (Double X, Double Y) RawPointXy = (Entry.Xr, Entry.Yr);
-                Double Seg = PrevRaw.HasValue ? Dist(PrevRaw.Value, RawPointXy) : 0.0;
+                Double Seg;
+                if (IsBladeDown(Entry.Action))
+                {
+                    // Skip inserted MOVE headlands so CUT/FILL/GRADE keep the coverage floor.
+                    if (PrevCoverageRaw.HasValue)
+                    {
+                        Seg = Dist(PrevCoverageRaw.Value, RawPointXy);
+                    }
+                    else if (PrevRaw.HasValue)
+                    {
+                        Seg = Dist(PrevRaw.Value, RawPointXy);
+                    }
+                    else
+                    {
+                        Seg = 0.0;
+                    }
+
+                    PrevCoverageRaw = RawPointXy;
+                }
+                else
+                {
+                    Seg = PrevRaw.HasValue ? Dist(PrevRaw.Value, RawPointXy) : 0.0;
+                    if (Entry.Action != MOVE)
+                    {
+                        PrevCoverageRaw = null;
+                    }
+                }
 
                 if (Entry.Action == START)
                 {
@@ -1390,6 +1425,1133 @@ namespace HaulBuilder
             }
 
             return Out;
+        }
+
+        /// <summary>
+        /// Circumradius of triangle ABC in metres; infinity when nearly collinear.
+        /// </summary>
+        /// <param name="a">First vertex.</param>
+        /// <param name="b">Second vertex.</param>
+        /// <param name="c">Third vertex.</param>
+        /// <returns>Circumradius in metres.</returns>
+        static private Double CircumRadiusM
+            (
+            (Double X, Double Y) a,
+            (Double X, Double Y) b,
+            (Double X, Double Y) c
+            )
+        {
+            Double La = Dist(b, c);
+            Double Lb = Dist(a, c);
+            Double Lc = Dist(a, b);
+            Double Cross = Math.Abs((a.X * (b.Y - c.Y)) + (b.X * (c.Y - a.Y)) + (c.X * (a.Y - b.Y)));
+            if (Cross < 1e-9)
+            {
+                return Double.PositiveInfinity;
+            }
+
+            // Shoelace magnitude is 2K; R = abc / (4K) = abc / (2 * Cross).
+            return (La * Lb * Lc) / (2.0 * Cross);
+        }
+
+        /// <summary>
+        /// Absolute heading change at b along a→b→c in degrees.
+        /// </summary>
+        /// <param name="a">Inbound start.</param>
+        /// <param name="b">Corner.</param>
+        /// <param name="c">Outbound end.</param>
+        /// <returns>Absolute turn angle in degrees.</returns>
+        static private Double HeadingChangeDeg
+            (
+            (Double X, Double Y) a,
+            (Double X, Double Y) b,
+            (Double X, Double Y) c
+            )
+        {
+            Double Dx1 = b.X - a.X;
+            Double Dy1 = b.Y - a.Y;
+            Double Dx2 = c.X - b.X;
+            Double Dy2 = c.Y - b.Y;
+            return Math.Abs(RadiansToDegrees(Math.Atan2((Dx1 * Dy2) - (Dy1 * Dx2), (Dx1 * Dx2) + (Dy1 * Dy2))));
+        }
+
+        /// <summary>
+        /// Converts compass bearing (0=N, 90=E) to math angle CCW from +X (east).
+        /// </summary>
+        /// <param name="headingDeg">Compass heading in degrees.</param>
+        /// <returns>Math heading in radians.</returns>
+        static private Double CompassToMath
+            (
+            Double headingDeg
+            )
+        {
+            return (Math.PI / 2.0) - DegreesToRadians(headingDeg);
+        }
+
+        /// <summary>
+        /// Wraps angle into [0, 2π) using floor (Andrew Walker Dubins convention).
+        /// </summary>
+        /// <param name="theta">Angle in radians.</param>
+        /// <returns>Wrapped angle in [0, 2π).</returns>
+        static private Double DubinsMod2Pi
+            (
+            Double theta
+            )
+        {
+            return theta - (2.0 * Math.PI * Math.Floor(theta / (2.0 * Math.PI)));
+        }
+
+        /// <summary>
+        /// Advances a normalized Dubins segment (L/R/S) from pose <paramref name="qi"/> by length <paramref name="t"/>.
+        /// </summary>
+        /// <param name="t">Normalized segment length.</param>
+        /// <param name="qi">Start pose (x, y, heading) in unit-radius space.</param>
+        /// <param name="typ">Segment type: L, R, or S.</param>
+        /// <returns>Pose after the segment.</returns>
+        static private (Double X, Double Y, Double Th) DubinsSegmentStep
+            (
+            Double t,
+            (Double X, Double Y, Double Th) qi,
+            String typ
+            )
+        {
+            Double St = Math.Sin(qi.Th);
+            Double Ct = Math.Cos(qi.Th);
+            if (typ == "L")
+            {
+                return (qi.X + Math.Sin(qi.Th + t) - St, qi.Y - Math.Cos(qi.Th + t) + Ct, qi.Th + t);
+            }
+
+            if (typ == "R")
+            {
+                return (qi.X - Math.Sin(qi.Th - t) + St, qi.Y + Math.Cos(qi.Th - t) - Ct, qi.Th - t);
+            }
+
+            return (qi.X + (Ct * t), qi.Y + (St * t), qi.Th);
+        }
+
+        /// <summary>
+        /// Segment types for each Dubins word (LSL … LRL).
+        /// </summary>
+        static private readonly Dictionary<String, String[]> DubinsDir = new Dictionary<String, String[]>
+        {
+            { "LSL", new[] { "L", "S", "L" } },
+            { "LSR", new[] { "L", "S", "R" } },
+            { "RSL", new[] { "R", "S", "L" } },
+            { "RSR", new[] { "R", "S", "R" } },
+            { "RLR", new[] { "R", "L", "R" } },
+            { "LRL", new[] { "L", "R", "L" } },
+        };
+
+        /// <summary>
+        /// Normalized segment lengths for each Dubins word (Andrew Walker formulas).
+        /// </summary>
+        /// <param name="alpha">Normalized start heading relative to SE line.</param>
+        /// <param name="beta">Normalized end heading relative to SE line.</param>
+        /// <param name="d">Normalized start–end distance.</param>
+        /// <param name="sa">sin(alpha).</param>
+        /// <param name="sb">sin(beta).</param>
+        /// <param name="ca">cos(alpha).</param>
+        /// <param name="cb">cos(beta).</param>
+        /// <param name="cab">cos(alpha - beta).</param>
+        /// <param name="dsq">d squared.</param>
+        /// <returns>Word name → (t, p, q) normalized lengths for feasible words.</returns>
+        static private Dictionary<String, (Double T, Double P, Double Q)> DubinsWords
+            (
+            Double alpha,
+            Double beta,
+            Double d,
+            Double sa,
+            Double sb,
+            Double ca,
+            Double cb,
+            Double cab,
+            Double dsq
+            )
+        {
+            Dictionary<String, (Double T, Double P, Double Q)> Out = new Dictionary<String, (Double T, Double P, Double Q)>();
+            Double Tmp0 = d + sa - sb;
+            Double Psq = 2.0 + dsq - (2.0 * cab) + (2.0 * d * (sa - sb));
+            if (Psq >= 0.0)
+            {
+                Double Tmp1 = Math.Atan2(cb - ca, Tmp0);
+                Out["LSL"] = (DubinsMod2Pi(Tmp1 - alpha), Math.Sqrt(Psq), DubinsMod2Pi(beta - Tmp1));
+            }
+
+            Tmp0 = d - sa + sb;
+            Psq = 2.0 + dsq - (2.0 * cab) + (2.0 * d * (sb - sa));
+            if (Psq >= 0.0)
+            {
+                Double Tmp1 = Math.Atan2(ca - cb, Tmp0);
+                Out["RSR"] = (DubinsMod2Pi(alpha - Tmp1), Math.Sqrt(Psq), DubinsMod2Pi(Tmp1 - beta));
+            }
+
+            Psq = -2.0 + dsq + (2.0 * cab) + (2.0 * d * (sa + sb));
+            if (Psq >= 0.0)
+            {
+                Double P = Math.Sqrt(Psq);
+                Tmp0 = Math.Atan2(-ca - cb, d + sa + sb) - Math.Atan2(-2.0, P);
+                Out["LSR"] = (DubinsMod2Pi(Tmp0 - alpha), P, DubinsMod2Pi(Tmp0 - DubinsMod2Pi(beta)));
+            }
+
+            Psq = -2.0 + dsq + (2.0 * cab) - (2.0 * d * (sa + sb));
+            if (Psq >= 0.0)
+            {
+                Double P = Math.Sqrt(Psq);
+                Tmp0 = Math.Atan2(ca + cb, d - sa - sb) - Math.Atan2(2.0, P);
+                Out["RSL"] = (DubinsMod2Pi(alpha - Tmp0), P, DubinsMod2Pi(beta - Tmp0));
+            }
+
+            Tmp0 = (6.0 - dsq + (2.0 * cab) + (2.0 * d * (sa - sb))) / 8.0;
+            Double Phi = Math.Atan2(ca - cb, d - sa + sb);
+            if (Math.Abs(Tmp0) <= 1.0)
+            {
+                Double P = DubinsMod2Pi((2.0 * Math.PI) - Math.Acos(Tmp0));
+                Double T = DubinsMod2Pi(alpha - Phi + DubinsMod2Pi(P / 2.0));
+                Out["RLR"] = (T, P, DubinsMod2Pi(alpha - beta - T + DubinsMod2Pi(P)));
+            }
+
+            Tmp0 = (6.0 - dsq + (2.0 * cab) + (2.0 * d * (sb - sa))) / 8.0;
+            Phi = Math.Atan2(ca - cb, d + sa - sb);
+            if (Math.Abs(Tmp0) <= 1.0)
+            {
+                Double P = DubinsMod2Pi((2.0 * Math.PI) - Math.Acos(Tmp0));
+                Double T = DubinsMod2Pi(-alpha - Phi + (P / 2.0));
+                Out["LRL"] = (T, P, DubinsMod2Pi(DubinsMod2Pi(beta) - alpha - T + DubinsMod2Pi(P)));
+            }
+
+            return Out;
+        }
+
+        /// <summary>
+        /// Samples a Dubins path; returns intermediate points (excludes exact start).
+        /// </summary>
+        /// <param name="q0">Start pose (world x, y, math heading).</param>
+        /// <param name="rho">Turn radius in metres.</param>
+        /// <param name="typ">Dubins word name.</param>
+        /// <param name="parameters">Normalized (t, p, q) segment lengths.</param>
+        /// <param name="stepM">Sample spacing in metres.</param>
+        /// <returns>Sampled waypoints excluding the exact start.</returns>
+        static private List<(Double X, Double Y)> DubinsSample
+            (
+            (Double X, Double Y, Double Th) q0,
+            Double rho,
+            String typ,
+            (Double T, Double P, Double Q) parameters,
+            Double stepM
+            )
+        {
+            String[] Types = DubinsDir[typ];
+            Double[] Params = { parameters.T, parameters.P, parameters.Q };
+            Double Length = (parameters.T + parameters.P + parameters.Q) * rho;
+            List<(Double X, Double Y)> Pts = new List<(Double X, Double Y)>();
+            if (Length < 1e-9)
+            {
+                return Pts;
+            }
+
+            // Dense enough that sampled triples on arc/straight junctions stay near R.
+            Double Step = Math.Min(Math.Max(stepM, 1e-6), Math.Max(rho / 12.0, 0.25));
+            Int32 N = Math.Max(24, (Int32)Math.Ceiling(Length / Math.Max(Step, 1e-6)));
+            (Double X, Double Y, Double Th) Qi = (0.0, 0.0, q0.Th);
+            for (Int32 I = 1; I <= N; I += 1)
+            {
+                Double Tp = (Length * (I / (Double)N)) / rho;
+                (Double X, Double Y, Double Th) Q = Qi;
+                Double Rem = Tp;
+                for (Int32 Seg = 0; Seg < 3; Seg += 1)
+                {
+                    Double P = Params[Seg];
+                    String Name = Types[Seg];
+                    // Consume whole segments until the sample falls inside one.
+                    if (Rem <= (P + 1e-12))
+                    {
+                        Q = DubinsSegmentStep(Rem, Q, Name);
+                        break;
+                    }
+
+                    Q = DubinsSegmentStep(P, Q, Name);
+                    Rem -= P;
+                }
+
+                Pts.Add((Q.X * rho + q0.X, Q.Y * rho + q0.Y));
+            }
+
+            return Pts;
+        }
+
+        /// <summary>
+        /// Shortest Dubins path (Walker); optional CCC-only or CSC-only word filters.
+        /// </summary>
+        /// <param name="sx">Start easting.</param>
+        /// <param name="sy">Start northing.</param>
+        /// <param name="stheta">Start math heading.</param>
+        /// <param name="ex">End easting.</param>
+        /// <param name="ey">End northing.</param>
+        /// <param name="etheta">End math heading.</param>
+        /// <param name="radius">Turn radius in metres.</param>
+        /// <param name="sampleM">Sample spacing in metres.</param>
+        /// <param name="cccOnly">When true, only LRL/RLR words are considered.</param>
+        /// <param name="cscOnly">When true (and not <paramref name="cccOnly"/>), only CSC words.</param>
+        /// <returns>Intermediate waypoints, empty list when radius is tiny, or null when no word applies.</returns>
+        static private List<(Double X, Double Y)>? DubinsShortest
+            (
+            Double sx,
+            Double sy,
+            Double stheta,
+            Double ex,
+            Double ey,
+            Double etheta,
+            Double radius,
+            Double sampleM,
+            Boolean cccOnly = false,
+            Boolean cscOnly = false
+            )
+        {
+            if (radius <= 1e-9)
+            {
+                return new List<(Double X, Double Y)>();
+            }
+
+            Double Dx = ex - sx;
+            Double Dy = ey - sy;
+            Double D = Math.Sqrt((Dx * Dx) + (Dy * Dy));
+            Double DistN = D / radius;
+            Double Theta = (DistN > 0.0) ? DubinsMod2Pi(Math.Atan2(Dy, Dx)) : 0.0;
+            Double Alpha = DubinsMod2Pi(stheta - Theta);
+            Double Beta = DubinsMod2Pi(etheta - Theta);
+            Double Sa = Math.Sin(Alpha);
+            Double Sb = Math.Sin(Beta);
+            Double Ca = Math.Cos(Alpha);
+            Double Cb = Math.Cos(Beta);
+            Double Cab = Math.Cos(Alpha - Beta);
+            Dictionary<String, (Double T, Double P, Double Q)> Words =
+                DubinsWords(Alpha, Beta, DistN, Sa, Sb, Ca, Cb, Cab, DistN * DistN);
+            if (cccOnly)
+            {
+                // Intent: agricultural keyhole uses only CCC (LRL/RLR), not CSC side loops.
+                Dictionary<String, (Double T, Double P, Double Q)> Filtered =
+                    new Dictionary<String, (Double T, Double P, Double Q)>();
+                foreach (KeyValuePair<String, (Double T, Double P, Double Q)> Kv in Words)
+                {
+                    if ((Kv.Key == "LRL") || (Kv.Key == "RLR"))
+                    {
+                        Filtered[Kv.Key] = Kv.Value;
+                    }
+                }
+
+                Words = Filtered;
+            }
+            else if (cscOnly)
+            {
+                // Intent: soft pinches use same-side CSC (LSL/RSR) only — LSR/RSL can loop ~2πR.
+                Dictionary<String, (Double T, Double P, Double Q)> Filtered =
+                    new Dictionary<String, (Double T, Double P, Double Q)>();
+                foreach (KeyValuePair<String, (Double T, Double P, Double Q)> Kv in Words)
+                {
+                    if ((Kv.Key == "LSL") || (Kv.Key == "RSR"))
+                    {
+                        Filtered[Kv.Key] = Kv.Value;
+                    }
+                }
+
+                Words = Filtered;
+            }
+
+            if (Words.Count == 0)
+            {
+                return null;
+            }
+
+            String BestTyp = String.Empty;
+            (Double T, Double P, Double Q) BestParams = default;
+            Double BestLen = Double.PositiveInfinity;
+            foreach (KeyValuePair<String, (Double T, Double P, Double Q)> Kv in Words)
+            {
+                Double Len = Kv.Value.T + Kv.Value.P + Kv.Value.Q;
+                if (Len < BestLen)
+                {
+                    BestLen = Len;
+                    BestTyp = Kv.Key;
+                    BestParams = Kv.Value;
+                }
+            }
+
+            List<(Double X, Double Y)> Pts = DubinsSample((sx, sy, stheta), radius, BestTyp, BestParams, sampleM);
+            if ((Pts.Count > 0) && (Dist(Pts[Pts.Count - 1], (ex, ey)) < 1e-6))
+            {
+                Pts.RemoveAt(Pts.Count - 1);
+            }
+
+            return Pts;
+        }
+
+        /// <summary>
+        /// Shortest Dubins CSC path for non-keyhole soft bends.
+        /// </summary>
+        /// <param name="sx">Start easting.</param>
+        /// <param name="sy">Start northing.</param>
+        /// <param name="stheta">Start math heading.</param>
+        /// <param name="ex">End easting.</param>
+        /// <param name="ey">End northing.</param>
+        /// <param name="etheta">End math heading.</param>
+        /// <param name="radius">Turn radius in metres.</param>
+        /// <returns>Intermediate waypoints, or null when no path exists.</returns>
+        static private List<(Double X, Double Y)>? DubinsCsc
+            (
+            Double sx,
+            Double sy,
+            Double stheta,
+            Double ex,
+            Double ey,
+            Double etheta,
+            Double radius
+            )
+        {
+            return DubinsShortest(
+                sx, sy, stheta, ex, ey, etheta, radius, Math.Max(radius / 8.0, 0.5), false, true);
+        }
+
+        /// <summary>
+        /// Polyline length in metres (including the start→first leg).
+        /// </summary>
+        /// <param name="start">Path start.</param>
+        /// <param name="pts">Intermediate waypoints.</param>
+        /// <returns>Total length in metres.</returns>
+        static private Double PolylineLengthM
+            (
+            (Double X, Double Y) start,
+            List<(Double X, Double Y)> pts
+            )
+        {
+            Double Len = 0.0;
+            (Double X, Double Y) Prev = start;
+            foreach ((Double X, Double Y) P in pts)
+            {
+                Len += Dist(Prev, P);
+                Prev = P;
+            }
+
+            return Len;
+        }
+
+        /// <summary>
+        /// Classic constant-R corner fillet tangent to inbound and outbound headings.
+        /// </summary>
+        /// <param name="corner">Apex (coverage corner).</param>
+        /// <param name="headingInDeg">Inbound compass heading.</param>
+        /// <param name="end">Next coverage point (along outbound).</param>
+        /// <param name="headingOutDeg">Outbound compass heading.</param>
+        /// <param name="turnRadiusM">Turn radius in metres.</param>
+        /// <param name="sampleM">Sample spacing in metres.</param>
+        /// <param name="inboundLenM">Length available on the inbound leg (A→corner).</param>
+        /// <param name="tangentIn">Inbound tangent point (caller should pin corner steering here).</param>
+        /// <returns>MOVE samples from after tangentIn through the arc to end, or null if the fillet will not fit.</returns>
+        static private List<(Double X, Double Y)>? ClassicCornerFillet
+            (
+            (Double X, Double Y) corner,
+            Double headingInDeg,
+            (Double X, Double Y) end,
+            Double headingOutDeg,
+            Double turnRadiusM,
+            Double sampleM,
+            Double inboundLenM,
+            out (Double X, Double Y) tangentIn
+            )
+        {
+            tangentIn = corner;
+            (Double X, Double Y) U = ForwardEn(headingInDeg);
+            (Double X, Double Y) V = ForwardEn(headingOutDeg);
+            Double Cross = (U.X * V.Y) - (U.Y * V.X);
+            Double Dot = Math.Max(-1.0, Math.Min(1.0, (U.X * V.X) + (U.Y * V.Y)));
+            Double Phi = Math.Atan2(Cross, Dot);
+            if (Math.Abs(Phi) < 1e-3)
+            {
+                return null;
+            }
+
+            // Intent: tangent length R·tan(φ/2); both legs must be long enough to host it.
+            Double Half = Math.Abs(Phi) * 0.5;
+            Double TanHalf = Math.Tan(Half);
+            if (TanHalf < 1e-9)
+            {
+                return null;
+            }
+
+            Double TangLen = turnRadiusM * TanHalf;
+            if ((inboundLenM < (TangLen - 1e-6)) || (Dist(corner, end) < (TangLen - 1e-6)))
+            {
+                return null;
+            }
+
+            tangentIn = (corner.X - (TangLen * U.X), corner.Y - (TangLen * U.Y));
+            (Double X, Double Y) TangentOut = (corner.X + (TangLen * V.X), corner.Y + (TangLen * V.Y));
+            Boolean Left = Phi > 0.0;
+            Double Rx = Left ? -U.Y : U.Y;
+            Double Ry = Left ? U.X : -U.X;
+            (Double X, Double Y) Center = (
+                tangentIn.X + (turnRadiusM * Rx),
+                tangentIn.Y + (turnRadiusM * Ry));
+            Double A0 = Math.Atan2(tangentIn.Y - Center.Y, tangentIn.X - Center.X);
+            Double A1 = Math.Atan2(TangentOut.Y - Center.Y, TangentOut.X - Center.X);
+            Double Sweep = A1 - A0;
+            if (Left)
+            {
+                while (Sweep < 0.0)
+                {
+                    Sweep += 2.0 * Math.PI;
+                }
+            }
+            else
+            {
+                while (Sweep > 0.0)
+                {
+                    Sweep -= 2.0 * Math.PI;
+                }
+            }
+
+            Double ArcLen = Math.Abs(Sweep) * turnRadiusM;
+            Double Step = Math.Max(sampleM, 1e-6);
+            Int32 N = Math.Max(4, (Int32)Math.Ceiling(ArcLen / Step));
+            List<(Double X, Double Y)> Pts = new List<(Double X, Double Y)>();
+            for (Int32 I = 1; I <= N; I += 1)
+            {
+                Double T = I / (Double)N;
+                Double A = A0 + (T * Sweep);
+                Pts.Add((Center.X + (turnRadiusM * Math.Cos(A)), Center.Y + (turnRadiusM * Math.Sin(A))));
+            }
+
+            // TangentOut → end is along outbound heading (no kink).
+            if (Dist(TangentOut, end) > 1e-6)
+            {
+                Pts.AddRange(SampleStraight(TangentOut, end, Step));
+            }
+
+            if ((Pts.Count > 0) && (Dist(Pts[Pts.Count - 1], end) < 1e-6))
+            {
+                Pts.RemoveAt(Pts.Count - 1);
+            }
+
+            return Pts;
+        }
+
+        /// <summary>
+        /// Last-resort same-side CSC when a classic corner fillet will not fit.
+        /// </summary>
+        /// <param name="start">Start point.</param>
+        /// <param name="headingInDeg">Inbound compass heading.</param>
+        /// <param name="end">End point.</param>
+        /// <param name="headingOutDeg">Outbound compass heading.</param>
+        /// <param name="turnRadiusM">Turn radius in metres.</param>
+        /// <param name="sampleM">Sample spacing in metres.</param>
+        /// <returns>Intermediate MOVE waypoints, or empty when no CSC word applies.</returns>
+        static private List<(Double X, Double Y)> SoftBendFillet
+            (
+            (Double X, Double Y) start,
+            Double headingInDeg,
+            (Double X, Double Y) end,
+            Double headingOutDeg,
+            Double turnRadiusM,
+            Double sampleM
+            )
+        {
+            // Intent: never SampleStraight here — a chord from the apex keeps the sharp bend.
+            Double St = CompassToMath(headingInDeg);
+            Double Et = CompassToMath(headingOutDeg);
+            List<(Double X, Double Y)>? Pts = DubinsShortest(
+                start.X, start.Y, St, end.X, end.Y, Et, turnRadiusM, sampleM, false, true);
+            if ((Pts != null) && (Pts.Count > 0))
+            {
+                return Pts;
+            }
+
+            return new List<(Double X, Double Y)>();
+        }
+
+        /// <summary>
+        /// Samples a straight segment (excluding the start point).
+        /// </summary>
+        static private List<(Double X, Double Y)> SampleStraight
+            (
+            (Double X, Double Y) p0,
+            (Double X, Double Y) p1,
+            Double step
+            )
+        {
+            Double D = Dist(p0, p1);
+            List<(Double X, Double Y)> Out = new List<(Double X, Double Y)>();
+            if (D < 1e-9)
+            {
+                return Out;
+            }
+
+            Int32 N = Math.Max(1, (Int32)Math.Ceiling(D / Math.Max(step, 1e-6)));
+            for (Int32 i = 1; i <= N; i += 1)
+            {
+                Double T = i / (Double)N;
+                Out.Add((p0.X + ((p1.X - p0.X) * T), p0.Y + ((p1.Y - p0.Y) * T)));
+            }
+
+            return Out;
+        }
+
+        /// <summary>
+        /// Unit forward vector (east, north) for a compass heading.
+        /// </summary>
+        /// <param name="headingDeg">Compass heading in degrees.</param>
+        /// <returns>Unit forward vector.</returns>
+        static private (Double X, Double Y) ForwardEn
+            (
+            Double headingDeg
+            )
+        {
+            Double Rad = DegreesToRadians(headingDeg);
+            return (Math.Sin(Rad), Math.Cos(Rad));
+        }
+
+        /// <summary>
+        /// Agricultural keyhole/bulb: shortest Dubins CCC (LRL/RLR) for a ~180° reverse.
+        /// </summary>
+        /// <param name="start">Start point.</param>
+        /// <param name="headingInDeg">Inbound compass heading.</param>
+        /// <param name="end">End point.</param>
+        /// <param name="headingOutDeg">Outbound compass heading.</param>
+        /// <param name="turnRadiusM">Turn radius in metres.</param>
+        /// <param name="sampleM">Sample spacing in metres.</param>
+        /// <returns>MOVE waypoints, or null when no CCC word applies.</returns>
+        static private List<(Double X, Double Y)>? KeyholeUTurn
+            (
+            (Double X, Double Y) start,
+            Double headingInDeg,
+            (Double X, Double Y) end,
+            Double headingOutDeg,
+            Double turnRadiusM,
+            Double sampleM
+            )
+        {
+            Double St = CompassToMath(headingInDeg);
+            Double Et = CompassToMath(headingOutDeg);
+            return DubinsShortest(start.X, start.Y, St, end.X, end.Y, Et, turnRadiusM, sampleM, true);
+        }
+
+        /// <summary>
+        /// If corner K starts a tight serpentine U-turn, returns the reverse-lane start index and heading.
+        /// </summary>
+        /// <param name="run">Contiguous blade-down run.</param>
+        /// <param name="cornerK">Interior corner index within the run.</param>
+        /// <param name="turnRadiusM">Minimum turn radius in metres.</param>
+        /// <returns>End index and outbound heading, or null when no reverse within 4R.</returns>
+        static private (Int32 EndK, Double HoutDeg)? FindUturnExit
+            (
+            List<RawPoint> run,
+            Int32 cornerK,
+            Double turnRadiusM
+            )
+        {
+            if ((cornerK < 1) || (cornerK >= (run.Count - 1)))
+            {
+                return null;
+            }
+
+            (Double X, Double Y) A = (run[cornerK - 1].Xs, run[cornerK - 1].Ys);
+            (Double X, Double Y) B = (run[cornerK].Xs, run[cornerK].Ys);
+            Double Hin = BearingDeg(A, B);
+            (Double X, Double Y) U = ForwardEn(Hin);
+            Double Along = 0.0;
+            Double MaxAlong = 4.0 * turnRadiusM;
+            for (Int32 M = cornerK; M < (run.Count - 1); M += 1)
+            {
+                (Double X, Double Y) P0 = (run[M].Xs, run[M].Ys);
+                (Double X, Double Y) P1 = (run[M + 1].Xs, run[M + 1].Ys);
+                if (M > cornerK)
+                {
+                    (Double X, Double Y) PrevPt = (run[M - 1].Xs, run[M - 1].Ys);
+                    Along += Dist(PrevPt, P0);
+                    if (Along > MaxAlong)
+                    {
+                        break;
+                    }
+                }
+
+                (Double X, Double Y) V = ForwardEn(BearingDeg(P0, P1));
+                // Intent: coalesce the whole reverse window (W), not only the next cell.
+                if (((U.X * V.X) + (U.Y * V.Y)) < -0.5)
+                {
+                    return (M, BearingDeg(P0, P1));
+                }
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// Builds an R-bounded blade-up path from a start pose to an end pose.
+        /// </summary>
+        /// <param name="start">Start point (coverage corner).</param>
+        /// <param name="headingInDeg">Inbound compass heading.</param>
+        /// <param name="end">End point (next coverage point).</param>
+        /// <param name="headingOutDeg">Outbound compass heading.</param>
+        /// <param name="turnRadiusM">Minimum turn radius in metres.</param>
+        /// <param name="sampleM">Nominal sample spacing in metres.</param>
+        /// <returns>Intermediate MOVE waypoints (excludes start; drops duplicate end).</returns>
+        static private List<(Double X, Double Y)> HeadlandMovePoints
+            (
+            (Double X, Double Y) start,
+            Double headingInDeg,
+            (Double X, Double Y) end,
+            Double headingOutDeg,
+            Double turnRadiusM,
+            Double sampleM
+            )
+        {
+            (Double X, Double Y) U = ForwardEn(headingInDeg);
+            (Double X, Double Y) V = ForwardEn(headingOutDeg);
+            Double St = CompassToMath(headingInDeg);
+            Double Et = CompassToMath(headingOutDeg);
+            // Near-reverse => CCC keyhole bulb (54°+~289°+54° style), not CSC 270°+270°.
+            if (((U.X * V.X) + (U.Y * V.Y)) < -0.5)
+            {
+                List<(Double X, Double Y)>? Key = DubinsShortest(
+                    start.X, start.Y, St, end.X, end.Y, Et, turnRadiusM, sampleM, true);
+                if ((Key != null) && (Key.Count > 0))
+                {
+                    return Key;
+                }
+
+                // Intent: never collapse a U-turn to a straight chord — try any Dubins word.
+                List<(Double X, Double Y)>? Any = DubinsShortest(
+                    start.X, start.Y, St, end.X, end.Y, Et, turnRadiusM, sampleM, false, false);
+                if ((Any != null) && (Any.Count > 0))
+                {
+                    return Any;
+                }
+            }
+
+            // Soft bend: same-side CSC (LSL/RSR); SoftBendFillet is last resort.
+            List<(Double X, Double Y)>? Pts = DubinsShortest(
+                start.X, start.Y, St, end.X, end.Y, Et, turnRadiusM, sampleM, false, true);
+            if ((Pts != null) && (Pts.Count > 0))
+            {
+                Double Chord = Dist(start, end);
+                Double Cap = (SOFT_BEND_MAX_HALF_TURNS * Math.PI * turnRadiusM) + Chord;
+                if (PolylineLengthM(start, Pts) <= Cap)
+                {
+                    return Pts;
+                }
+            }
+
+            return SoftBendFillet(start, headingInDeg, end, headingOutDeg, turnRadiusM, sampleM);
+        }
+
+        /// <summary>
+        /// True when the bend at b is tighter than the turning radius.
+        /// </summary>
+        /// <remarks>
+        /// Hard R bound applies to every real bend; <paramref name="turnThresholdDeg"/>
+        /// only sets a noise floor (at least 15°) so micro-wiggles are ignored.
+        /// </remarks>
+        /// <param name="a">Incoming waypoint.</param>
+        /// <param name="b">Apex waypoint.</param>
+        /// <param name="c">Outgoing waypoint.</param>
+        /// <param name="turnRadiusM">Minimum turn radius in metres.</param>
+        /// <param name="turnThresholdDeg">Caller turn threshold; noise floor is min(15°, this).</param>
+        /// <returns>True when the apex must be softened.</returns>
+        static private Boolean SteerViolatesMinRadius
+            (
+            (Double X, Double Y) a,
+            (Double X, Double Y) b,
+            (Double X, Double Y) c,
+            Double turnRadiusM,
+            Double turnThresholdDeg
+            )
+        {
+            // Intent: 40–60° pinches with r≪R must still get headlands (route-7 W).
+            Double NoiseFloor = Math.Min(15.0, turnThresholdDeg);
+            if (HeadingChangeDeg(a, b, c) < NoiseFloor)
+            {
+                return false;
+            }
+
+            return CircumRadiusM(a, b, c) < (turnRadiusM * 0.99);
+        }
+
+        /// <summary>
+        /// Inserts R-radius MOVE headlands wherever a blade-down corner is too sharp.
+        /// </summary>
+        /// <param name="raw">Assembled raw guidance records.</param>
+        /// <param name="turnRadiusM">Minimum turn radius in metres.</param>
+        /// <param name="turnThresholdDeg">Minimum heading change treated as a turn.</param>
+        /// <param name="sampleM">Arc sample spacing in metres.</param>
+        /// <returns>Track with MOVE arcs inserted; coverage raw coords preserved.</returns>
+        static private List<RawPoint> EnforceMinTurnRadius
+            (
+            List<RawPoint> raw,
+            Double turnRadiusM,
+            Double turnThresholdDeg,
+            Double sampleM
+            )
+        {
+            if ((turnRadiusM <= 0.0) || (raw.Count < 3))
+            {
+                return raw;
+            }
+
+            List<RawPoint> Out = new List<RawPoint>();
+            Int32 I = 0;
+            while (I < raw.Count)
+            {
+                RawPoint Cur0 = raw[I];
+                if (!IsBladeDown(Cur0.Action))
+                {
+                    Out.Add(Cur0);
+                    I += 1;
+                    continue;
+                }
+
+                // Contiguous blade-down run of one action (CUT / FILL / GRADE).
+                Int32 J = I;
+                while ((J + 1 < raw.Count) && (raw[J + 1].Action == Cur0.Action))
+                {
+                    J += 1;
+                }
+
+                List<RawPoint> Run = raw.GetRange(I, (J - I) + 1);
+                // Intent: check entry from prior blade-up (RETURN/MOVE/HAUL) into the first CUT.
+                if ((Out.Count > 0) && (Run.Count >= 2))
+                {
+                    RawPoint PrevUp = Out[Out.Count - 1];
+                    (Double X, Double Y) Pa0 = (PrevUp.Xs, PrevUp.Ys);
+                    (Double X, Double Y) Pb0 = (Run[0].Xs, Run[0].Ys);
+                    (Double X, Double Y) Pc0 = (Run[1].Xs, Run[1].Ys);
+                    if (SteerViolatesMinRadius(Pa0, Pb0, Pc0, turnRadiusM, turnThresholdDeg))
+                    {
+                        Double Hin0 = BearingDeg(Pa0, Pb0);
+                        Double Hout0 = BearingDeg(Pb0, Pc0);
+                        Double St0 = CompassToMath(Hin0);
+                        Double Et0 = CompassToMath(Hout0);
+                        List<(Double X, Double Y)>? Entry = HeadlandMovePoints(
+                            Pb0, Hin0, Pc0, Hout0, turnRadiusM, sampleM);
+                        Double Cap0 = 2.75 * Math.PI * turnRadiusM;
+                        if ((Entry == null) || (Entry.Count == 0) || (PolylineLengthM(Pb0, Entry) > Cap0))
+                        {
+                            Entry = DubinsShortest(
+                                Pb0.X, Pb0.Y, St0, Pc0.X, Pc0.Y, Et0, turnRadiusM, sampleM, false, false);
+                        }
+
+                        Out.Add(Run[0]);
+                        if ((Entry != null) && (Entry.Count > 0) && (PolylineLengthM(Pb0, Entry) <= Cap0))
+                        {
+                            foreach ((Double X, Double Y) M in Entry)
+                            {
+                                Out.Add(new RawPoint(M.X, M.Y, 0.0, MOVE, Run[0].PassNo, M.X, M.Y));
+                            }
+                        }
+                    }
+                    else
+                    {
+                        Out.Add(Run[0]);
+                    }
+                }
+                else
+                {
+                    Out.Add(Run[0]);
+                }
+
+                HashSet<Int32> SkipTurn = new HashSet<Int32>();
+                HashSet<Int32> CoalesceEmitted = new HashSet<Int32>();
+                for (Int32 K = 1; K < (Run.Count - 1); K += 1)
+                {
+                    RawPoint Prev = Run[K - 1];
+                    RawPoint Cur = Run[K];
+                    RawPoint Nxt = Run[K + 1];
+                    (Double X, Double Y) A = (Prev.Xs, Prev.Ys);
+                    (Double X, Double Y) B = (Cur.Xs, Cur.Ys);
+                    (Double X, Double Y) C = (Nxt.Xs, Nxt.Ys);
+                    if (SkipTurn.Contains(K))
+                    {
+                        // EndK still needs a real coverage/steering vertex; mid cells were pinned already.
+                        if (!CoalesceEmitted.Contains(K))
+                        {
+                            Out.Add(Cur);
+                        }
+
+                        continue;
+                    }
+
+                    Out.Add(Cur);
+                    if (!SteerViolatesMinRadius(A, B, C, turnRadiusM, turnThresholdDeg))
+                    {
+                        continue;
+                    }
+
+                    Double Hin = BearingDeg(A, B);
+                    (Int32 EndK, Double HoutDeg)? Uturn = FindUturnExit(Run, K, turnRadiusM);
+                    if (Uturn.HasValue)
+                    {
+                        // One readable keyhole for the full serpentine reverse.
+                        (Double X, Double Y) EndPt = (Run[Uturn.Value.EndK].Xs, Run[Uturn.Value.EndK].Ys);
+                        List<(Double X, Double Y)> KeyMoves = HeadlandMovePoints(
+                            B, Hin, EndPt, Uturn.Value.HoutDeg, turnRadiusM, sampleM);
+                        // Intent: never SkipTurn a reverse window if the keyhole builder produced nothing.
+                        if ((KeyMoves.Count > 0) || (Dist(B, EndPt) < 1e-3))
+                        {
+                            foreach ((Double X, Double Y) M in KeyMoves)
+                            {
+                                Out.Add(new RawPoint(M.X, M.Y, 0.0, MOVE, Cur.PassNo, M.X, M.Y));
+                            }
+
+                            for (Int32 S = K + 1; S < Uturn.Value.EndK; S += 1)
+                            {
+                                RawPoint Mid = Run[S];
+                                Out.Add(new RawPoint(
+                                    Mid.Xr, Mid.Yr, Mid.DepthM, Mid.Action, Mid.PassNo, EndPt.X, EndPt.Y));
+                                SkipTurn.Add(S);
+                                CoalesceEmitted.Add(S);
+                            }
+
+                            SkipTurn.Add(Uturn.Value.EndK);
+                            continue;
+                        }
+                    }
+
+                    Double Hout = BearingDeg(B, C);
+                    // Prefer a classic R fillet (short, tangent). If legs are too short for R,
+                    // skip Dubins bulbs — those create stacked loops when spacing ≪ 2R.
+                    (Double X, Double Y) TangentIn;
+                    List<(Double X, Double Y)>? Fillet = ClassicCornerFillet(
+                        B, Hin, C, Hout, turnRadiusM, sampleM, Dist(A, B), out TangentIn);
+                    if (Fillet != null)
+                    {
+                        Int32 Last = Out.Count - 1;
+                        RawPoint Apex = Out[Last];
+                        Out[Last] = new RawPoint(
+                            Apex.Xr, Apex.Yr, Apex.DepthM, Apex.Action, Apex.PassNo,
+                            TangentIn.X, TangentIn.Y);
+                        foreach ((Double X, Double Y) M in Fillet)
+                        {
+                            Out.Add(new RawPoint(M.X, M.Y, 0.0, MOVE, Cur.PassNo, M.X, M.Y));
+                        }
+                    }
+                    else if (HeadingChangeDeg(A, B, C) >= 60.0)
+                    {
+                        // Sharp dogleg: any Dubins word under one keyhole length (LSL/LSR/RSL/RSR/CCC).
+                        Double St = CompassToMath(Hin);
+                        Double Et = CompassToMath(Hout);
+                        List<(Double X, Double Y)>? Moves = HeadlandMovePoints(
+                            B, Hin, C, Hout, turnRadiusM, sampleM);
+                        Double Cap = 2.75 * Math.PI * turnRadiusM;
+                        if ((Moves == null) || (Moves.Count == 0) || (PolylineLengthM(B, Moves) > Cap))
+                        {
+                            Moves = DubinsShortest(
+                                B.X, B.Y, St, C.X, C.Y, Et, turnRadiusM, sampleM, false, false);
+                        }
+
+                        if ((Moves != null) && (Moves.Count > 0) && (PolylineLengthM(B, Moves) <= Cap))
+                        {
+                            foreach ((Double X, Double Y) M in Moves)
+                            {
+                                Out.Add(new RawPoint(M.X, M.Y, 0.0, MOVE, Cur.PassNo, M.X, M.Y));
+                            }
+                        }
+                    }
+                }
+
+                if (Run.Count > 1)
+                {
+                    Out.Add(Run[Run.Count - 1]);
+                }
+
+                I = J + 1;
+            }
+
+            // Intent: catch residual CUT/MOVE/CUT chords and soft pinches that still undercut R.
+            return RepairSharpSteeringBends(Out, turnRadiusM, sampleM);
+        }
+
+        /// <summary>
+        /// Replaces residual sharp splices with short R-bounded arcs (no CCC cascade).
+        /// </summary>
+        /// <remarks>
+        /// Blade-down apexes are kept (coverage floor); only blade-up residual
+        /// junctions may drop the apex and splice A→C. Interior MOVE samples of an
+        /// already-inserted headland are left alone.
+        /// </remarks>
+        /// <param name="raw">Track after the primary headland pass.</param>
+        /// <param name="turnRadiusM">Minimum turn radius in metres.</param>
+        /// <param name="sampleM">Arc sample spacing in metres.</param>
+        /// <returns>Repaired track.</returns>
+        static private List<RawPoint> RepairSharpSteeringBends
+            (
+            List<RawPoint> raw,
+            Double turnRadiusM,
+            Double sampleM
+            )
+        {
+            if ((raw.Count < 3) || (turnRadiusM <= 0.0))
+            {
+                return raw;
+            }
+
+            List<RawPoint> Cur = raw;
+            // Two sweeps: catch CUT↔MOVE chords without re-keyholing soft pinches into bulbs.
+            for (Int32 Sweep = 0; Sweep < 2; Sweep += 1)
+            {
+                List<RawPoint> Next = new List<RawPoint> { Cur[0] };
+                Boolean Changed = false;
+                Int32 I = 1;
+                while (I < (Cur.Count - 1))
+                {
+                    RawPoint A = Next[Next.Count - 1];
+                    RawPoint B = Cur[I];
+                    RawPoint C = Cur[I + 1];
+                    (Double X, Double Y) Pa = (A.Xs, A.Ys);
+                    (Double X, Double Y) Pb = (B.Xs, B.Ys);
+                    (Double X, Double Y) Pc = (C.Xs, C.Ys);
+
+                    // Intent: do not treat samples on an existing R-arc as new soft pinches.
+                    if ((A.Action == MOVE) && (B.Action == MOVE) && (C.Action == MOVE))
+                    {
+                        Next.Add(B);
+                        I += 1;
+                        continue;
+                    }
+
+                    if (!SteerViolatesMinRadius(Pa, Pb, Pc, turnRadiusM, 15.0))
+                    {
+                        Next.Add(B);
+                        I += 1;
+                        continue;
+                    }
+
+                    Changed = true;
+                    if (IsBladeDown(B.Action) && (A.Action == MOVE))
+                    {
+                        // Intent: keyhole exit — prefer classic fillet or short CSC; never a new CCC bulb.
+                        Double HinExit = BearingDeg(Pa, Pb);
+                        Double HoutExit = BearingDeg(Pb, Pc);
+                        (Double X, Double Y) TangentIn;
+                        List<(Double X, Double Y)>? Fillet = ClassicCornerFillet(
+                            Pb, HinExit, Pc, HoutExit, turnRadiusM, sampleM, Dist(Pa, Pb), out TangentIn);
+                        if (Fillet != null)
+                        {
+                            Next.Add(new RawPoint(
+                                B.Xr, B.Yr, B.DepthM, B.Action, B.PassNo, TangentIn.X, TangentIn.Y));
+                            foreach ((Double X, Double Y) M in Fillet)
+                            {
+                                Next.Add(new RawPoint(M.X, M.Y, 0.0, MOVE, B.PassNo, M.X, M.Y));
+                            }
+                        }
+                        else
+                        {
+                            Double St = CompassToMath(HinExit);
+                            Double Et = CompassToMath(HoutExit);
+                            List<(Double X, Double Y)>? Short = DubinsShortest(
+                                Pa.X, Pa.Y, St, Pc.X, Pc.Y, Et, turnRadiusM, sampleM, false, true);
+                            Double Cap = (SOFT_BEND_MAX_HALF_TURNS * Math.PI * turnRadiusM) + Dist(Pa, Pc);
+                            if ((Short != null) && (Short.Count > 0)
+                                && (PolylineLengthM(Pa, Short) <= Cap))
+                            {
+                                foreach ((Double X, Double Y) M in Short)
+                                {
+                                    Next.Add(new RawPoint(M.X, M.Y, 0.0, MOVE, B.PassNo, M.X, M.Y));
+                                }
+                            }
+
+                            Next.Add(B);
+                        }
+
+                        Next.Add(new RawPoint(C.Xr, C.Yr, C.DepthM, C.Action, C.PassNo, C.Xs, C.Ys));
+                        I += 2;
+                        continue;
+                    }
+
+                    if (IsBladeDown(B.Action))
+                    {
+                        // Soft CUT pinches: classic R fillet when it fits; else Dubins only for ≥90°.
+                        Next.Add(B);
+                        Double Hin = BearingDeg(Pa, Pb);
+                        Double Hout = BearingDeg(Pb, Pc);
+                        (Double X, Double Y) TangentIn;
+                        List<(Double X, Double Y)>? Fillet = ClassicCornerFillet(
+                            Pb, Hin, Pc, Hout, turnRadiusM, sampleM, Dist(Pa, Pb), out TangentIn);
+                        if (Fillet != null)
+                        {
+                            Int32 Last = Next.Count - 1;
+                            RawPoint Apex = Next[Last];
+                            Next[Last] = new RawPoint(
+                                Apex.Xr, Apex.Yr, Apex.DepthM, Apex.Action, Apex.PassNo,
+                                TangentIn.X, TangentIn.Y);
+                            foreach ((Double X, Double Y) M in Fillet)
+                            {
+                                Next.Add(new RawPoint(M.X, M.Y, 0.0, MOVE, B.PassNo, M.X, M.Y));
+                            }
+                        }
+                        else if (HeadingChangeDeg(Pa, Pb, Pc) >= 60.0)
+                        {
+                            List<(Double X, Double Y)> Moves = HeadlandMovePoints(
+                                Pb, Hin, Pc, Hout, turnRadiusM, sampleM);
+                            Double Cap = 2.75 * Math.PI * turnRadiusM;
+                            if ((Moves.Count > 0) && (PolylineLengthM(Pb, Moves) <= Cap))
+                            {
+                                foreach ((Double X, Double Y) M in Moves)
+                                {
+                                    Next.Add(new RawPoint(M.X, M.Y, 0.0, MOVE, B.PassNo, M.X, M.Y));
+                                }
+                            }
+                        }
+
+                        Next.Add(new RawPoint(C.Xr, C.Yr, C.DepthM, C.Action, C.PassNo, C.Xs, C.Ys));
+                        I += 2;
+                        continue;
+                    }
+
+                    // Blade-up residual (e.g. CUT→MOVE→CUT): drop apex; short CSC/fillet only.
+                    Double HinUp = BearingDeg(Pa, Pb);
+                    Double HoutUp = BearingDeg(Pb, Pc);
+                    Double StUp = CompassToMath(HinUp);
+                    Double EtUp = CompassToMath(HoutUp);
+                    List<(Double X, Double Y)>? ShortUp = DubinsShortest(
+                        Pa.X, Pa.Y, StUp, Pc.X, Pc.Y, EtUp, turnRadiusM, sampleM, false, true);
+                    Double CapUp = (SOFT_BEND_MAX_HALF_TURNS * Math.PI * turnRadiusM) + Dist(Pa, Pc);
+                    if ((ShortUp != null) && (ShortUp.Count > 0)
+                        && (PolylineLengthM(Pa, ShortUp) <= CapUp))
+                    {
+                        foreach ((Double X, Double Y) M in ShortUp)
+                        {
+                            Next.Add(new RawPoint(M.X, M.Y, 0.0, MOVE, B.PassNo, M.X, M.Y));
+                        }
+                    }
+
+                    Next.Add(new RawPoint(C.Xr, C.Yr, C.DepthM, C.Action, C.PassNo, C.Xs, C.Ys));
+                    I += 2;
+                }
+
+                if (I < Cur.Count)
+                {
+                    Next.Add(Cur[Cur.Count - 1]);
+                }
+
+                Cur = Next;
+                if (!Changed)
+                {
+                    break;
+                }
+            }
+
+            return Cur;
+        }
+
+        /// <summary>
+        /// True when the action is blade-down coverage (CUT/FILL/GRADE).
+        /// </summary>
+        /// <param name="action">Guidance action code.</param>
+        /// <returns>True for blade-down actions.</returns>
+        static private Boolean IsBladeDown
+            (
+            String action
+            )
+        {
+            return (action == CUT) || (action == FILL) || (action == GRADE);
         }
 
         /// <summary>

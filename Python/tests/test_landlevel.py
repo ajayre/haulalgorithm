@@ -396,3 +396,108 @@ def test_apply_exclusions_removes_block_and_exports(tmp_path):
                 assert not grid.valid[by, bx]
     # The polygon is stored for downstream routing/rendering.
     assert grid.exclusions and len(grid.exclusions[0]) >= 3
+
+
+# ---------------------------------------------------------------------------
+# Minimum turning-circle enforcement on guidance (§13.3a.3)
+# ---------------------------------------------------------------------------
+
+def _circumradius_m(a, b, c):
+    la = math.dist(b, c)
+    lb = math.dist(a, c)
+    lc = math.dist(a, b)
+    cross = abs(a[0] * (b[1] - c[1]) + b[0] * (c[1] - a[1]) + c[0] * (a[1] - b[1]))
+    if cross < 1e-9:
+        return float("inf")
+    return (la * lb * lc) / (2.0 * cross)
+
+
+def _heading_change_deg(a, b, c):
+    dx1, dy1 = b[0] - a[0], b[1] - a[1]
+    dx2, dy2 = c[0] - b[0], c[1] - b[1]
+    return abs(math.degrees(math.atan2(dx1 * dy2 - dy1 * dx2, dx1 * dx2 + dy1 * dy2)))
+
+
+def _assert_steering_respects_turn_radius(points, turn_radius_m, turn_threshold_deg=60.0):
+    """Full steering polyline bends above the noise floor must have circumradius >= R."""
+    noise = turn_threshold_deg
+    skip = {"START", "END", "RETURN", "HAUL"}
+    coords = [(p.x, p.y, p.action) for p in points]
+    for k in range(1, len(coords) - 1):
+        if coords[k - 1][2] in skip or coords[k][2] in skip or coords[k + 1][2] in skip:
+            continue
+        a, b, c = coords[k - 1][:2], coords[k][:2], coords[k + 1][:2]
+        if math.dist(a, b) < 1e-6 or math.dist(b, c) < 1e-6:
+            continue
+        if _heading_change_deg(a, b, c) < noise:
+            continue
+        r = _circumradius_m(a, b, c)
+        assert r >= turn_radius_m * 0.98, (
+            f"undrivable {coords[k - 1][2]}->{coords[k][2]}->{coords[k + 1][2]} "
+            f"bend radius={r:.3f}m < R={turn_radius_m:.3f}m at ({b[0]:.2f},{b[1]:.2f})"
+        )
+
+
+def test_enforce_min_turn_radius_inserts_move_on_hairpin():
+    from landlevel import DEFAULT_TURNING_CIRCLE_FT, FEET_TO_METERS
+    from landlevel.swaths import _enforce_min_turn_radius, _keyhole_u_turn, CUT, MOVE
+
+    R = DEFAULT_TURNING_CIRCLE_FT * 0.5 * FEET_TO_METERS
+    # Two parallel lanes 2 m apart with a sharp U-turn (spacing << 2R).
+    raw = [
+        (0.0, 0.0, 0.05, CUT, 1, 0.0, 0.0),
+        (10.0, 0.0, 0.05, CUT, 1, 10.0, 0.0),
+        (20.0, 0.0, 0.05, CUT, 1, 20.0, 0.0),
+        (20.0, 2.0, 0.05, CUT, 1, 20.0, 2.0),
+        (10.0, 2.0, 0.05, CUT, 1, 10.0, 2.0),
+        (0.0, 2.0, 0.05, CUT, 1, 0.0, 2.0),
+    ]
+    out = _enforce_min_turn_radius(raw, R, 60.0, 1.0)
+    assert any(p[3] == MOVE for p in out)
+    assert sum(1 for p in out if p[3] == CUT) == 6
+    # Steering path on the full emitted polyline must respect R for blade-down runs.
+    class _P:
+        def __init__(self, x, y, action):
+            self.x, self.y, self.action = x, y, action
+
+    pts = [_P(p[5], p[6], p[3]) for p in out]
+    _assert_steering_respects_turn_radius(pts, R)
+
+    # Keyhole CCC must be compact — far shorter than a ~540 deg (3 pi R) wander.
+    key = _keyhole_u_turn((20.0, 0.0), 90.0, (20.0, 2.0), 270.0, R, 1.0)
+    assert key is not None and len(key) >= 3
+    full = [(20.0, 0.0)] + key + [(20.0, 2.0)]
+    path_len = sum(
+        ((full[i][0] - full[i + 1][0]) ** 2 + (full[i][1] - full[i + 1][1]) ** 2) ** 0.5
+        for i in range(len(full) - 1)
+    )
+    assert path_len < (2.75 * math.pi * R)
+
+
+def test_guidance_respects_turning_circle(tmp_path):
+    from landlevel import DEFAULT_TURNING_CIRCLE_FT, FEET_TO_METERS
+
+    _grid, _route, g = _guidance_for_ramp(tmp_path)
+    R = DEFAULT_TURNING_CIRCLE_FT * 0.5 * FEET_TO_METERS
+    _assert_steering_respects_turn_radius(g.points, R, turn_threshold_deg=120.0)
+    # Coverage floor still holds after headland insertion.
+    assert g.cut_dist_m >= g.planned_cut_dist_m - 1e-6
+    assert g.fill_dist_m >= g.planned_fill_dist_m - 1e-6
+
+
+def test_guidance_respects_turning_circle_without_smoothing(tmp_path):
+    from landlevel import DEFAULT_TURNING_CIRCLE_FT, FEET_TO_METERS
+
+    agd = tmp_path / "nosmooth.agd"
+    _write_agd(agd, _ramp_field(with_boundary=False), with_boundary=False)
+    field = parse_agd_file(agd)
+    grid = build_grid(field, grid_size_ft=15.0)
+    flow = compute_flow_field(grid, mode="poisson")
+    strips = trace_strips(grid, flow)
+    result = generate_passes(grid, strips, tolerance_mm=10.0, max_load_bcy=15.38,
+                             heading_deg=90.0, heading_strength=0.5)
+    route = sequence_passes(result.passes)
+    g = build_guidance(grid, field, route, blade_width_mm=2271.0, heading_deg=90.0,
+                       smooth_route=False)
+    R = DEFAULT_TURNING_CIRCLE_FT * 0.5 * FEET_TO_METERS
+    _assert_steering_respects_turn_radius(g.points, R, turn_threshold_deg=120.0)

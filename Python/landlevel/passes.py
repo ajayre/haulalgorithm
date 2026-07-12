@@ -257,19 +257,24 @@ def generate_passes(
         # load and the next remaining cut pocket is within an economical hop,
         # drive there (blade up) and keep cutting, rather than hauling a partial
         # load and leaving a near-empty job for a future pass.
+        # Cells bitten earlier in this load are never re-entered: leftover depth
+        # on deep cells waits for a later pass (no undriveable hop-back restack).
         cut_cells: List[Tuple[Cell, float]] = []
         load = 0.0
         seed = anchor
+        cut_consumed: set = set()
         while load < load_cap - 1e-9:
             if fxs is not None:
                 cells, got = _grow_flow_tube(led.remaining_cut, led.max_depth_m, tol_m,
                                              seed, load_cap - load, cut_per_m, W, H,
                                              fxs, fys, grid.valid, signs=(-1.0,),
-                                             max_gap_cells=prune_gap_cells)
+                                             max_gap_cells=prune_gap_cells,
+                                             consumed=cut_consumed)
             else:
                 cells, got = _grow_region(led.remaining_cut, led.max_depth_m, tol_m,
                                           seed, load_cap - load, cut_per_m, W, H,
-                                          heading_uv=strip_uv, strip_bias=strip_bias)
+                                          heading_uv=strip_uv, strip_bias=strip_bias,
+                                          consumed=cut_consumed)
             if cells:
                 cut_cells.extend(cells)
                 load += got
@@ -282,7 +287,7 @@ def generate_passes(
             last_xy = (grid.cell_center_xy(*cells[-1][0]) if cells
                        else grid.cell_center_xy(*seed))
             nxt = _nearest_remaining(last_xy, ctree, cut_xy, cut_idx,
-                                     led.remaining_cut, tol_m)
+                                     led.remaining_cut, tol_m, skip=cut_consumed)
             if nxt is None or nxt[1] > max_drop_hop_m:
                 break
             seed = nxt[0]
@@ -302,16 +307,19 @@ def generate_passes(
         fseed = _streamline_fill_seed(cut_centroid)
         if fseed is None:
             fseed = _choose_fill_seed(fill_xy, fill_idx, cut_centroid, hvec, k_head, have_kd)
+        fill_consumed: set = set()
         while placed < load - 1e-9:
             if fxs is not None:
                 cells, got = _grow_flow_tube(led.remaining_fill, led.max_depth_m, tol_m,
                                              fseed, load - placed, fill_per_m, W, H,
                                              fxs, fys, grid.valid, signs=(1.0,),
-                                             max_gap_cells=prune_gap_cells)
+                                             max_gap_cells=prune_gap_cells,
+                                             consumed=fill_consumed)
             else:
                 cells, got = _grow_region(led.remaining_fill, led.max_depth_m, tol_m,
                                           fseed, load - placed, fill_per_m, W, H,
-                                          heading_uv=strip_uv, strip_bias=strip_bias)
+                                          heading_uv=strip_uv, strip_bias=strip_bias,
+                                          consumed=fill_consumed)
             if cells:
                 fill_cells.extend(cells)
                 placed += got
@@ -320,7 +328,7 @@ def generate_passes(
             last_xy = (grid.cell_center_xy(*cells[-1][0]) if cells
                        else grid.cell_center_xy(*fseed))
             nxt = _nearest_remaining(last_xy, ftree, fill_xy, fill_idx,
-                                     led.remaining_fill, tol_m)
+                                     led.remaining_fill, tol_m, skip=fill_consumed)
             if nxt is None or nxt[1] > max_drop_hop_m:
                 break
             fseed = nxt[0]
@@ -372,32 +380,50 @@ def _cell_centers(grid: Grid) -> np.ndarray:
     return np.stack([gx, gy], axis=-1)
 
 
-def _nearest_remaining(query_xy, tree, xy_arr, idx_arr, remaining, tol, k: int = 24):
+def _nearest_remaining(query_xy, tree, xy_arr, idx_arr, remaining, tol, k: int = 24,
+                       skip=None):
     """Nearest cell to ``query_xy`` that still holds material (> tol).
 
     Returns ``((bx, by), distance_m)`` or ``None``. Used to find the next pocket
     a multi-drop pass should hop to. With a KD-tree we only inspect the ``k``
-    nearest candidates (cells consumed earlier this pass are skipped); if all of
-    them are spent the next pocket is far away, so we report no economical hop.
+    nearest candidates (cells consumed earlier this pass are skipped via
+    ``skip``); if all of them are spent the next pocket is far away, so we
+    report no economical hop. Equidistant ties break on ``(by, bx)`` so C#
+    nanoflann and SciPy agree.
     """
     n = int(xy_arr.shape[0])
     if n == 0:
         return None
+    best = None  # ((bx, by), dist)
     if tree is not None:
         kk = min(k, n)
         d, ii = tree.query(query_xy, k=kk)
         for dist, j in zip(np.atleast_1d(d), np.atleast_1d(ii)):
             by, bx = int(idx_arr[j, 0]), int(idx_arr[j, 1])
-            if remaining[by, bx] > tol:
-                return (bx, by), float(dist)
-        return None
+            if remaining[by, bx] <= tol:
+                continue
+            if skip is not None and (bx, by) in skip:
+                continue
+            dist_f = float(dist)
+            if (best is None
+                    or dist_f < best[1] - 1e-12
+                    or (abs(dist_f - best[1]) <= 1e-12 and (by, bx) < (best[0][1], best[0][0]))):
+                best = ((bx, by), dist_f)
+        return best
     diff = xy_arr - np.asarray(query_xy)
     order = np.argsort(diff[:, 0] ** 2 + diff[:, 1] ** 2)
     for j in order:
         by, bx = int(idx_arr[j, 0]), int(idx_arr[j, 1])
-        if remaining[by, bx] > tol:
-            return (bx, by), float(math.hypot(diff[j, 0], diff[j, 1]))
-    return None
+        if remaining[by, bx] <= tol:
+            continue
+        if skip is not None and (bx, by) in skip:
+            continue
+        dist_f = float(math.hypot(diff[j, 0], diff[j, 1]))
+        if (best is None
+                or dist_f < best[1] - 1e-12
+                or (abs(dist_f - best[1]) <= 1e-12 and (by, bx) < (best[0][1], best[0][0]))):
+            best = ((bx, by), dist_f)
+    return best
 
 
 def _anchor_bruteforce(cut_xy: np.ndarray, fill_xy: np.ndarray) -> int:
@@ -448,13 +474,16 @@ def _choose_fill_seed(fill_xy, fill_idx, cut_centroid, hvec, k_head, have_kd):
 
 
 def _grow_region(remaining, max_depth, tol, seed_cell, target_bcy, per_m, width, height,
-                 heading_uv=None, strip_bias=1.0):
+                 heading_uv=None, strip_bias=1.0, consumed=None):
     """Region-grow a contiguous patch of material around ``seed_cell``.
 
     Cells are consumed in best-first order of a distance-from-seed key, expanding
     only through cells that still hold material (>tol) so the patch stays a single
     connected run. Each cell yields at most ``max_depth`` (one 61 mm layer). Stops
     at ``target_bcy`` or when the connected material around the seed is exhausted.
+
+    ``consumed`` is a shared set for the whole cut/fill multi-drop phase: cells
+    bitten earlier this load are skipped so leftover depth waits for a later pass.
 
     Shape control: with the default isotropic key (``strip_bias == 1`` or no
     heading) the key is squared Euclidean distance, giving a **compact blob**.
@@ -482,6 +511,8 @@ def _grow_region(remaining, max_depth, tol, seed_cell, target_bcy, per_m, width,
         ux, uy = heading_uv
         vx, vy = uy, -ux  # perpendicular to the heading (rotate -90 deg)
     visited = set()
+    if consumed is None:
+        consumed = set()
     used: List[Tuple[Cell, float]] = []
     acc = 0.0
     cnt = 0
@@ -491,6 +522,8 @@ def _grow_region(remaining, max_depth, tol, seed_cell, target_bcy, per_m, width,
         if (x, y) in visited:
             continue
         visited.add((x, y))
+        if (x, y) in consumed:
+            continue
         rem = remaining[y, x]
         if rem <= tol:
             continue  # empty: don't consume, don't expand through (keeps patch tight)
@@ -502,6 +535,7 @@ def _grow_region(remaining, max_depth, tol, seed_cell, target_bcy, per_m, width,
         remaining[y, x] -= depth
         acc += bcy
         used.append(((x, y), depth))
+        consumed.add((x, y))
         for dx in (-1, 0, 1):
             for dy in (-1, 0, 1):
                 if dx == 0 and dy == 0:
@@ -590,13 +624,18 @@ def _grow_flow_tube(remaining, max_depth, tol, seed_cell, target_bcy, per_m,
                     width, height, fxs, fys, valid, step: float = 0.5,
                     max_steps: int = 4000, miss_gap: int = 4,
                     signs: Tuple[float, ...] = (1.0, -1.0),
-                    max_gap_cells: Optional[float] = None):
+                    max_gap_cells: Optional[float] = None,
+                    consumed=None):
     """Consume one load along the *curving streamline* through ``seed_cell``.
 
     Integrates the smoothed flow, taking one ``max_depth`` layer from each cell
     that still holds material, giving one long continuous blade-wide lane that
     re-steers with the curving flow - the natural continuous pass for a scraper
     working with the grain.
+
+    ``consumed`` is shared across multi-drop tubes in the same cut/fill phase so
+    a cell is bitten at most once per load; deeper remainder waits for a later
+    pass instead of an undriveable hop-back restack.
 
     ``signs`` selects which way(s) to follow the streamline from the seed:
 
@@ -614,7 +653,8 @@ def _grow_flow_tube(remaining, max_depth, tol, seed_cell, target_bcy, per_m,
     nearest-neighbour re-chaining. Assumes the grid is ~one blade wide.
     """
     sx, sy = seed_cell
-    consumed: set = set()
+    if consumed is None:
+        consumed = set()
     acc = 0.0
 
     def consume(bx: int, by: int, bucket: List[Tuple[Cell, float]]) -> bool:

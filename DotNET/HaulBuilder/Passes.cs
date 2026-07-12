@@ -315,6 +315,9 @@ namespace HaulBuilder
                 List<((Int32 Bx, Int32 By) Cell, Double DepthM)> CutPatch = new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>();
                 Double Loaded = 0.0;
                 (Int32 Bx, Int32 By) Seed = Anchor;
+                // One consume stamp for the whole cut multi-drop: never re-enter a
+                // cell already bitten this load (deep remainder waits for a later pass).
+                Context.BeginPhase();
                 while (Loaded < (LoadCap - 1e-9))
                 {
                     (List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Cells, Double Got) Result;
@@ -353,7 +356,8 @@ namespace HaulBuilder
                             StripUv,
                             StripBias,
                             Tracker,
-                            IsFill: false);
+                            IsFill: false,
+                            Context);
                     }
 
                     if (Result.Cells.Count > 0)
@@ -373,7 +377,7 @@ namespace HaulBuilder
                     }
 
                     (Double X, Double Y) LastXy = (Result.Cells.Count > 0) ? Grid.CellCenterXy(Result.Cells[Result.Cells.Count - 1].Cell.Bx, Result.Cells[Result.Cells.Count - 1].Cell.By) : Grid.CellCenterXy(Seed.Bx, Seed.By);
-                    ((Int32 Bx, Int32 By) Cell, Double Dist)? Next = NearestRemaining(LastXy, CutIndex, Ledger.RemainingCut, Ledger.Tol);
+                    ((Int32 Bx, Int32 By) Cell, Double Dist)? Next = NearestRemaining(LastXy, CutIndex, Ledger.RemainingCut, Ledger.Tol, Context);
                     if (!Next.HasValue || (Next.Value.Dist > MaxDropHopM))
                     {
                         break;
@@ -415,6 +419,8 @@ namespace HaulBuilder
                 List<((Int32 Bx, Int32 By) Cell, Double DepthM)> FillPatch = new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>();
                 Double Placed = 0.0;
                 (Int32 Bx, Int32 By) FillSeedValue = FillSeed.Value;
+                // Fresh stamp for fill multi-drop so cut-phase marks do not block dump cells.
+                Context.BeginPhase();
                 while (Placed < (Loaded - 1e-9))
                 {
                     (List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Cells, Double Got) Result;
@@ -453,7 +459,8 @@ namespace HaulBuilder
                             StripUv,
                             StripBias,
                             Tracker,
-                            IsFill: true);
+                            IsFill: true,
+                            Context);
                     }
 
                     if (Result.Cells.Count > 0)
@@ -468,7 +475,7 @@ namespace HaulBuilder
                     }
 
                     (Double X, Double Y) LastXy = (Result.Cells.Count > 0) ? Grid.CellCenterXy(Result.Cells[Result.Cells.Count - 1].Cell.Bx, Result.Cells[Result.Cells.Count - 1].Cell.By) : Grid.CellCenterXy(FillSeedValue.Bx, FillSeedValue.By);
-                    ((Int32 Bx, Int32 By) Cell, Double Dist)? Next = NearestRemaining(LastXy, FillIndex, Ledger.RemainingFill, Ledger.Tol);
+                    ((Int32 Bx, Int32 By) Cell, Double Dist)? Next = NearestRemaining(LastXy, FillIndex, Ledger.RemainingFill, Ledger.Tol, Context);
                     if (!Next.HasValue || (Next.Value.Dist > MaxDropHopM))
                     {
                         break;
@@ -554,6 +561,9 @@ namespace HaulBuilder
         /// <param name="Height">Grid height.</param>
         /// <param name="HeadingUv">Optional strip heading unit vector.</param>
         /// <param name="StripBias">Perpendicular penalty.</param>
+        /// <param name="Tracker">Optional active-cell tracker.</param>
+        /// <param name="IsFill">True when consuming fill ledger cells.</param>
+        /// <param name="Context">Pass-phase consume stamp (blocks re-entry this load).</param>
         /// <returns>Consumed cells and BCY.</returns>
         static private (List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Cells, Double Got) GrowRegion
             (
@@ -568,7 +578,8 @@ namespace HaulBuilder
             (Double Ux, Double Uy)? HeadingUv,
             Double StripBias,
             _ActiveTracker? Tracker = null,
-            Boolean IsFill = false
+            Boolean IsFill = false,
+            _PassContext? Context = null
             )
         {
             // Best-first contiguous expansion matches Python region grow behavior.
@@ -593,6 +604,12 @@ namespace HaulBuilder
                 }
 
                 Visited.Add((Entry.X, Entry.Y));
+                // Skip cells already bitten earlier in this cut/fill multi-drop phase.
+                if ((Context is not null) && Context.AlreadyConsumed(Entry.X, Entry.Y))
+                {
+                    continue;
+                }
+
                 Double Rem = Remaining[Entry.Y, Entry.X];
                 if (Rem <= Tol)
                 {
@@ -622,6 +639,7 @@ namespace HaulBuilder
 
                 Acc += Bcy;
                 Used.Add(((Entry.X, Entry.Y), Depth));
+                Context?.MarkConsumed(Entry.X, Entry.Y);
 
                 for (Int32 Dx = -1; Dx <= 1; Dx += 1)
                 {
@@ -695,9 +713,10 @@ namespace HaulBuilder
             }
 
             // Streamline integration keeps flow-aligned passes as one continuous lane.
+            // Consume stamps persist across multi-drop tubes in this phase (BeginPhase
+            // was already called); do not reset here or deep cells get re-bitten undrivably.
             Int32 Sx = SeedCell.Bx;
             Int32 Sy = SeedCell.By;
-            Context?.BeginTube();
             Double Acc = 0.0;
             List<((Int32 Bx, Int32 By) Cell, Double DepthM)> SeedEntry = new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>();
 
@@ -1189,8 +1208,10 @@ namespace HaulBuilder
             {
                 if (CutListDirty)
                 {
+                    // Match Python np.argwhere row-major order (by, then bx) so
+                    // anchor ties and KD batch queries stay deterministic.
                     CutList.Clear();
-                    CutList.AddRange(Cut);
+                    CutList.AddRange(Cut.OrderBy(Cell => Cell.By).ThenBy(Cell => Cell.Bx));
                     CutListDirty = false;
                 }
 
@@ -1204,7 +1225,7 @@ namespace HaulBuilder
                 if (FillListDirty)
                 {
                     FillList.Clear();
-                    FillList.AddRange(Fill);
+                    FillList.AddRange(Fill.OrderBy(Cell => Cell.By).ThenBy(Cell => Cell.Bx));
                     FillListDirty = false;
                 }
 
@@ -1268,12 +1289,16 @@ namespace HaulBuilder
         }
 
         /// <summary>
-        /// Reusable per-run scratch state for flow-tube growth.
+        /// Reusable per-pass scratch state for flow-tube and region growth.
         /// </summary>
         private sealed class _PassContext
         {
             private readonly Int32[,] _ConsumeStamp;
 
+            /// <summary>
+            /// Allocates a consume-stamp grid matching the plan grid.
+            /// </summary>
+            /// <param name="grid">Grid whose dimensions size the stamp array.</param>
             public _PassContext
                 (
                 Grid grid
@@ -1282,12 +1307,20 @@ namespace HaulBuilder
                 _ConsumeStamp = new Int32[grid.Height, grid.Width];
             }
 
+            /// <summary>
+            /// Gets the active phase stamp id used by <see cref="AlreadyConsumed"/>.
+            /// </summary>
             public Int32 ConsumeStampId { get; private set; }
 
-            public void BeginTube
+            /// <summary>
+            /// Starts a new cut or fill multi-drop phase so prior marks do not block the next.
+            /// </summary>
+            public void BeginPhase
                 (
                 )
             {
+                // Intent: one stamp covers every tube/region hop in the phase so a cell
+                // can contribute at most one max-depth bite per load (no hop-back restack).
                 ConsumeStampId += 1;
                 if (ConsumeStampId == Int32.MaxValue)
                 {
@@ -1296,6 +1329,12 @@ namespace HaulBuilder
                 }
             }
 
+            /// <summary>
+            /// Returns whether <paramref name="bx"/>,<paramref name="by"/> was already bitten this phase.
+            /// </summary>
+            /// <param name="bx">Cell column.</param>
+            /// <param name="by">Cell row.</param>
+            /// <returns>True when already consumed under the current phase stamp.</returns>
             public Boolean AlreadyConsumed
                 (
                 Int32 bx,
@@ -1305,6 +1344,11 @@ namespace HaulBuilder
                 return _ConsumeStamp[by, bx] == ConsumeStampId;
             }
 
+            /// <summary>
+            /// Marks <paramref name="bx"/>,<paramref name="by"/> as consumed for the current phase.
+            /// </summary>
+            /// <param name="bx">Cell column.</param>
+            /// <param name="by">Cell row.</param>
             public void MarkConsumed
                 (
                 Int32 bx,
@@ -1360,12 +1404,23 @@ namespace HaulBuilder
             return BestPick;
         }
 
+        /// <summary>
+        /// Finds the nearest remaining material cell to a query point.
+        /// </summary>
+        /// <param name="Query">Query coordinate.</param>
+        /// <param name="Index">KD index of candidate cells.</param>
+        /// <param name="Remaining">Remaining depth matrix.</param>
+        /// <param name="Tol">Depth tolerance.</param>
+        /// <param name="Context">Optional phase stamp; skips cells already bitten this load.</param>
+        /// <param name="K">Max KD neighbors to inspect.</param>
+        /// <returns>Nearest remaining cell and distance, or null.</returns>
         static private ((Int32 Bx, Int32 By) Cell, Double Dist)? NearestRemaining
             (
             (Double X, Double Y) Query,
             CellKdIndex Index,
             Double[,] Remaining,
             Double Tol,
+            _PassContext? Context = null,
             Int32 K = 24
             )
         {
@@ -1375,19 +1430,41 @@ namespace HaulBuilder
                 PassProfiler.NearestRemainingCalls += 1;
             }
 
-            // Match Python _nearest_remaining: only inspect the k nearest active pockets.
+            // Inspect the k nearest active pockets; skip cells already consumed this
+            // phase so multi-drop hops to a *new* pocket, not a hop-back restack.
+            // On equal distance prefer (by, bx) so scipy vs nanoflann tie order agrees.
+            const Double DistTieEps = 1e-12;
+            Boolean HaveBest = false;
+            (Int32 Bx, Int32 By) BestCell = default;
+            Double BestDist = 0.0;
             foreach ((Int32 NodeIndex, Double DistSq) in Index.Nearest(Query.X, Query.Y, K))
             {
                 (Int32 Bx, Int32 By) Cell = Index.CellAt(NodeIndex);
-                if (Remaining[Cell.By, Cell.Bx] > Tol)
+                if (Remaining[Cell.By, Cell.Bx] <= Tol)
                 {
-                    PassProfiler.AddTicks(ref PassProfiler.NearestRemainingTicks, QueryStart);
-                    return (Cell, Math.Sqrt(DistSq));
+                    continue;
+                }
+
+                if ((Context is not null) && Context.AlreadyConsumed(Cell.Bx, Cell.By))
+                {
+                    continue;
+                }
+
+                Double Dist = Math.Sqrt(DistSq);
+                if (!HaveBest
+                    || (Dist < (BestDist - DistTieEps))
+                    || ((Math.Abs(Dist - BestDist) <= DistTieEps)
+                        && ((Cell.By < BestCell.By)
+                            || ((Cell.By == BestCell.By) && (Cell.Bx < BestCell.Bx)))))
+                {
+                    HaveBest = true;
+                    BestCell = Cell;
+                    BestDist = Dist;
                 }
             }
 
             PassProfiler.AddTicks(ref PassProfiler.NearestRemainingTicks, QueryStart);
-            return null;
+            return HaveBest ? (BestCell, BestDist) : null;
         }
 
         static private Double FlowHeading
