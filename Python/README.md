@@ -162,16 +162,16 @@ from spec §6.2–§6.4.
 
 | Option | Default | Meaning |
 |---|---|---|
-| `--grid-size-ft` | 7.5 | square area (cell) edge length in feet (≈ one blade width, so each load is one blade-wide lane; use 15 to match an OptiHaul coarse grid) |
+| `--grid-size-ft` | 8.5 | square area (cell) edge length in feet (matches default blade width, so each load is one blade-wide lane; use 15 to match an OptiHaul coarse grid) |
 | `--tolerance-mm` | 10 | finished-area elevation tolerance (cells within this of grade are "on grade") |
 | `--scraper-capacity-lcy` | 20 | scraper capacity in **LCY**; per-pass bank limit = value ÷ swell ≈ 15.4 BCY |
 | `--swell-factor` | 1.3 | `LCY = BCY × swell` (loose soil is bulkier than bank soil) |
 | `--cutfill-ratio`, `--compaction` | 1.2 | bank cut volume needed per bank fill volume (compaction allowance) |
 | `--max-depth-mm` | 61 | max cut/fill depth per area per pass (0.2 ft) |
-| `--blade-width-mm` | 2271 | scraper blade/cut width (the tandem 7 ft + 10 ft scrapers have an ≈ 8.5 ft volume-weighted effective width — pass `2590.8` to model that) |
+| `--blade-width-mm` | 2590.8 | scraper blade/cut width (8.5 ft tandem volume-weighted effective width) |
 | `--strip-bias` | 50 | grow each load's cut/fill as one long blade-wide lane along the heading (≈ the lane length in cells chased before stepping sideways; 1 = compact blob) |
 | `--max-drop-hop-ft` | 100 | multi-drop: how far the scraper drives (blade up) to the next cut/fill pocket to keep loading/spreading the same load instead of ending a pass part-full (0 disables multi-drop) |
-| `--min-load-fill` | 90 | % of capacity at which multi-drop stops chasing more pockets, so the load stays a single clean lane instead of a U-turn blob; `100` = chase every load to full |
+| `--min-load-fill` | 80 | % of capacity at which multi-drop stops chasing more pockets, so the load stays a single clean lane instead of a U-turn blob; `100` = chase every load to full |
 
 ### Haul behaviour
 
@@ -217,7 +217,7 @@ grade/compact return pass, and the turn-aware sequencing.
 | `--no-route-smoothing` | off | emit raw grid-stepped guidance waypoints instead of smoothing each cut/fill sweep's displayed line into a drivable curve (corner radius tied to the turning circle). Smoothing is display-only: it never changes distance/turn/time |
 | `--no-knot-repair` | off | leave undriveable "knot" sweeps as-is. By default each cut/fill sweep that is still a tangled knot is re-profiled into **boustrophedon** parallel back-and-forth lanes (only when that strictly reduces hairpins); the load, haul, cells and finished surface are unchanged — only the in-patch path |
 | `--no-direction-aware` | off | disable direction-aware sequencing (turn-into-cut penalty); fall back to pure deadhead-distance ordering + 2-opt |
-| `--reorder-window` | 0 (off) | after sequencing, refine the pass order with a windowed relocation local search: walk the passes one at a time and relocate each within a window of N nearby passes whenever it lowers the overall time (return drive + turn-into-cut). Relocation never reverses a run, so it is safe with the direction-aware turn cost where 2-opt is not, and it never increases time. Disabled by default; a typical value is 50 |
+| `--reorder-window` | 50 | after sequencing, refine the pass order with a windowed relocation local search: walk the passes one at a time and relocate each within a window of N nearby passes whenever it lowers the overall time (return drive + turn-into-cut). Relocation never reverses a run, so it is safe with the direction-aware turn cost where 2-opt is not, and it never increases time. Default 50; set 0 to disable |
 | `--lane-overlap` | 0.0 | 0–0.9: fractional overlap between adjacent blade lanes (0 = lanes butt edge-to-edge) |
 | `--guidance-csv [PATH]` | off | write the blade-scale operator guidance track (turn-by-turn waypoints with depth/heading/instruction); pass the flag **alone** for `<out>_guidance.csv` |
 | `--guidance-png [PATH]` | off | render the blade-scale guidance lanes over the cut/fill map; pass the flag **alone** for `<out>_guidance.png` |
@@ -371,7 +371,7 @@ centroid lat/lon, and the pass range each zone was worked over).
 ## Pipeline (spec §5)
 
 ```
-AGD file ─► [1] Parse + grid (7.5 ft)         agd.py, grid.py   §6, §7
+AGD file ─► [1] Parse + grid (8.5 ft)         agd.py, grid.py   §6, §7
          ─►     (optional) exclusion mask      grid.py, obstacles.py  §7.2.8, §12.3
          ─► [2] Volume balance (check/adjust)  balance.py        §8
          ─► [3] Flow field (optimal transport) flowfield.py      §9
@@ -436,7 +436,7 @@ the parked arm are inserted into the guidance track (spec §12.4).
   within `--max-drop-hop-ft` to keep loading/spreading the same load, cutting the
   number of near-empty "crumb" passes. To stop multi-drop from chasing the last
   few percent into a *laterally offset* pocket (which blobs the lane into tight
-  U-turns), `--min-load-fill` (default 90%) caps load fullness — keeping more
+  U-turns), `--min-load-fill` (default 80%) caps load fullness — keeping more
   loads as a single clean lane.
 - **Compact loads (no pointless blade-up moves).** A flow streamline can wander a
   long way and pick up a scatter of cells separated by empty ground (the cells in

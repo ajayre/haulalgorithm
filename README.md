@@ -18,7 +18,7 @@ Available in two implementations:
 The pipeline reads a georeferenced field survey (existing elevation + proposed target grade)
 and produces a complete earthmoving plan:
 
-1. **Builds a grid** — divides the field into ≈ blade-width cells (default 7.5 ft) and
+1. **Builds a grid** — divides the field into ≈ blade-width cells (default 8.5 ft) and
    computes the cut/fill volume at every cell.
 2. **Checks / adjusts mass balance** — ensures total cut equals total fill, accounting for
    swell and compaction factors.

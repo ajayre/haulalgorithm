@@ -53,7 +53,7 @@ namespace HaulBuilder
     {
         private const Double DEFAULT_RETURN_SPEED_MPH = 13.0;
         private const Double DEFAULT_TURN_SPEED_MPH = 4.0;
-        private const Double DEFAULT_TURNING_CIRCLE_FT = 45.0;
+        private const Double DEFAULT_TURNING_CIRCLE_FT = 50.0;
 
         /// <summary>
         /// Sequences passes using nearest-neighbor then optional 2-opt.

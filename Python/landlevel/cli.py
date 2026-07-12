@@ -13,6 +13,7 @@ from . import (
     DEFAULT_COMPACTION,
     DEFAULT_DECEL_TIME_S,
     DEFAULT_DUMPING_SPEED_MPH,
+    DEFAULT_EQUIPMENT_LENGTH_FT,
     DEFAULT_EQUIPMENT_WIDTH_FT,
     DEFAULT_FIELD_EFFICIENCY,
     DEFAULT_GRADE_SPEED_MPH,
@@ -143,7 +144,7 @@ def build_parser() -> argparse.ArgumentParser:
                         "load, instead of ending a pass partially full (default "
                         "%(default)g ft). Larger = fewer, fuller passes but longer "
                         "in-pass repositioning; 0 disables multi-drop.")
-    p.add_argument("--min-load-fill", type=float, default=90.0,
+    p.add_argument("--min-load-fill", type=float, default=80.0,
                    help="drivability vs load-fullness trade-off (percent, default "
                         "%(default)g). Once a load reaches this fraction of scraper "
                         "capacity, further multi-drop hops are skipped so the cut "
@@ -210,14 +211,14 @@ def build_parser() -> argparse.ArgumentParser:
                    help="emit raw grid-stepped guidance waypoints instead of "
                         "smoothing each cut/fill sweep into a drivable curve "
                         "(corner radius tied to the turning circle)")
-    p.add_argument("--reorder-window", type=int, default=0,
+    p.add_argument("--reorder-window", type=int, default=50,
                    help="after sequencing, refine the pass order with a local "
                         "search: walk the passes one at a time and, for each, "
                         "relocate it within a window of the next N passes if doing "
                         "so lowers the overall time (return drive + turn-into-cut). "
                         "Relocation never reverses a run, so it is safe with the "
-                        "direction-aware turn cost where 2-opt is not. Disabled by "
-                        "default (0); a typical value is 50.")
+                        "direction-aware turn cost where 2-opt is not. Default 50; "
+                        "0 disables.")
     p.add_argument("--no-direction-aware", action="store_true",
                    help="disable direction-aware sequencing (penalising the turn "
                         "needed to leave a pass and enter the next cut); falls back "
@@ -285,6 +286,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--pivot-anim-stride", type=int, default=15,
                    help="emit one pivot-animation frame per N applied passes "
                         "(default 15); every pivot move always gets its own frame")
+    p.add_argument("--equipment-length-ft", type=float, default=DEFAULT_EQUIPMENT_LENGTH_FT,
+                   help="tractor+scraper overall length (default %(default)g ft); "
+                        "straight lineup before/after CUT/FILL so blade-down starts and ends aligned")
     p.add_argument("--equipment-width-ft", type=float, default=DEFAULT_EQUIPMENT_WIDTH_FT,
                    help="machine (equipment) width in feet (default %(default)g). "
                         "Exclusion zones are buffered outward by half this so the "
@@ -633,6 +637,7 @@ def main(argv: list[str] | None = None) -> int:
             turn_radius_m=args.turning_circle_ft * 0.5 * FEET_TO_METERS,
             obstacles=obstacles,
             arm_obstacles=arm_obstacles,
+            equipment_length_m=args.equipment_length_ft * FEET_TO_METERS,
         )
         gtime = estimate_guidance_time(
             guidance,

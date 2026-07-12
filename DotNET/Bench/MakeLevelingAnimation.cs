@@ -39,7 +39,7 @@ internal static class MakeLevelingAnimation
             AgdPath = Fixture,
             GridSizeFt = GridFt,
             Zones = 0,
-            MinLoadFillPct = 90.0,
+            MinLoadFillPct = 80.0,
             PixelsPerBin = Ppb,
         };
         HaulBuilderResult Result = Engine.Run(Options);

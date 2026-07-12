@@ -105,8 +105,8 @@ def main() -> int:
         )
         print(f"single_pair_pass={pair_pass}")
         print("single_pair_sig=" + ",".join(p.action for p in pts))
-        cut_pts = [p for p in pts if p.action in ("START", "RETURN", "CUT")]
-        fill_pts = [p for p in pts if p.action in ("HAUL", "FILL")]
+        cut_pts = [p for p in pts if p.action == "CUT"]
+        fill_pts = [p for p in pts if p.action == "FILL"]
         if cut_pts and fill_pts:
             from landlevel.render import _world_to_pixel
             a = _world_to_pixel(grid, cut_pts[-1].x, cut_pts[-1].y, ppb)

@@ -437,6 +437,7 @@ namespace HaulBuilder
 
         /// <summary>
         /// Renders one pass guidance pair and returns cropped PNG bytes.
+        /// Thick red = blade-down CUT only; thick blue = blade-down FILL only.
         /// </summary>
         static public Byte[] RenderSinglePairPng
             (
@@ -448,7 +449,8 @@ namespace HaulBuilder
             Boolean showRoute = true
             )
         {
-            // Single-pair render mirrors Python render_single_pair_png: cut strip, haul arrow, fill strip, optional GPS route.
+            // Single-pair render: thick red = blade-down CUT only, thick blue = blade-down FILL only;
+            // HAUL/MOVE/START/RETURN stay on the thin GPS route so cut/fill overlays match the grade map.
             Int32 Ppb = Math.Max(1, pixelsPerBin);
             using Image<Rgba32> Base = DiffToImageDigitize(grid.Delta(), grid.Valid, Ppb);
             DimTowardsWhite(Base, 0.45);
@@ -459,12 +461,12 @@ namespace HaulBuilder
             for (Int32 Iter = 0; Iter < points.Count; Iter += 1)
             {
                 GuidancePoint Point = points[Iter];
-                if (Point.Action is "START" or "RETURN" or "CUT")
+                if (Point.Action == "CUT")
                 {
                     CutPts.Add(Point);
                 }
 
-                if (Point.Action is "HAUL" or "FILL")
+                if (Point.Action == "FILL")
                 {
                     FillPts.Add(Point);
                 }
@@ -532,12 +534,14 @@ namespace HaulBuilder
             }
 
             Int32 MarkerRadius = Math.Max(5, BladePx);
+            // Green/orange mark true CUT start/end (blade-down only).
             if (CutPts.Count > 0)
             {
                 DotGuidancePoint(Base, grid, CutPts[0], Ppb, new Rgba32(0, 200, 0, 255), MarkerRadius);
                 DotGuidancePoint(Base, grid, CutPts[^1], Ppb, new Rgba32(255, 140, 0, 255), MarkerRadius);
             }
 
+            // Cyan/purple mark true FILL start/end (not HAUL transit).
             if (FillPts.Count > 0)
             {
                 DotGuidancePoint(Base, grid, FillPts[0], Ppb, new Rgba32(0, 220, 255, 255), MarkerRadius);

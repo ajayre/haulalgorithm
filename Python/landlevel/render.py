@@ -384,13 +384,14 @@ def render_single_pair_png(
     """Render ONE pass's guidance (cut strip -> haul leg -> fill strip), cropped.
 
     ``pts`` is the list of :class:`landlevel.swaths.GuidancePoint` for a single
-    pass. The cut strip is drawn red, the fill strip blue (both at blade width),
-    and the haul leg as a black arrow from the cut-segment end to the fill-segment
-    start. Start/end of each segment are marked so the cut->haul->fill flow is
-    obvious. When ``show_route`` is set, the exact GPS route the operator follows
-    is overlaid as a thin line with a dot at every waypoint (the cut sweep, the
-    haul, the fill sweep and the grade return, in drive order). The image is
-    cropped to the pass plus a few cells of padding.
+    pass. Thick red is blade-down ``CUT`` only; thick blue is blade-down ``FILL``
+    only (both at blade width). Blade-up ``HAUL``/``MOVE``/``START``/``RETURN`` stay
+    on the thin GPS route so the overlays match the cut/fill map. The haul leg is
+    a black arrow from the last CUT to the first FILL. Start/end of each blade-down
+    segment are marked so the cut->haul->fill flow is obvious. When ``show_route``
+    is set, the exact GPS route the operator follows is overlaid as a thin line
+    with a dot at every waypoint. The image is cropped to the pass plus a few
+    cells of padding.
     """
     ppb = pixels_per_bin
     base = diff_to_image(grid.delta, grid.valid, ppb).convert("RGBA")
@@ -401,8 +402,9 @@ def render_single_pair_png(
     draw = ImageDraw.Draw(base)
 
     blade_px = max(3, round(blade_width_m / grid.grid_size_m * ppb))
-    cut_pts = [p for p in pts if p.action in ("START", "RETURN", "CUT")]
-    fill_pts = [p for p in pts if p.action in ("HAUL", "FILL")]
+    # Intent: thick strokes are blade-down coverage only — not HAUL transit.
+    cut_pts = [p for p in pts if p.action == "CUT"]
+    fill_pts = [p for p in pts if p.action == "FILL"]
 
     def px(p):
         return _world_to_pixel(grid, p.x, p.y, ppb)
@@ -463,9 +465,9 @@ def render_single_pair_png(
     rr = max(5, blade_px)
     if cut_pts:
         dot(cut_pts[0], (0, 200, 0, 255), rr)      # cut start (green)
-        dot(cut_pts[-1], (255, 140, 0, 255), rr)   # cut end / haul start (orange)
+        dot(cut_pts[-1], (255, 140, 0, 255), rr)   # cut end (orange)
     if fill_pts:
-        dot(fill_pts[0], (0, 220, 255, 255), rr)   # fill start / haul end (cyan)
+        dot(fill_pts[0], (0, 220, 255, 255), rr)   # fill start (cyan)
         dot(fill_pts[-1], (160, 0, 200, 255), rr)  # fill end (purple)
 
     # Crop to the pass bounding box + padding.
@@ -574,12 +576,12 @@ def render_pair_sequence_png(
 
     grade_label_xy = []
     for pno, pp in by_pass.items():
-        cut = [p for p in pp if p.action in ("START", "RETURN", "CUT")]
-        fill = [p for p in pp if p.action in ("HAUL", "FILL")]
+        cut = [p for p in pp if p.action == "CUT"]
+        fill = [p for p in pp if p.action == "FILL"]
         grade = [p for p in pp if p.action == "GRADE"]
         if cut:
             dot(cut[0], (0, 200, 0, 255), rr)       # cut start
-            dot(cut[-1], (255, 140, 0, 255), rr)    # cut end / haul start
+            dot(cut[-1], (255, 140, 0, 255), rr)    # cut end
         if fill:
             dot(fill[0], (0, 220, 255, 255), rr)    # fill start
             dot(fill[-1], (160, 0, 200, 255), rr)   # fill end

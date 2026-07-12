@@ -243,6 +243,14 @@ class Grid:
             self.min_y + (by + 0.5) * self.grid_size_m,
         )
 
+    def contains_world_xy(self, x: float, y: float) -> bool:
+        """True when a world point lies in a valid field cell."""
+        bx = int(math.floor((x - self.min_x) / self.grid_size_m))
+        by = int(math.floor((y - self.min_y) / self.grid_size_m))
+        if bx < 0 or by < 0 or bx >= self.width or by >= self.height:
+            return False
+        return bool(self.valid[by, bx])
+
 
 def build_grid(
     agd: AgdField,

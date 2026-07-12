@@ -183,8 +183,8 @@ namespace HaulBuilder.Tests
         {
             Assert.True(Int32.TryParse(passText, NumberStyles.Integer, CultureInfo.InvariantCulture, out Int32 PassNo));
             List<GuidancePoint> Points = result.GuidancePoints.Where(Point => Point.PassNo == PassNo).ToList();
-            List<GuidancePoint> CutPts = Points.Where(Point => Point.Action is "START" or "RETURN" or "CUT").ToList();
-            List<GuidancePoint> FillPts = Points.Where(Point => Point.Action is "HAUL" or "FILL").ToList();
+            List<GuidancePoint> CutPts = Points.Where(Point => Point.Action == "CUT").ToList();
+            List<GuidancePoint> FillPts = Points.Where(Point => Point.Action == "FILL").ToList();
             Assert.True(CutPts.Count > 0 && FillPts.Count > 0);
             Grid Grid = result.Grid!;
             Int32 Ppb = PixelsPerBin;

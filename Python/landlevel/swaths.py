@@ -36,7 +36,12 @@ import math
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
-from . import DEFAULT_TURNING_CIRCLE_FT, FEET_TO_METERS, M3_TO_CY
+from . import (
+    DEFAULT_EQUIPMENT_LENGTH_FT,
+    DEFAULT_TURNING_CIRCLE_FT,
+    FEET_TO_METERS,
+    M3_TO_CY,
+)
 from .agd import AgdField, latlon_from_utm
 from .grid import Grid
 from .obstacles import EMPTY_OBSTACLES, ObstacleField
@@ -151,6 +156,28 @@ def _centroid(points: List[XY]) -> XY:
 
 def _seg_length(points: List[XY]) -> float:
     return sum(math.dist(points[k], points[k + 1]) for k in range(len(points) - 1))
+
+
+def _cell_near_reverse_count(cells, grid) -> int:
+    """Count unsmoothed cell-path corners that are nearly reverse (dot < -0.5).
+
+    Intent: RDP-smoothed ``_hard_turn_count`` can under-count compact knots when
+    blade≈grid; raw reverses still need boustrophedon repair.
+    """
+    count = 0
+    for k in range(1, len(cells) - 1):
+        a = grid.cell_center_xy(*cells[k - 1][0])
+        b = grid.cell_center_xy(*cells[k][0])
+        c = grid.cell_center_xy(*cells[k + 1][0])
+        dx1, dy1 = b[0] - a[0], b[1] - a[1]
+        dx2, dy2 = c[0] - b[0], c[1] - b[1]
+        n1 = math.hypot(dx1, dy1)
+        n2 = math.hypot(dx2, dy2)
+        if n1 < 1e-6 or n2 < 1e-6:
+            continue
+        if (dx1 * dx2 + dy1 * dy2) / (n1 * n2) < -0.5:
+            count += 1
+    return count
 
 
 def _hard_turn_count(
@@ -495,8 +522,11 @@ def _dubins_shortest(
     sample_m: float,
     ccc_only: bool = False,
     csc_only: bool = False,
+    field: Optional["Grid"] = None,
+    heading_in_deg: Optional[float] = None,
+    csc_family_only: bool = False,
 ) -> Optional[List[XY]]:
-    """Shortest Dubins path (Walker); optional CCC-only or CSC-only word filters."""
+    """Dubins path (Walker); prefer in-field chirality when ``field`` is set."""
     if radius <= 1e-9:
         return []
     Dx = ex - sx
@@ -514,13 +544,238 @@ def _dubins_shortest(
     elif csc_only:
         # Soft pinches use same-side CSC (LSL/RSR) only — LSR/RSL can loop ~2πR.
         Words = {K: V for K, V in Words.items() if K in ("LSL", "RSR")}
+    elif csc_family_only:
+        # Intent: lane-change transit needs LSR/RSL but must not pick a CCC bulb.
+        Words = {K: V for K, V in Words.items() if K in ("LSL", "RSR", "LSR", "RSL")}
     if not Words:
         return None
-    Typ, Params = min(Words.items(), key=lambda KV: KV[1][0] + KV[1][1] + KV[1][2])
-    Pts = _dubins_sample((sx, sy, stheta), radius, Typ, Params, sample_m)
-    if Pts and math.dist(Pts[-1], (ex, ey)) < 1e-6:
-        Pts = Pts[:-1]
-    return Pts
+
+    # If the shortest word leaves the field, flip to the other chirality.
+    Fwd = _forward_en(heading_in_deg) if heading_in_deg is not None else None
+    BestPts: Optional[List[XY]] = None
+    BestOutside = math.inf
+    BestExcursion = math.inf
+    BestLen = math.inf
+    for Typ, Params in Words.items():
+        Len = (Params[0] + Params[1] + Params[2]) * radius
+        Pts = _dubins_sample((sx, sy, stheta), radius, Typ, Params, sample_m)
+        if Pts and math.dist(Pts[-1], (ex, ey)) < 1e-6:
+            Pts = Pts[:-1]
+        Outside = 0
+        Excursion = 0.0
+        if field is not None:
+            for Px, Py in Pts:
+                if not field.contains_world_xy(Px, Py):
+                    Outside += 1
+                if Fwd is not None:
+                    Proj = (Px - sx) * Fwd[0] + (Py - sy) * Fwd[1]
+                    if Proj > Excursion:
+                        Excursion = Proj
+        elif Fwd is not None:
+            for Px, Py in Pts:
+                Proj = (Px - sx) * Fwd[0] + (Py - sy) * Fwd[1]
+                if Proj > Excursion:
+                    Excursion = Proj
+        Better = (
+            Outside < BestOutside
+            or (Outside == BestOutside and Len < BestLen - 1e-6)
+            or (
+                Outside == BestOutside
+                and abs(Len - BestLen) <= 1e-6
+                and Excursion < BestExcursion
+            )
+        )
+        if Better:
+            BestOutside = Outside
+            BestExcursion = Excursion
+            BestLen = Len
+            BestPts = Pts
+    return BestPts
+
+
+def _append_line_samples(
+    out_pts: List[XY],
+    a: XY,
+    b: XY,
+    sample_m: float,
+    include_end: bool,
+) -> None:
+    """Append samples along A→B (excludes A; optionally includes B)."""
+    Len = math.dist(a, b)
+    if Len < 1e-9:
+        if include_end:
+            out_pts.append(b)
+        return
+    Step = max(sample_m, 1e-3)
+    N = max(1, int(math.ceil(Len / Step)))
+    for I in range(1, N):
+        T = I / N
+        out_pts.append((a[0] + (b[0] - a[0]) * T, a[1] + (b[1] - a[1]) * T))
+    if include_end:
+        out_pts.append(b)
+
+
+def _point_in_field_with_clearance(
+    field: "Grid",
+    x: float,
+    y: float,
+    clearance_m: float,
+) -> bool:
+    """True when (x, y) and an 8-neighbor clearance ring stay in-field."""
+    if not field.contains_world_xy(x, y):
+        return False
+    if clearance_m <= 1e-9:
+        return True
+    for i in range(8):
+        ang = i * (math.pi / 4.0)
+        px = x + clearance_m * math.cos(ang)
+        py = y + clearance_m * math.sin(ang)
+        if not field.contains_world_xy(px, py):
+            return False
+    return True
+
+
+def _count_outside_field(pts: List[XY], field: Optional["Grid"]) -> int:
+    """How many samples leave the field (with a small clearance ring).
+
+    Clearance keeps accepted headlands visibly inside the painted mask, not merely
+    on the last valid cell center.
+    """
+    if field is None:
+        return 0
+    clear_m = max(0.4 * field.grid_size_m, 0.5)
+    return sum(
+        1 for Px, Py in pts if not _point_in_field_with_clearance(field, Px, Py, clear_m)
+    )
+
+
+def _geometric_side_keyhole(
+    start: XY,
+    heading_in_deg: float,
+    end: XY,
+    heading_out_deg: float,
+    turn_radius_m: float,
+    sample_m: float,
+    field: Optional["Grid"],
+) -> Optional[List[XY]]:
+    """Constant-R side-arc keyhole (spur + arc + reconnect) into preferred field.
+
+    Tip Dubins CCC extends ~2-3R past the lane tip; a side arc of radius R only
+    needs ~R of forward room and can loop into available field.
+    """
+    U = _forward_en(heading_in_deg)
+    Step = max(sample_m / turn_radius_m, 0.08)
+    MaxF = 1.5 * turn_radius_m
+    FStep = max(sample_m, turn_radius_m * 0.2)
+
+    BestPts: Optional[List[XY]] = None
+    BestOutside = math.inf
+    BestLen = math.inf
+
+    for Side in (-1, 1):
+        N = ((-U[1]) * Side, U[0] * Side)
+        F = 0.0
+        while F <= MaxF + 1e-9:
+            Tip = (start[0] + F * U[0], start[1] + F * U[1])
+            clear_m = max(0.4 * field.grid_size_m, 0.5) if field is not None else 0.0
+            if field is not None and not _point_in_field_with_clearance(field, Tip[0], Tip[1], clear_m):
+                break
+            C = (Tip[0] + turn_radius_m * N[0], Tip[1] + turn_radius_m * N[1])
+            if field is not None and not _point_in_field_with_clearance(field, C[0], C[1], clear_m):
+                F += FStep
+                continue
+
+            Ang0 = math.atan2(Tip[1] - C[1], Tip[0] - C[0])
+            Dir = 1.0 if Side > 0 else -1.0
+            Spur: List[XY] = []
+            if F > 1e-9:
+                _append_line_samples(Spur, start, Tip, sample_m, include_end=True)
+
+            BestArc: Optional[List[XY]] = None
+            BestArcScore = math.inf
+            BestArcHeading = heading_out_deg
+            SweepMin = 0.85 * math.pi
+            SweepMin = 0.85 * math.pi
+            SweepMax = 1.75 * math.pi
+            MaxK = int(math.ceil(SweepMax / Step)) + 1
+            for K in range(1, MaxK + 1):
+                Sweep = K * Step
+                if Sweep < SweepMin:
+                    continue
+                if Sweep > SweepMax:
+                    break
+                Ang = Ang0 + Dir * Sweep
+                Tx = (-math.sin(Ang)) * Dir
+                Ty = math.cos(Ang) * Dir
+                H = math.degrees(math.atan2(Tx, Ty)) % 360.0
+                P = (
+                    C[0] + turn_radius_m * math.cos(Ang),
+                    C[1] + turn_radius_m * math.sin(Ang),
+                )
+                Dh = abs(((H - heading_out_deg + 180.0) % 360.0) - 180.0)
+                Dend = math.dist(P, end)
+                if Dh > 25.0 or Dend > (0.75 * turn_radius_m):
+                    continue
+                Score = Dh + (8.0 * (Dend / max(turn_radius_m, 1e-3)))
+                if Score < BestArcScore:
+                    BestArcScore = Score
+                    BestArcHeading = H
+                    BestArc = list(Spur)
+                    for J in range(1, K + 1):
+                        Aj = Ang0 + Dir * J * Step
+                        BestArc.append(
+                            (
+                                C[0] + turn_radius_m * math.cos(Aj),
+                                C[1] + turn_radius_m * math.sin(Aj),
+                            )
+                        )
+
+            if not BestArc:
+                F += FStep
+                continue
+
+            Exit = BestArc[-1]
+            Full = list(BestArc)
+            if math.dist(Exit, end) > 1e-3:
+                St = _compass_to_math(BestArcHeading)
+                Et = _compass_to_math(heading_out_deg)
+                Conn = _dubins_shortest(
+                    Exit[0],
+                    Exit[1],
+                    St,
+                    end[0],
+                    end[1],
+                    Et,
+                    turn_radius_m,
+                    sample_m,
+                    field=field,
+                    heading_in_deg=BestArcHeading,
+                )
+                ConnCap = (math.pi * turn_radius_m) + math.dist(Exit, end)
+                if (
+                    (not Conn)
+                    or _polyline_length_m(Exit, Conn) > ConnCap
+                    or not _path_respects_min_radius(Exit, Conn, turn_radius_m)
+                ):
+                    F += FStep
+                    continue
+                Full.extend(Conn)
+
+            if Full and math.dist(Full[-1], end) < 1e-6:
+                Full = Full[:-1]
+
+            Outside = _count_outside_field(Full, field)
+            Len = _polyline_length_m(start, Full)
+            if Outside < BestOutside or (Outside == BestOutside and Len < BestLen):
+                BestOutside = Outside
+                BestLen = Len
+                BestPts = Full
+            F += FStep
+
+    # Intent: field always wins — do not return a side arc that leaves the mask.
+    if field is not None and BestOutside > 0:
+        return None
+    return BestPts
 
 
 def _keyhole_u_turn(
@@ -530,13 +785,117 @@ def _keyhole_u_turn(
     heading_out_deg: float,
     turn_radius_m: float,
     sample_m: float,
+    field: Optional["Grid"] = None,
 ) -> Optional[List[XY]]:
-    """Agricultural keyhole/bulb: shortest Dubins CCC (LRL/RLR) for a ~180 deg reverse."""
+    """Agricultural keyhole: prefer in-field side-arc, else forward-slid Dubins CCC.
+
+    Tip CCC bulbs often spill past the boundary or take the long way around. A
+    constant-R side arc (with a short forward spur when needed) stays in available
+    field and is usually shorter. Forward-slid CCC remains as a fallback.
+    """
     St = _compass_to_math(heading_in_deg)
     Et = _compass_to_math(heading_out_deg)
-    return _dubins_shortest(
-        start[0], start[1], St, end[0], end[1], Et, turn_radius_m, sample_m, ccc_only=True
+    Fwd = _forward_en(heading_in_deg)
+    Step = max(sample_m, turn_radius_m * 0.25)
+    MaxD = _KEYHOLE_FORWARD_MAX_FRAC_R * turn_radius_m
+
+    BestPts: Optional[List[XY]] = None
+    BestOutside = math.inf
+    BestLen = math.inf
+    BestD = math.inf
+
+    def consider_path(d: float, full: List[XY]) -> None:
+        nonlocal BestPts, BestOutside, BestLen, BestD
+        if full and math.dist(full[-1], end) < 1e-6:
+            full = full[:-1]
+        Outside = _count_outside_field(full, field)
+        Len = _polyline_length_m(start, full)
+        Better = (
+            Outside < BestOutside
+            or (Outside == BestOutside and Len < BestLen - 1e-9)
+            or (Outside == BestOutside and abs(Len - BestLen) <= 1e-9 and d < BestD)
+        )
+        if Better:
+            BestOutside = Outside
+            BestD = d
+            BestLen = Len
+            BestPts = full
+
+    def consider(d: float, s2: XY, e2: XY) -> None:
+        # Intent: never seed a keyhole from an out-of-field tip.
+        if field is not None:
+            clear_m = max(0.4 * field.grid_size_m, 0.5)
+            if (
+                not _point_in_field_with_clearance(field, s2[0], s2[1], clear_m)
+                or not _point_in_field_with_clearance(field, e2[0], e2[1], clear_m)
+            ):
+                return
+        Ccc = _dubins_shortest(
+            s2[0],
+            s2[1],
+            St,
+            e2[0],
+            e2[1],
+            Et,
+            turn_radius_m,
+            sample_m,
+            ccc_only=True,
+            field=field,
+            heading_in_deg=heading_in_deg,
+        )
+        if not Ccc:
+            return
+        Full: List[XY] = []
+        if math.dist(start, s2) > 1e-9:
+            _append_line_samples(Full, start, s2, sample_m, include_end=True)
+        Full.extend(Ccc)
+        if math.dist(e2, end) > 1e-9:
+            if not Full or math.dist(Full[-1], e2) > 1e-6:
+                Full.append(e2)
+            _append_line_samples(Full, e2, end, sample_m, include_end=False)
+        consider_path(d, Full)
+
+    # Intent: side-arc into available field first — tip CCC often spills past the boundary.
+    Side = _geometric_side_keyhole(
+        start, heading_in_deg, end, heading_out_deg, turn_radius_m, sample_m, field
     )
+    if Side:
+        consider_path(0.0, Side)
+
+    if BestOutside > 0:
+        D = 0.0
+        while D <= MaxD + 1e-9:
+            S2 = (start[0] + D * Fwd[0], start[1] + D * Fwd[1])
+            consider(D, S2, end)
+            if D > 1e-9:
+                E2 = (end[0] + D * Fwd[0], end[1] + D * Fwd[1])
+                consider(D, S2, E2)
+            if BestOutside == 0:
+                break
+            D += Step
+
+    # Intent: field always wins — never emit a keyhole that leaves the mask.
+    if field is not None and BestOutside > 0:
+        return None
+    return BestPts
+
+
+def _path_respects_min_radius(start: XY, pts: List[XY], turn_radius_m: float) -> bool:
+    """True when every meaningful bend on start→pts respects the turn radius."""
+    if len(pts) < 2:
+        return True
+    A = start
+    B = pts[0]
+    for C in pts[1:]:
+        if (
+            math.dist(A, B) >= 1e-6
+            and math.dist(B, C) >= 1e-6
+            and _heading_change_deg(A, B, C) >= 15.0
+            and _circumradius_m(A, B, C) < (turn_radius_m * 0.99)
+        ):
+            return False
+        A, B = B, C
+    return True
 
 
 def _dubins_csc(
@@ -555,6 +914,14 @@ def _dubins_csc(
 
 
 _SOFT_BEND_MAX_HALF_TURNS = 1.0
+# Soft pinches below this must not open a 4R reverse-window CCC keyhole.
+_UTURN_COALESCE_MIN_HEADING_DEG = 60.0
+# Single reverse segment must be this long (fraction of R) unless 2+ segments.
+_UTURN_REVERSE_MIN_FRAC_R = 0.5
+# Max forward slide for an in-field keyhole, in multiples of R.
+_KEYHOLE_FORWARD_MAX_FRAC_R = 2.5
+# Extra length budget (multiples of R) beyond 2.75πR for a forward-slid keyhole spur.
+_KEYHOLE_SPUR_BUDGET_FRAC_R = 5.0
 
 
 def _polyline_length_m(start: XY, pts: List[XY]) -> float:
@@ -639,12 +1006,23 @@ def _soft_bend_fillet(
     heading_out_deg: float,
     turn_radius_m: float,
     sample_m: float,
+    field: Optional["Grid"] = None,
 ) -> List[XY]:
     """Last-resort same-side CSC (no CCC); empty when no word applies (never a chord)."""
     St = _compass_to_math(heading_in_deg)
     Et = _compass_to_math(heading_out_deg)
     Pts = _dubins_shortest(
-        start[0], start[1], St, end[0], end[1], Et, turn_radius_m, sample_m, csc_only=True
+        start[0],
+        start[1],
+        St,
+        end[0],
+        end[1],
+        Et,
+        turn_radius_m,
+        sample_m,
+        csc_only=True,
+        field=field,
+        heading_in_deg=heading_in_deg,
     )
     return Pts or []
 
@@ -656,38 +1034,62 @@ def _headland_move_points(
     heading_out_deg: float,
     turn_radius_m: float,
     sample_m: float,
+    field: Optional["Grid"] = None,
 ) -> List[XY]:
     """R-bounded blade-up path; CCC keyhole for ~180 deg U-turns, else short CSC/fillet."""
     U = _forward_en(heading_in_deg)
     V = _forward_en(heading_out_deg)
     St = _compass_to_math(heading_in_deg)
     Et = _compass_to_math(heading_out_deg)
-    # Near-reverse => CCC keyhole bulb (54°+~289°+54° style), not CSC 270°+270°.
+    # Near-reverse => CCC keyhole; slide forward when a tip bulb leaves the field.
     if (U[0] * V[0] + U[1] * V[1]) < -0.5:
-        Key = _dubins_shortest(
-            start[0], start[1], St, end[0], end[1], Et, turn_radius_m, sample_m, ccc_only=True
+        Key = _keyhole_u_turn(
+            start, heading_in_deg, end, heading_out_deg, turn_radius_m, sample_m, field=field
         )
-        if Key:
+        if Key and _count_outside_field(Key, field) == 0:
             return Key
-        # Never collapse a U-turn to a straight chord — try any Dubins word.
+        # Never collapse a U-turn to a straight chord — try any in-field Dubins word.
         Any = _dubins_shortest(
-            start[0], start[1], St, end[0], end[1], Et, turn_radius_m, sample_m
+            start[0],
+            start[1],
+            St,
+            end[0],
+            end[1],
+            Et,
+            turn_radius_m,
+            sample_m,
+            field=field,
+            heading_in_deg=heading_in_deg,
         )
-        if Any:
+        if Any and _count_outside_field(Any, field) == 0:
             return Any
 
     # Soft bend: same-side CSC (LSL/RSR); SoftBendFillet is last resort.
     Pts = _dubins_shortest(
-        start[0], start[1], St, end[0], end[1], Et, turn_radius_m, sample_m, csc_only=True
+        start[0],
+        start[1],
+        St,
+        end[0],
+        end[1],
+        Et,
+        turn_radius_m,
+        sample_m,
+        csc_only=True,
+        field=field,
+        heading_in_deg=heading_in_deg,
     )
     if Pts:
         Chord = math.dist(start, end)
         Cap = (_SOFT_BEND_MAX_HALF_TURNS * math.pi * turn_radius_m) + Chord
-        if _polyline_length_m(start, Pts) <= Cap:
+        if _polyline_length_m(start, Pts) <= Cap and _count_outside_field(Pts, field) == 0:
             return Pts
-    return _soft_bend_fillet(
-        start, heading_in_deg, end, heading_out_deg, turn_radius_m, sample_m
+    Fillet = _soft_bend_fillet(
+        start, heading_in_deg, end, heading_out_deg, turn_radius_m, sample_m, field
     )
+    if _count_outside_field(Fillet, field) == 0:
+        return Fillet
+    # Intent: field wins — return empty rather than an out-of-field headland.
+    return []
 
 
 def _find_uturn_exit(
@@ -697,8 +1099,9 @@ def _find_uturn_exit(
 ) -> Optional[Tuple[int, float]]:
     """If ``corner_k`` starts a tight serpentine U-turn, return ``(end_k, hout_deg)``.
 
-    Searches within 4R for the first reverse segment and coalesces the whole
-    reverse window (W), not only the immediate next cell.
+    Searches within 4R for the first *sustained* reverse segment and coalesces the
+    whole reverse window (W), not only the immediate next cell. One-cell zig-zags
+    are rejected so a soft stair-step cannot open a full CCC keyhole.
     """
     if corner_k < 1 or corner_k >= len(run) - 1:
         return None
@@ -708,6 +1111,7 @@ def _find_uturn_exit(
     U = _forward_en(Hin)
     Along = 0.0
     MaxAlong = 4.0 * turn_radius_m
+    MinRevAlong = _UTURN_REVERSE_MIN_FRAC_R * turn_radius_m
     for M in range(corner_k, len(run) - 1):
         P0 = (run[M][5], run[M][6])
         P1 = (run[M + 1][5], run[M + 1][6])
@@ -717,7 +1121,23 @@ def _find_uturn_exit(
             if Along > MaxAlong:
                 break
         V = _forward_en(_bearing_deg(P0, P1))
-        if (U[0] * V[0] + U[1] * V[1]) < -0.5:
+        # Intent: coalesce the whole reverse window (W), not only the next cell.
+        if (U[0] * V[0] + U[1] * V[1]) >= -0.5:
+            continue
+        # Intent: reject one-cell zig-zags; accept 2+ reverse segments or one long reverse.
+        RevAlong = math.dist(P0, P1)
+        RevSegs = 1
+        N = M + 1
+        while N < len(run) - 1:
+            Q0 = (run[N][5], run[N][6])
+            Q1 = (run[N + 1][5], run[N + 1][6])
+            W = _forward_en(_bearing_deg(Q0, Q1))
+            if (U[0] * W[0] + U[1] * W[1]) >= -0.5:
+                break
+            RevAlong += math.dist(Q0, Q1)
+            RevSegs += 1
+            N += 1
+        if RevSegs >= 2 or RevAlong >= MinRevAlong:
             return (M, _bearing_deg(P0, P1))
     return None
 
@@ -741,11 +1161,511 @@ def _steer_violates_min_radius(
     return _circumradius_m(a, b, c) < (turn_radius_m * 0.99)
 
 
+def _measure_straight_approach_m(
+    out_pts: List[Tuple[float, float, float, str, int, float, float]],
+    b: XY,
+    heading_deg: float,
+) -> float:
+    """Length of an existing straight blade-up approach into B along heading H.
+
+    Walks ``out_pts`` backward from B, summing segments that stay colinear with
+    the outbound heading (dot ≥ 0.95). Stops at blade-down work or a bend.
+    """
+    if len(out_pts) < 1:
+        return 0.0
+
+    u = _forward_en(heading_deg)
+    along = 0.0
+    cur = b
+    for i in range(len(out_pts) - 1, -1, -1):
+        p = out_pts[i]
+        # Intent: only blade-up / START legs count as approach (mirrors C# IsBladeUp||START).
+        if p[3] not in _BLADE_UP and p[3] != START:
+            break
+        q = (p[5], p[6])
+        dlt = (cur[0] - q[0], cur[1] - q[1])
+        seg = math.hypot(dlt[0], dlt[1])
+        if seg < 1e-9:
+            cur = q
+            continue
+        # Intent: only count colinear approach from behind the tip.
+        dot = ((dlt[0] / seg) * u[0]) + ((dlt[1] / seg) * u[1])
+        if dot < 0.95:
+            break
+        along += seg
+        cur = q
+    return along
+
+
+def _enforce_equipment_lineup(
+    raw: List[Tuple[float, float, float, str, int, float, float]],
+    equipment_length_m: float,
+    sample_m: float,
+    turn_radius_m: float,
+    field: Optional[Grid] = None,
+) -> List[Tuple[float, float, float, str, int, float, float]]:
+    """Insert straight blade-up lineup of length L before and after each CUT/FILL run.
+
+    Before each contiguous CUT or FILL start B with outbound heading H:
+    A = B − L·forward(H). After each run tip E with inbound heading Hin:
+    ExitEnd = E + L·forward(Hin). When the next travel is HAUL→FILL, the old
+    tip-based HAUL geometry is dropped and rebuilt from ExitEnd so only one
+    track remains (CSC preferred over a full-circle CCC).
+    """
+    if equipment_length_m <= 1e-6 or len(raw) < 2:
+        return raw
+
+    out: List[Tuple[float, float, float, str, int, float, float]] = []
+    i = 0
+    while i < len(raw):
+        cur = raw[i]
+        is_cut_or_fill = cur[3] in (CUT, FILL)
+        prev_same = bool(out) and out[-1][3] == cur[3]
+        run_start = is_cut_or_fill and (not prev_same) and (i + 1) < len(raw)
+        run_end = is_cut_or_fill and ((i + 1) >= len(raw) or raw[i + 1][3] != cur[3])
+        # Intent: in-run MOVE headlands resume the same action — U-turn owns that exit.
+        in_run_headland = False
+        if run_end and (i + 1) < len(raw) and raw[i + 1][3] == MOVE:
+            for j in range(i + 1, len(raw)):
+                if raw[j][3] == cur[3]:
+                    in_run_headland = True
+                    break
+                if raw[j][3] != MOVE:
+                    break
+
+        if run_start:
+            _insert_entry_lineup(
+                out, raw, i, cur, equipment_length_m, sample_m, turn_radius_m, field
+            )
+        out.append(cur)
+        if run_end and not in_run_headland:
+            _insert_exit_lineup(
+                out, raw, i, cur, equipment_length_m, sample_m, field, turn_radius_m
+            )
+            skip_to = _rebuild_haul_after_exit(
+                out, raw, i, equipment_length_m, sample_m, turn_radius_m, field
+            )
+            if skip_to > i:
+                i = skip_to
+                continue
+        i += 1
+
+    return out
+
+
+def _rebuild_haul_after_exit(
+    out: List[Tuple[float, float, float, str, int, float, float]],
+    raw: List[Tuple[float, float, float, str, int, float, float]],
+    cut_end_index: int,
+    equipment_length_m: float,
+    sample_m: float,
+    turn_radius_m: float,
+    field: Optional[Grid],
+) -> int:
+    """Rebuild cut→fill HAUL from the exit tip; skip the old tip-based transit.
+
+    Returns the next raw index to process (FILL start), or -1 if no HAUL rebuild.
+    """
+    # Intent: exit length already applied by _insert_exit_lineup; keep signature parallel.
+    if equipment_length_m < 0.0:
+        return -1
+
+    j = cut_end_index + 1
+    while j < len(raw) and raw[j][3] == MOVE:
+        j += 1
+    if j >= len(raw) or raw[j][3] != HAUL:
+        return -1
+
+    haul_start = j
+    while j < len(raw) and raw[j][3] == HAUL:
+        j += 1
+    if j >= len(raw) or raw[j][3] not in (FILL, GRADE):
+        return -1
+    if len(out) < 2:
+        return -1
+
+    exit_tip = out[-1]
+    before_exit = out[-2]
+    exit_end = (exit_tip[5], exit_tip[6])
+    before = (before_exit[5], before_exit[6])
+    if math.dist(before, exit_end) < 1e-6:
+        return -1
+
+    hin = _bearing_deg(before, exit_end)
+    last_haul = raw[j - 1]
+    pc = (last_haul[5], last_haul[6])
+    fill_start = raw[j]
+    pd = (fill_start[5], fill_start[6])
+    # Intent: arrive aligned with the fill run; HAUL tip often sits on the fill start.
+    hout = hin
+    if (j + 1) < len(raw) and raw[j + 1][3] == fill_start[3]:
+        pe = (raw[j + 1][5], raw[j + 1][6])
+        if math.dist(pd, pe) > 1e-6:
+            hout = _bearing_deg(pd, pe)
+    elif math.dist(pc, pd) > 1e-6:
+        hout = _bearing_deg(pc, pd)
+
+    chord = math.dist(exit_end, pc)
+    u = _forward_en(hin)
+    v = _forward_en(hout)
+    near_reverse = (u[0] * v[0] + u[1] * v[1]) < -0.5
+    # Intent: cut→fill is usually a lane-change CSC; only allow CCC for short reverse hops.
+    allow_keyhole = near_reverse and chord < (4.0 * turn_radius_m)
+    if allow_keyhole:
+        moves = _headland_move_points(
+            exit_end, hin, pc, hout, turn_radius_m, sample_m, field=field
+        )
+    else:
+        st = _compass_to_math(hin)
+        et = _compass_to_math(hout)
+        # Intent: short CSC family only; length cap rejects CCC bulbs.
+        soft = _dubins_shortest(
+            exit_end[0], exit_end[1], st, pc[0], pc[1], et, turn_radius_m, sample_m,
+            field=field, heading_in_deg=hin, csc_family_only=True,
+        )
+        moves = soft or []
+        if moves and _count_outside_field(moves, field) > 0:
+            # Intent: field wins — refuse a CSC that clips the mask.
+            reconnect = (
+                _min_curve_in_field_reconnect(
+                    exit_end, hin, pc, hout, turn_radius_m, sample_m, field
+                )
+                if field is not None
+                else None
+            )
+            moves = reconnect or []
+
+    # Intent: non-keyhole transit may bend once (~πR), never a 2+ turn CCC bulb.
+    cap = (
+        (2.75 * math.pi * turn_radius_m) + (_KEYHOLE_SPUR_BUDGET_FRAC_R * turn_radius_m)
+        if allow_keyhole
+        else ((math.pi * turn_radius_m) + chord)
+    )
+    if (
+        (not moves)
+        or _polyline_length_m(exit_end, moves) > cap
+        or _count_outside_field(moves, field) > 0
+    ):
+        # Intent: drop the tip-based loop; leave one HAUL marker for later transit repair.
+        out.append(
+            (last_haul[0], last_haul[1], last_haul[2], HAUL, last_haul[4], pc[0], pc[1])
+        )
+        return j
+
+    for mx, my in moves:
+        out.append((mx, my, 0.0, HAUL, last_haul[4], mx, my))
+    if (not out) or math.dist((out[-1][5], out[-1][6]), pc) > 1e-3:
+        out.append(
+            (last_haul[0], last_haul[1], last_haul[2], HAUL, last_haul[4], pc[0], pc[1])
+        )
+    return j
+
+
+def _insert_entry_lineup(
+    out: List[Tuple[float, float, float, str, int, float, float]],
+    raw: List[Tuple[float, float, float, str, int, float, float]],
+    index: int,
+    cur: Tuple[float, float, float, str, int, float, float],
+    equipment_length_m: float,
+    sample_m: float,
+    turn_radius_m: float,
+    field: Optional[Grid],
+) -> None:
+    """Insert the entry approach ending at the CUT/FILL run start.
+
+    Prefer a straight blade-up of length L in-field. If that spur would leave the
+    field, clip to the longest in-field straight and reconnect with the minimum
+    in-field R-curve — never leave the mask and never invent a full-circle approach.
+    """
+    b = (cur[5], cur[6])
+    nxt = raw[index + 1]
+    c = (nxt[5], nxt[6])
+    if math.dist(b, c) < 1e-6:
+        return
+
+    hout = _bearing_deg(b, c)
+    u = _forward_en(hout)
+    back = (-u[0], -u[1])
+    # Intent: approach from behind the tip; clip to the longest in-field straight ≤ L.
+    straight_l = _in_field_ray_length_m(b, back, equipment_length_m, field)
+    if straight_l <= 1e-6:
+        return
+
+    a = (b[0] + straight_l * back[0], b[1] + straight_l * back[1])
+    if _measure_straight_approach_m(out, b, hout) >= (straight_l * 0.95):
+        return
+
+    if out:
+        prev = out[-1]
+        p = (prev[5], prev[6])
+        tip_tol = max(2.0, 0.15 * equipment_length_m)
+        if math.dist(p, b) <= tip_tol:
+            # Intent: START/RETURN may slide back to the (in-field) lineup entry; a HAUL/MOVE
+            # tip already on the corridor must not jump to A (forces a 360° loop).
+            if prev[3] not in (START, RETURN):
+                return
+            out[-1] = (prev[0], prev[1], prev[2], prev[3], prev[4], a[0], a[1])
+        elif math.dist(p, a) > 1.0:
+            hin = hout
+            if len(out) >= 2:
+                prev2 = out[-2]
+                p2 = (prev2[5], prev2[6])
+                if math.dist(p2, p) > 1e-6:
+                    hin = _bearing_deg(p2, p)
+            if field is None:
+                return
+            conn = _min_curve_in_field_reconnect(
+                p, hin, a, hout, turn_radius_m, sample_m, field
+            )
+            if not conn:
+                # Intent: cut corridor already feeds the tip — keep the shorter approach.
+                return
+            for mx, my in conn:
+                out.append((mx, my, 0.0, MOVE, cur[4], mx, my))
+            if (not out) or math.dist((out[-1][5], out[-1][6]), a) > 1e-3:
+                out.append((a[0], a[1], 0.0, MOVE, cur[4], a[0], a[1]))
+    else:
+        out.append((a[0], a[1], 0.0, MOVE, cur[4], a[0], a[1]))
+
+    spur: List[XY] = []
+    _append_line_samples(spur, a, b, sample_m, include_end=False)
+    for mx, my in spur:
+        out.append((mx, my, 0.0, MOVE, cur[4], mx, my))
+
+
+def _in_field_ray_length_m(
+    from_xy: XY,
+    u: XY,
+    max_len_m: float,
+    field: Optional[Grid],
+) -> float:
+    """Longest in-field distance from ``from_xy`` along unit ``u`` up to ``max_len_m``."""
+    if max_len_m <= 1e-9:
+        return 0.0
+    if field is None:
+        return max_len_m
+
+    step = max(0.25, max_len_m / 24.0)
+    ok = 0.0
+    t = step
+    while t <= max_len_m + 1e-9:
+        x = from_xy[0] + t * u[0]
+        y = from_xy[1] + t * u[1]
+        if not field.contains_world_xy(x, y):
+            break
+        ok = t
+        t += step
+    tip = (from_xy[0] + max_len_m * u[0], from_xy[1] + max_len_m * u[1])
+    if field.contains_world_xy(tip[0], tip[1]):
+        ok = max(ok, max_len_m)
+    return ok
+
+
+def _min_curve_in_field_reconnect(
+    start: XY,
+    heading_in_deg: float,
+    end: XY,
+    heading_out_deg: float,
+    turn_radius_m: float,
+    sample_m: float,
+    field: Grid,
+) -> Optional[List[XY]]:
+    """Shortest in-field CSC reconnect capped near one soft bend (never a full-circle bulb)."""
+    st = _compass_to_math(heading_in_deg)
+    et = _compass_to_math(heading_out_deg)
+    chord = math.dist(start, end)
+    cap = (math.pi * turn_radius_m) + chord
+    # Intent: same-side CSC first (gentlest); then any short CSC; reject paths that leave the field.
+    soft = _dubins_shortest(
+        start[0], start[1], st, end[0], end[1], et, turn_radius_m, sample_m,
+        csc_only=True, field=field, heading_in_deg=heading_in_deg,
+    )
+    if soft and _polyline_length_m(start, soft) <= cap and _count_outside_field(soft, field) == 0:
+        return soft
+    any_csc = _dubins_shortest(
+        start[0], start[1], st, end[0], end[1], et, turn_radius_m, sample_m,
+        field=field, heading_in_deg=heading_in_deg,
+    )
+    if (
+        any_csc
+        and _polyline_length_m(start, any_csc) <= cap
+        and _count_outside_field(any_csc, field) == 0
+    ):
+        return any_csc
+    return None
+
+
+def _clamped_exit_lineup_length_m(
+    e: XY,
+    heading_in_deg: float,
+    equipment_length_m: float,
+    raw: List[Tuple[float, float, float, str, int, float, float]],
+    index: int,
+    field: Optional[Grid],
+) -> float:
+    """Exit length: prefer full L, but never overshoot a same-corridor fill or leave the field."""
+    length = equipment_length_m
+    u = _forward_en(heading_in_deg)
+
+    # Intent: same-heading cut→fill ahead on the exit ray — stop short of the fill tip.
+    j = index + 1
+    while j < len(raw) and raw[j][3] == MOVE:
+        j += 1
+    while j < len(raw) and raw[j][3] == HAUL:
+        j += 1
+    if j < len(raw) and raw[j][3] in (FILL, GRADE):
+        pd = (raw[j][5], raw[j][6])
+        along = (pd[0] - e[0]) * u[0] + (pd[1] - e[1]) * u[1]
+        lateral = abs((pd[0] - e[0]) * (-u[1]) + (pd[1] - e[1]) * u[0])
+        corridor = max(2.0, 0.5 * equipment_length_m)
+        if along > 1e-3 and lateral <= corridor:
+            length = min(length, max(0.0, along - 0.5))
+
+    # Intent: field wins over straight L — clip to the longest in-field ray.
+    length = min(length, _in_field_ray_length_m(e, u, length, field))
+    return length
+
+
+def _insert_exit_lineup(
+    out: List[Tuple[float, float, float, str, int, float, float]],
+    raw: List[Tuple[float, float, float, str, int, float, float]],
+    index: int,
+    cur: Tuple[float, float, float, str, int, float, float],
+    equipment_length_m: float,
+    sample_m: float,
+    field: Optional[Grid] = None,
+    turn_radius_m: float = 0.0,
+) -> None:
+    """Insert a blade-up exit past the CUT/FILL tip (straight in-field, else min curve)."""
+    e = (cur[5], cur[6])
+    # Intent: exit along the heading used to arrive at the tip (last in-run leg).
+    hin = None
+    for j in range(len(out) - 2, -1, -1):
+        p = out[j]
+        if p[3] != cur[3]:
+            break
+        q = (p[5], p[6])
+        if math.dist(q, e) > 1e-6:
+            hin = _bearing_deg(q, e)
+            break
+    if hin is None:
+        return
+
+    exit_len = _clamped_exit_lineup_length_m(
+        e, hin, equipment_length_m, raw, index, field
+    )
+    u = _forward_en(hin)
+
+    # Intent: when straight L will not fit in-field (and we are not stopping short of a
+    # same-corridor fill), bend into available field with the minimum R-curve.
+    if (
+        field is not None
+        and exit_len < (0.5 * equipment_length_m)
+        and turn_radius_m > 1e-6
+        and _in_field_ray_length_m(e, u, equipment_length_m, field) < (0.5 * equipment_length_m)
+    ):
+        ideal = (e[0] + equipment_length_m * u[0], e[1] + equipment_length_m * u[1])
+        target = ideal
+        if not field.contains_world_xy(ideal[0], ideal[1]):
+            left = (-u[1], u[0])
+            right = (u[1], -u[0])
+            best = e
+            best_along = -1.0
+            for side in (left, right):
+                f = turn_radius_m
+                while f <= equipment_length_m + 1e-9:
+                    cand = (
+                        e[0] + f * u[0] + turn_radius_m * side[0],
+                        e[1] + f * u[1] + turn_radius_m * side[1],
+                    )
+                    if field.contains_world_xy(cand[0], cand[1]) and f > best_along:
+                        best_along = f
+                        best = cand
+                    f += max(sample_m, turn_radius_m * 0.25)
+            if best_along >= 0.0:
+                target = best
+
+        if math.dist(e, target) > 1e-3:
+            curve = _min_curve_in_field_reconnect(
+                e, hin, target, hin, turn_radius_m, sample_m, field
+            )
+            if curve:
+                for mx, my in curve:
+                    out.append((mx, my, 0.0, MOVE, cur[4], mx, my))
+                if math.dist((out[-1][5], out[-1][6]), target) > 1e-3:
+                    out.append((target[0], target[1], 0.0, MOVE, cur[4], target[0], target[1]))
+                return
+
+    if exit_len <= 1e-6:
+        return
+
+    exit_end = (e[0] + exit_len * u[0], e[1] + exit_len * u[1])
+    # Intent: U-turn coalesce may already have emitted the exit spur as MOVE after E.
+    if _measure_straight_exit_ahead_m(raw, index, e, hin) >= (exit_len * 0.95):
+        # Intent: copy that spur so out ends at ExitEnd before any HAUL rebuild.
+        cur_xy = e
+        along = 0.0
+        for i in range(index + 1, len(raw)):
+            p = raw[i]
+            if p[3] != MOVE:
+                break
+            q = (p[5], p[6])
+            dlt = (q[0] - cur_xy[0], q[1] - cur_xy[1])
+            seg = math.hypot(dlt[0], dlt[1])
+            if seg < 1e-9:
+                cur_xy = q
+                continue
+            dot = (dlt[0] / seg) * u[0] + (dlt[1] / seg) * u[1]
+            if dot < 0.95:
+                break
+            out.append(p)
+            along += seg
+            cur_xy = q
+            if along >= (exit_len * 0.95):
+                break
+        return
+
+    spur: List[XY] = []
+    _append_line_samples(spur, e, exit_end, sample_m, include_end=True)
+    for mx, my in spur:
+        out.append((mx, my, 0.0, MOVE, cur[4], mx, my))
+
+
+def _measure_straight_exit_ahead_m(
+    raw: List[Tuple[float, float, float, str, int, float, float]],
+    index: int,
+    e: XY,
+    heading_deg: float,
+) -> float:
+    """Length of an existing straight blade-up exit after a run tip in the input track."""
+    u = _forward_en(heading_deg)
+    along = 0.0
+    cur = e
+    for i in range(index + 1, len(raw)):
+        p = raw[i]
+        if p[3] != MOVE:
+            break
+        q = (p[5], p[6])
+        dlt = (q[0] - cur[0], q[1] - cur[1])
+        seg = math.hypot(dlt[0], dlt[1])
+        if seg < 1e-9:
+            cur = q
+            continue
+        dot = (dlt[0] / seg) * u[0] + (dlt[1] / seg) * u[1]
+        if dot < 0.95:
+            break
+        along += seg
+        cur = q
+    return along
+
+
 def _enforce_min_turn_radius(
     raw: List[Tuple[float, float, float, str, int, float, float]],
     turn_radius_m: float,
     turn_threshold_deg: float,
     sample_m: float,
+    field: Optional[Grid] = None,
+    equipment_length_m: float = 0.0,
 ) -> List[Tuple[float, float, float, str, int, float, float]]:
     """Insert R-radius MOVE headlands wherever a blade-down corner is too sharp.
 
@@ -753,7 +1673,9 @@ def _enforce_min_turn_radius(
     steering polyline is rewritten. Newly inserted arc samples are MOVE (blade up).
 
     Serpentine U-turns are coalesced into one keyhole so the track stays a single
-    readable bulb instead of stacked Dubins loops.
+    readable bulb instead of stacked Dubins loops. When ``equipment_length_m`` > 0,
+    a coalesced keyhole leaves the inbound tip on a straight exit spur, finishes at
+    the reverse lineup entry, then drives straight onto coverage.
     """
     if turn_radius_m <= 0.0 or len(raw) < 3:
         return raw
@@ -793,17 +1715,44 @@ def _enforce_min_turn_radius(
                 continue
 
             hin = _bearing_deg(a, b)
-            uturn = _find_uturn_exit(run, k, turn_radius_m)
+            local_turn = _heading_change_deg(a, b, c)
+            # Intent: soft pinches must not open a 4R reverse-window keyhole.
+            uturn = None
+            if local_turn >= _UTURN_COALESCE_MIN_HEADING_DEG:
+                uturn = _find_uturn_exit(run, k, turn_radius_m)
             if uturn is not None:
                 end_k, hout = uturn
                 end_pt = (run[end_k][5], run[end_k][6])
+                uin = _forward_en(hin)
+                uout = _forward_en(hout)
+                # Intent: leave the inbound tip straight for L, turn, then enter reverse straight for L.
+                key_start = b
+                key_end = end_pt
+                if equipment_length_m > 1e-6:
+                    # Intent: lineup spurs must stay in-field.
+                    exit_l = _in_field_ray_length_m(b, uin, equipment_length_m, field)
+                    entry_l = _in_field_ray_length_m(
+                        end_pt, (-uout[0], -uout[1]), equipment_length_m, field
+                    )
+                    key_start = (b[0] + exit_l * uin[0], b[1] + exit_l * uin[1])
+                    key_end = (end_pt[0] - entry_l * uout[0], end_pt[1] - entry_l * uout[1])
                 KeyMoves = _headland_move_points(
-                    b, hin, end_pt, hout, turn_radius_m, sample_m
+                    key_start, hin, key_end, hout, turn_radius_m, sample_m, field=field
                 )
                 # Never SkipTurn a reverse window if the keyhole builder produced nothing.
-                if KeyMoves or math.dist(b, end_pt) < 1e-3:
+                if KeyMoves or math.dist(key_start, key_end) < 1e-3:
+                    if math.dist(b, key_start) > 1e-3:
+                        ExitSpur: List[XY] = []
+                        _append_line_samples(ExitSpur, b, key_start, sample_m, include_end=True)
+                        for mx, my in ExitSpur:
+                            out.append((mx, my, 0.0, MOVE, cur[4], mx, my))
                     for mx, my in KeyMoves:
                         out.append((mx, my, 0.0, MOVE, cur[4], mx, my))
+                    if math.dist(key_end, end_pt) > 1e-3:
+                        Spur: List[XY] = []
+                        _append_line_samples(Spur, key_end, end_pt, sample_m, include_end=False)
+                        for mx, my in Spur:
+                            out.append((mx, my, 0.0, MOVE, cur[4], mx, my))
                     for s in range(k + 1, end_k):
                         Mid = run[s]
                         out.append((Mid[0], Mid[1], Mid[2], Mid[3], Mid[4], end_pt[0], end_pt[1]))
@@ -822,16 +1771,26 @@ def _enforce_min_turn_radius(
                 out[-1] = (Last[0], Last[1], Last[2], Last[3], Last[4], TangentIn[0], TangentIn[1])
                 for mx, my in ArcPts:
                     out.append((mx, my, 0.0, MOVE, cur[4], mx, my))
-            elif _heading_change_deg(a, b, c) >= 60.0:
+            elif local_turn >= _UTURN_COALESCE_MIN_HEADING_DEG:
                 Moves = _headland_move_points(
-                    b, hin, c, hout, turn_radius_m, sample_m
+                    b, hin, c, hout, turn_radius_m, sample_m, field=field
                 )
-                Cap = 2.75 * math.pi * turn_radius_m
+                # Intent: only near-reverse corners may spend a full keyhole budget.
+                u = _forward_en(hin)
+                v = _forward_en(hout)
+                near_reverse = (u[0] * v[0] + u[1] * v[1]) < -0.5
+                if near_reverse:
+                    Cap = (2.75 * math.pi * turn_radius_m) + (
+                        _KEYHOLE_SPUR_BUDGET_FRAC_R * turn_radius_m
+                    )
+                else:
+                    Cap = (_SOFT_BEND_MAX_HALF_TURNS * math.pi * turn_radius_m) + math.dist(b, c) + turn_radius_m
                 if (not Moves) or _polyline_length_m(b, Moves) > Cap:
                     St = _compass_to_math(hin)
                     Et = _compass_to_math(hout)
                     Moves = _dubins_shortest(
-                        b[0], b[1], St, c[0], c[1], Et, turn_radius_m, sample_m
+                        b[0], b[1], St, c[0], c[1], Et, turn_radius_m, sample_m,
+                        field=field, heading_in_deg=hin,
                     ) or []
                 if Moves and _polyline_length_m(b, Moves) <= Cap:
                     for mx, my in Moves:
@@ -839,13 +1798,109 @@ def _enforce_min_turn_radius(
         if len(run) > 1:
             out.append(run[-1])
         i = j + 1
-    return _repair_sharp_steering_bends(out, turn_radius_m, sample_m)
+    out = _enforce_blade_up_transit_turns(out, turn_radius_m, sample_m, field)
+    return _repair_sharp_steering_bends(out, turn_radius_m, sample_m, field)
+
+
+def _enforce_blade_up_transit_turns(
+    raw: List[Tuple[float, float, float, str, int, float, float]],
+    turn_radius_m: float,
+    sample_m: float,
+    field: Optional[Grid] = None,
+) -> List[Tuple[float, float, float, str, int, float, float]]:
+    """Replace sharp blade-up transit chords (HAUL / multi-drop MOVE) with R-arcs.
+
+    Loaded HAUL and multi-drop MOVE are assembled as straight chords to the next
+    pocket start. Blade-down enforcement skips those junctions, so this pass inserts
+    CSC exit/entry (or one CCC keyhole for a short near-reverse). Intermediates keep
+    the original blade-up action for distance accounting.
+    """
+    if turn_radius_m <= 0.0 or len(raw) < 3:
+        return raw
+
+    blade_down = {CUT, FILL, GRADE}
+    out: List[Tuple[float, float, float, str, int, float, float]] = []
+    for i, cur in enumerate(raw):
+        is_haul = cur[3] == HAUL
+        is_move_hop = cur[3] == MOVE
+        if (not is_haul and not is_move_hop) or len(out) < 2 or i + 1 >= len(raw):
+            out.append(cur)
+            continue
+
+        prev_end = out[-1]
+        prev_prev = out[-2]
+        nxt = raw[i + 1]
+        # HAUL = cut→fill; MOVE hop = same blade-down action on both sides.
+        haul_ok = (
+            is_haul
+            and prev_end[3] == CUT
+            and nxt[3] in (FILL, GRADE)
+        )
+        move_hop_ok = (
+            is_move_hop
+            and prev_end[3] in blade_down
+            and nxt[3] == prev_end[3]
+        )
+        if not haul_ok and not move_hop_ok:
+            out.append(cur)
+            continue
+
+        pa = (prev_prev[5], prev_prev[6])
+        pb = (prev_end[5], prev_end[6])
+        pc = (cur[5], cur[6])
+        pd = (nxt[5], nxt[6])
+        # Long transit legs make circumradius large at a sharp kink; use heading change.
+        exit_turn = _heading_change_deg(pa, pb, pc) >= 15.0
+        entry_turn = _heading_change_deg(pb, pc, pd) >= 15.0
+        if not exit_turn and not entry_turn:
+            out.append(cur)
+            continue
+
+        hin = _bearing_deg(pa, pb)
+        hout = _bearing_deg(pc, pd)
+        chord = math.dist(pb, pc)
+        u = _forward_en(hin)
+        v = _forward_en(hout)
+        near_reverse = (u[0] * v[0] + u[1] * v[1]) < -0.5
+        # Parallel-lane U-turn → one keyhole; long haul → CSC.
+        allow_keyhole = near_reverse and chord < (4.0 * turn_radius_m)
+        if allow_keyhole:
+            moves = _headland_move_points(pb, hin, pc, hout, turn_radius_m, sample_m, field=field)
+        else:
+            st = _compass_to_math(hin)
+            et = _compass_to_math(hout)
+            # Transit: prefer CSC family; fall back to any Dubins if CSC cannot connect.
+            moves = _dubins_shortest(
+                pb[0], pb[1], st, pc[0], pc[1], et, turn_radius_m, sample_m,
+                field=field, heading_in_deg=hin, csc_family_only=True,
+            ) or []
+            if not moves:
+                moves = _dubins_shortest(
+                    pb[0], pb[1], st, pc[0], pc[1], et, turn_radius_m, sample_m,
+                    field=field, heading_in_deg=hin,
+                ) or []
+        cap = (
+            (2.75 * math.pi * turn_radius_m) + (_KEYHOLE_SPUR_BUDGET_FRAC_R * turn_radius_m)
+            if allow_keyhole
+            else ((2.75 * math.pi * turn_radius_m) + chord)
+        )
+        if (not moves) or _polyline_length_m(pb, moves) > cap:
+            out.append(cur)
+            continue
+
+        transit_action = HAUL if is_haul else MOVE
+        for mx, my in moves:
+            out.append((mx, my, 0.0, transit_action, cur[4], mx, my))
+        out.append(cur)
+
+    return out
 
 
 def _repair_sharp_steering_bends(
     raw: List[Tuple[float, float, float, str, int, float, float]],
     turn_radius_m: float,
     sample_m: float,
+    field: Optional[Grid] = None,
 ) -> List[Tuple[float, float, float, str, int, float, float]]:
     """Replace residual sharp splices with short R-bounded arcs (no CCC cascade).
 
@@ -871,6 +1926,11 @@ def _repair_sharp_steering_bends(
                 Next.append(B)
                 I += 1
                 continue
+            # Same for curved HAUL transit samples (cut→fill).
+            if A[3] == HAUL and B[3] == HAUL and C[3] == HAUL:
+                Next.append(B)
+                I += 1
+                continue
             if not _steer_violates_min_radius(Pa, Pb, Pc, turn_radius_m, 15.0):
                 Next.append(B)
                 I += 1
@@ -892,7 +1952,8 @@ def _repair_sharp_steering_bends(
                     St = _compass_to_math(Hin)
                     Et = _compass_to_math(Hout)
                     Short = _dubins_shortest(
-                        Pa[0], Pa[1], St, Pc[0], Pc[1], Et, turn_radius_m, sample_m, csc_only=True
+                        Pa[0], Pa[1], St, Pc[0], Pc[1], Et, turn_radius_m, sample_m,
+                        csc_only=True, field=field, heading_in_deg=Hin,
                     )
                     Cap = (_SOFT_BEND_MAX_HALF_TURNS * math.pi * turn_radius_m) + math.dist(Pa, Pc)
                     if Short and _polyline_length_m(Pa, Short) <= Cap:
@@ -918,7 +1979,7 @@ def _repair_sharp_steering_bends(
                         Next.append((Mx, My, 0.0, MOVE, B[4], Mx, My))
                 elif _heading_change_deg(Pa, Pb, Pc) >= 60.0:
                     Moves = _headland_move_points(
-                        Pb, Hin, Pc, Hout, turn_radius_m, sample_m
+                        Pb, Hin, Pc, Hout, turn_radius_m, sample_m, field=field
                     )
                     Cap = 2.75 * math.pi * turn_radius_m
                     if Moves and _polyline_length_m(Pb, Moves) <= Cap:
@@ -927,18 +1988,21 @@ def _repair_sharp_steering_bends(
                 Next.append(C)
                 I += 2
                 continue
-            # Blade-up residual (e.g. CUT→MOVE→CUT): short CSC only.
+            # Blade-up residual (e.g. CUT→MOVE→CUT or leftover HAUL chord): short CSC only.
             Hin = _bearing_deg(Pa, Pb)
             Hout = _bearing_deg(Pb, Pc)
             St = _compass_to_math(Hin)
             Et = _compass_to_math(Hout)
             Short = _dubins_shortest(
-                Pa[0], Pa[1], St, Pc[0], Pc[1], Et, turn_radius_m, sample_m, csc_only=True
+                Pa[0], Pa[1], St, Pc[0], Pc[1], Et, turn_radius_m, sample_m,
+                csc_only=True, field=field, heading_in_deg=Hin,
             )
             Cap = (_SOFT_BEND_MAX_HALF_TURNS * math.pi * turn_radius_m) + math.dist(Pa, Pc)
+            # Preserve HAUL action on loaded transit repairs (haul distance).
+            up_action = HAUL if B[3] == HAUL else MOVE
             if Short and _polyline_length_m(Pa, Short) <= Cap:
                 for Mx, My in Short:
-                    Next.append((Mx, My, 0.0, MOVE, B[4], Mx, My))
+                    Next.append((Mx, My, 0.0, up_action, B[4], Mx, My))
             Next.append(C)
             I += 2
         if I < len(Cur):
@@ -1282,27 +2346,46 @@ def _patch_drivable_lanes(
     grid: Grid,
     blade_m: float,
 ) -> List[List[Tuple[Cell, float]]]:
-    """Decompose a patch into its parallel blade-width lanes (drivable units).
+    """Decompose a patch into parallel blade-width lanes (drivable units).
 
-    The cells are projected onto the patch's principal axis (:func:`_principal_
-    heading_deg`) and binned into blade-wide bands across it. Each band, swept
-    end-to-end along the long axis, is one straight (gently flowing) lane a
-    scraper can drive without a hairpin. Returned in cross-axis band order, each
-    lane's cells sorted along the axis. This is the natural decomposition that
-    turns a knotted serpentine (whose U-turns are the knot) into a set of
-    individually drivable lanes.
+    Sweeps candidate headings every 10° and keeps the orientation with the
+    fewest lanes (tie-break: longest along-axis span) so knot re-profiling
+    inserts as few U-turn keyholes as the geometry allows. Each band is one
+    straight lane; returned in cross-axis order with cells sorted along-axis.
     """
     if len(cells) <= 1:
         return [list(cells)]
     centers = [grid.cell_center_xy(*c) for c, _d in cells]
-    h = _principal_heading_deg(centers)
-    th = math.radians(h)
-    uh = (math.sin(th), math.cos(th))     # along the long axis
-    vh = (math.cos(th), -math.sin(th))    # across it (lane-to-lane)
+    step = max(blade_m, 1e-3)
+    best_h = _principal_heading_deg(centers)
+
+    def _lane_score(deg: float):
+        th = math.radians(deg)
+        uh = (math.sin(th), math.cos(th))
+        vh = (math.cos(th), -math.sin(th))
+        ox, oy = _centroid(centers)
+        us = [(x - ox) * uh[0] + (y - oy) * uh[1] for x, y in centers]
+        vs = [(x - ox) * vh[0] + (y - oy) * vh[1] for x, y in centers]
+        v_min, v_max = min(vs), max(vs)
+        n_lanes = max(1, int(math.floor((v_max - v_min) / step + 1e-9)) + 1)
+        if v_max - (v_min + step * (n_lanes - 1)) > 0.5 * step:
+            n_lanes += 1
+        return n_lanes, max(us) - min(us)
+
+    best_lanes, _best_span = _lane_score(best_h)
+    for deg in range(0, 180, 10):
+        n_lanes, _span = _lane_score(float(deg))
+        # Intent: only leave PCA when another heading truly needs fewer U-turns.
+        if n_lanes < best_lanes:
+            best_lanes = n_lanes
+            best_h = float(deg)
+
+    th = math.radians(best_h)
+    uh = (math.sin(th), math.cos(th))
+    vh = (math.cos(th), -math.sin(th))
     ox, oy = _centroid(centers)
     us = [(x - ox) * uh[0] + (y - oy) * uh[1] for x, y in centers]
     vs = [(x - ox) * vh[0] + (y - oy) * vh[1] for x, y in centers]
-    step = max(blade_m, 1e-3)
     v_min, v_max = min(vs), max(vs)
     n_lanes = max(1, int(math.floor((v_max - v_min) / step + 1e-9)) + 1)
     lane_v = [v_min + step * k for k in range(n_lanes)]
@@ -1478,12 +2561,18 @@ def reprofile_knots(
         if len(p.cut_cells) > 3:
             rendered = _rendered_lane(p.cut_cells, grid, blade_m, flow_pass, cut_h,
                                       lane_overlap, orient_end_xy=p.fill_start_xy)
-            c_now = _hard_turn_count(rendered, grid, blade_m)
+            c_now = max(_hard_turn_count(rendered, grid, blade_m),
+                        _cell_near_reverse_count(p.cut_cells, grid))
             if c_now >= hairpin_min:
                 bcells = _boustrophedon_cells(p.cut_cells, grid, blade_m,
                                               orient_end_xy=p.fill_start_xy)
                 blane = _lane_direct(bcells, grid, orient_end_xy=p.fill_start_xy)
-                if _hard_turn_count(blane, grid, blade_m) < c_now:
+                b_score = max(_hard_turn_count(blane, grid, blade_m),
+                              _cell_near_reverse_count(bcells, grid))
+                # Intent: adopt only when total U-turn burden drops (lanes−1 vs knot score).
+                c_proxy = max(c_now, len(_patch_drivable_lanes(p.cut_cells, grid, blade_m)) - 1)
+                b_proxy = max(b_score, len(_patch_drivable_lanes(bcells, grid, blade_m)) - 1)
+                if b_proxy < c_proxy:
                     p.cut_cells = bcells
                     p.cut_knot_reduced = True
                     n += 1
@@ -1492,12 +2581,17 @@ def reprofile_knots(
         if len(p.fill_cells) > 3:
             rendered = _rendered_lane(p.fill_cells, grid, blade_m, flow_pass, fill_h,
                                       lane_overlap, orient_start_xy=cut_end)
-            c_now = _hard_turn_count(rendered, grid, blade_m)
+            c_now = max(_hard_turn_count(rendered, grid, blade_m),
+                        _cell_near_reverse_count(p.fill_cells, grid))
             if c_now >= hairpin_min:
                 bcells = _boustrophedon_cells(p.fill_cells, grid, blade_m,
                                               orient_start_xy=cut_end)
                 blane = _lane_direct(bcells, grid, orient_start_xy=cut_end)
-                if _hard_turn_count(blane, grid, blade_m) < c_now:
+                b_score = max(_hard_turn_count(blane, grid, blade_m),
+                              _cell_near_reverse_count(bcells, grid))
+                c_proxy = max(c_now, len(_patch_drivable_lanes(p.fill_cells, grid, blade_m)) - 1)
+                b_proxy = max(b_score, len(_patch_drivable_lanes(bcells, grid, blade_m)) - 1)
+                if b_proxy < c_proxy:
                     p.fill_cells = bcells
                     p.fill_knot_reduced = True
                     n += 1
@@ -1522,6 +2616,7 @@ def build_guidance(
     smooth_scale: float = 0.7,
     obstacles: ObstacleField = EMPTY_OBSTACLES,
     arm_obstacles: Optional[dict] = None,
+    equipment_length_m: Optional[float] = None,
 ) -> GuidanceResult:
     """Build the blade-scale operator guidance track from the optimized route.
 
@@ -1541,6 +2636,10 @@ def build_guidance(
     (so sweeps are never shortened below the coverage floor); headland arcs add
     to reposition distance only. ``--no-route-smoothing`` skips the Gaussian step
     but still enforces the turning-radius bound.
+
+    ``equipment_length_m`` (default 43 ft) inserts a straight blade-up lineup
+    before and after each CUT/FILL run so the train is aligned when the blade
+    engages and again when it lifts; pass 0 to disable.
     """
     blade_m = blade_width_mm / 1000.0
     zone, north = field.zone, field.is_northern
@@ -1553,6 +2652,11 @@ def build_guidance(
     if turn_radius_m is None:
         turn_radius_m = DEFAULT_TURNING_CIRCLE_FT * 0.5 * FEET_TO_METERS
     sigma_idx = (turn_radius_m / grid.grid_size_m) * smooth_scale if smooth_route else 0.0
+    # Intent: default 43 ft lineup when caller leaves equipment_length_m as None.
+    if equipment_length_m is None:
+        lineup_m = DEFAULT_EQUIPMENT_LENGTH_FT * FEET_TO_METERS
+    else:
+        lineup_m = equipment_length_m
 
     points: List[GuidancePoint] = []
     return_d = haul_d = cut_d = fill_d = grade_d = reposition_d = 0.0
@@ -1655,12 +2759,19 @@ def build_guidance(
                 else:
                     raw.append((x, y, 0.0, GRADE, pass_no, rev_disp[i][0], rev_disp[i][1]))
 
+    sample_m = max(grid.grid_size_m, 0.5)
     # Hard turning-radius bound on blade-down sweeps: replace undrivable corners
     # with R-radius MOVE headlands before obstacle detours (so detours also wrap
     # the new blade-up arcs).
     raw = _enforce_min_turn_radius(
-        raw, turn_radius_m, turn_threshold_deg, max(grid.grid_size_m, 0.5)
+        raw, turn_radius_m, turn_threshold_deg, sample_m, grid, lineup_m
     )
+    # Intent: straighten the train before and after each CUT/FILL run.
+    raw = _enforce_equipment_lineup(raw, lineup_m, sample_m, turn_radius_m, field=grid)
+    # Intent: exit/entry spurs change HAUL/MOVE chords — re-apply R-bounded transit.
+    if lineup_m > 1e-6:
+        raw = _enforce_blade_up_transit_turns(raw, turn_radius_m, sample_m, field=grid)
+        raw = _repair_sharp_steering_bends(raw, turn_radius_m, sample_m, field=grid)
 
     # Obstacle detour pass (§12.3): any blade-up travel leg (RETURN deadhead,
     # loaded HAUL, multi-drop MOVE) whose straight line crosses an exclusion zone

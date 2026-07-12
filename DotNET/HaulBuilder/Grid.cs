@@ -9,7 +9,7 @@ namespace HaulBuilder
     public static class GridMath
     {
         private const Double DEFAULT_COMPACTION = 1.2;
-        private const Double DEFAULT_GRID_SIZE_FT = 7.5;
+        private const Double DEFAULT_GRID_SIZE_FT = 8.5;
         private const Double DEFAULT_MAX_DEPTH_MM = 61.0;
         private const Double DEFAULT_SWELL_FACTOR = 1.3;
 
@@ -1148,6 +1148,28 @@ namespace HaulBuilder
         {
             // Preserve existing call sites that use XY casing.
             return CellCenterXy(Bx, By);
+        }
+
+        /// <summary>
+        /// True when a world point lies in a valid field cell (not outside the mask).
+        /// </summary>
+        /// <param name="X">Easting in metres.</param>
+        /// <param name="Y">Northing in metres.</param>
+        /// <returns>True when the containing bin is valid.</returns>
+        public Boolean ContainsWorldXy
+            (
+            Double X,
+            Double Y
+            )
+        {
+            Int32 Bx = (Int32)Math.Floor((X - MinX) / GridSizeM);
+            Int32 By = (Int32)Math.Floor((Y - MinY) / GridSizeM);
+            if ((Bx < 0) || (By < 0) || (Bx >= Width) || (By >= Height))
+            {
+                return false;
+            }
+
+            return Valid[By, Bx];
         }
     }
 

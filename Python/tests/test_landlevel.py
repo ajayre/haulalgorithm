@@ -421,7 +421,8 @@ def _heading_change_deg(a, b, c):
 def _assert_steering_respects_turn_radius(points, turn_radius_m, turn_threshold_deg=60.0):
     """Full steering polyline bends above the noise floor must have circumradius >= R."""
     noise = turn_threshold_deg
-    skip = {"START", "END", "RETURN", "HAUL"}
+    # START/END are markers; RETURN may still be a straight deadhead pending a future pass.
+    skip = {"START", "END", "RETURN"}
     coords = [(p.x, p.y, p.action) for p in points]
     for k in range(1, len(coords) - 1):
         if coords[k - 1][2] in skip or coords[k][2] in skip or coords[k + 1][2] in skip:
@@ -436,6 +437,172 @@ def _assert_steering_respects_turn_radius(points, turn_radius_m, turn_threshold_
             f"undrivable {coords[k - 1][2]}->{coords[k][2]}->{coords[k + 1][2]} "
             f"bend radius={r:.3f}m < R={turn_radius_m:.3f}m at ({b[0]:.2f},{b[1]:.2f})"
         )
+
+
+def test_keyhole_prefers_in_field_chirality():
+    """When one CCC side leaves the field, the other chirality is chosen."""
+    from landlevel import DEFAULT_TURNING_CIRCLE_FT, FEET_TO_METERS
+    from landlevel.swaths import _keyhole_u_turn
+    import numpy as np
+    from landlevel.grid import Grid
+
+    R = DEFAULT_TURNING_CIRCLE_FT * 0.5 * FEET_TO_METERS
+    # Tiny 3x3 field; U-turn at the north edge so one bulb goes outside.
+    G = 2.0
+    valid = np.ones((3, 3), dtype=bool)
+    grid = Grid(
+        grid_size_m=G,
+        width=3,
+        height=3,
+        min_x=0.0,
+        min_y=0.0,
+        zone=10,
+        is_northern=True,
+        mean_lat=0.0,
+        mean_lon=0.0,
+        existing=np.zeros((3, 3)),
+        target=np.zeros((3, 3)),
+        valid=valid,
+        swell_factor=1.3,
+        compaction=1.2,
+        max_depth_mm=61.0,
+    )
+    # Eastbound then reverse westbound, 2 m apart, near north edge of field.
+    start = (G * 1.5, G * 2.5)
+    end = (G * 1.5, G * 2.5 - 2.0)
+    path = _keyhole_u_turn(start, 90.0, end, 270.0, R, 0.5, field=grid)
+    assert path and len(path) >= 3
+    outside = sum(1 for x, y in path if not grid.contains_world_xy(x, y))
+    path_any = _keyhole_u_turn(start, 90.0, end, 270.0, R, 0.5, field=None)
+    outside_any = sum(1 for x, y in (path_any or []) if not grid.contains_world_xy(x, y))
+    assert outside <= outside_any
+
+
+def test_keyhole_slides_forward_to_stay_in_field():
+    """Near a cut-off corner, tip CCC spills out; side-arc keyhole stays in-field."""
+    from landlevel import DEFAULT_TURNING_CIRCLE_FT, FEET_TO_METERS
+    from landlevel.swaths import _dubins_shortest, _keyhole_u_turn, _compass_to_math
+    import numpy as np
+    from landlevel.grid import Grid
+
+    R = DEFAULT_TURNING_CIRCLE_FT * 0.5 * FEET_TO_METERS
+    G = 2.0
+    W, H = 16, 16
+    valid = np.ones((H, W), dtype=bool)
+    # L-shaped field: SE void so a tip CCC spills out; north/west stay open for a side arc.
+    for by in range(H):
+        for bx in range(W):
+            x = (bx + 0.5) * G
+            y = (by + 0.5) * G
+            if x > 14.0 and y < 18.0:
+                valid[by, bx] = False
+    grid = Grid(
+        grid_size_m=G,
+        width=W,
+        height=H,
+        min_x=0.0,
+        min_y=0.0,
+        zone=10,
+        is_northern=True,
+        mean_lat=0.0,
+        mean_lon=0.0,
+        existing=np.zeros((H, W)),
+        target=np.zeros((H, W)),
+        valid=valid,
+        swell_factor=1.3,
+        compaction=1.2,
+        max_depth_mm=61.0,
+    )
+    start = (12.0, 20.0)
+    end = (12.0, 18.0)
+    St = _compass_to_math(90.0)
+    Et = _compass_to_math(270.0)
+    tip = _dubins_shortest(
+        start[0], start[1], St, end[0], end[1], Et, R, 0.5,
+        ccc_only=True, field=grid, heading_in_deg=90.0,
+    )
+    tip_out = sum(
+        1 for x, y in (tip or []) if not grid.contains_world_xy(x, y)
+    )
+    assert tip_out > 0, "fixture must make the tip CCC leave the field"
+
+    path = _keyhole_u_turn(start, 90.0, end, 270.0, R, 0.5, field=grid)
+    assert path and len(path) >= 3
+    outside = sum(1 for x, y in path if not grid.contains_world_xy(x, y))
+    assert outside < tip_out, (
+        f"in-field keyhole should reduce outside samples ({outside} vs tip {tip_out})"
+    )
+
+
+def test_enforce_multidrop_move_inserts_curved_transit():
+    """Parallel cut pockets joined by MOVE must get an R-bounded keyhole, not a chord."""
+    from landlevel import DEFAULT_TURNING_CIRCLE_FT, FEET_TO_METERS
+    from landlevel.swaths import _enforce_min_turn_radius, CUT, MOVE
+
+    R = DEFAULT_TURNING_CIRCLE_FT * 0.5 * FEET_TO_METERS
+    # Eastbound pocket, hop south 4 m, westbound pocket — near-reverse multi-drop.
+    raw = [
+        (0.0, 0.0, 0.05, CUT, 1, 0.0, 0.0),
+        (20.0, 0.0, 0.05, CUT, 1, 20.0, 0.0),
+        (40.0, 0.0, 0.05, CUT, 1, 40.0, 0.0),
+        (40.0, 4.0, 0.05, MOVE, 1, 40.0, 4.0),
+        (20.0, 4.0, 0.05, CUT, 1, 20.0, 4.0),
+        (0.0, 4.0, 0.05, CUT, 1, 0.0, 4.0),
+    ]
+    out = _enforce_min_turn_radius(raw, R, 60.0, 1.0)
+    move_pts = [p for p in out if p[3] == MOVE]
+    assert len(move_pts) >= 3, f"expected curved MOVE transit samples, got {len(move_pts)}"
+
+    class _P:
+        def __init__(self, x, y, action):
+            self.x, self.y, self.action = x, y, action
+
+    pts = [_P(p[5], p[6], p[3]) for p in out]
+    _assert_steering_respects_turn_radius(pts, R, turn_threshold_deg=15.0)
+
+    move_len = 0.0
+    for i in range(1, len(out)):
+        if out[i][3] == MOVE:
+            a = (out[i - 1][5], out[i - 1][6])
+            b = (out[i][5], out[i][6])
+            move_len += math.dist(a, b)
+    assert move_len < (2.75 * math.pi * R)
+
+
+def test_enforce_haul_transit_inserts_curved_haul():
+    """Orthogonal cut→fill HAUL must get R-bounded transit samples, not a chord."""
+    from landlevel import DEFAULT_TURNING_CIRCLE_FT, FEET_TO_METERS
+    from landlevel.swaths import _enforce_min_turn_radius, CUT, FILL, HAUL
+
+    R = DEFAULT_TURNING_CIRCLE_FT * 0.5 * FEET_TO_METERS
+    raw = [
+        (0.0, 0.0, 0.05, CUT, 1, 0.0, 0.0),
+        (20.0, 0.0, 0.05, CUT, 1, 20.0, 0.0),
+        (40.0, 0.0, 0.05, CUT, 1, 40.0, 0.0),
+        (40.0, 50.0, 0.05, HAUL, 1, 40.0, 50.0),
+        (60.0, 50.0, 0.05, FILL, 1, 60.0, 50.0),
+        (80.0, 50.0, 0.05, FILL, 1, 80.0, 50.0),
+    ]
+    out = _enforce_min_turn_radius(raw, R, 60.0, 1.0)
+    haul_pts = [p for p in out if p[3] == HAUL]
+    assert len(haul_pts) >= 3, f"expected curved HAUL samples, got {len(haul_pts)}"
+
+    class _P:
+        def __init__(self, x, y, action):
+            self.x, self.y, self.action = x, y, action
+
+    pts = [_P(p[5], p[6], p[3]) for p in out]
+    _assert_steering_respects_turn_radius(pts, R, turn_threshold_deg=15.0)
+
+    # Contiguous HAUL run should stay a CSC transit, not stacked keyholes.
+    haul_len = 0.0
+    for i in range(1, len(out)):
+        if out[i][3] == HAUL:
+            a = (out[i - 1][5], out[i - 1][6])
+            b = (out[i][5], out[i][6])
+            haul_len += math.dist(a, b)
+    chord = 50.0
+    assert haul_len < (2.75 * math.pi * R) + chord
 
 
 def test_enforce_min_turn_radius_inserts_move_on_hairpin():
@@ -472,6 +639,151 @@ def test_enforce_min_turn_radius_inserts_move_on_hairpin():
         for i in range(len(full) - 1)
     )
     assert path_len < (2.75 * math.pi * R)
+
+
+def _max_contiguous_move_len(out) -> float:
+    """Longest contiguous MOVE run length on steering coords."""
+    run = 0.0
+    best = 0.0
+    for i in range(1, len(out)):
+        if out[i][3] == "MOVE":
+            a = (out[i - 1][5], out[i - 1][6])
+            b = (out[i][5], out[i][6])
+            run += math.dist(a, b)
+        else:
+            best = max(best, run)
+            run = 0.0
+    return max(best, run)
+
+
+def test_soft_bend_does_not_insert_keyhole():
+    """A mild short-leg kink must not become a CCC keyhole bulb."""
+    from landlevel import DEFAULT_TURNING_CIRCLE_FT, FEET_TO_METERS
+    from landlevel.swaths import _enforce_min_turn_radius, CUT, MOVE
+
+    R = DEFAULT_TURNING_CIRCLE_FT * 0.5 * FEET_TO_METERS
+    # ~25° soft kink on ~2 m legs (circumradius ≪ R) then continue east — no reverse.
+    raw = [
+        (0.0, 0.0, 0.05, CUT, 1, 0.0, 0.0),
+        (2.0, 0.0, 0.05, CUT, 1, 2.0, 0.0),
+        (4.0, 0.0, 0.05, CUT, 1, 4.0, 0.0),
+        (5.8, 0.85, 0.05, CUT, 1, 5.8, 0.85),
+        (7.6, 1.70, 0.05, CUT, 1, 7.6, 1.70),
+        (12.0, 1.70, 0.05, CUT, 1, 12.0, 1.70),
+        (18.0, 1.70, 0.05, CUT, 1, 18.0, 1.70),
+    ]
+    out = _enforce_min_turn_radius(raw, R, 60.0, 0.5)
+    # Fillet is OK; a full keyhole (~2πR) is not.
+    assert _max_contiguous_move_len(out) < (math.pi * R)
+
+
+def test_soft_bend_does_not_coalesce_into_later_uturn():
+    """Soft kink within 4R of a real U-turn must not open the keyhole early."""
+    from landlevel import DEFAULT_TURNING_CIRCLE_FT, FEET_TO_METERS
+    from landlevel.swaths import _enforce_min_turn_radius, CUT, MOVE
+
+    R = DEFAULT_TURNING_CIRCLE_FT * 0.5 * FEET_TO_METERS
+    raw = [
+        (0.0, 0.0, 0.05, CUT, 1, 0.0, 0.0),
+        (5.0, 0.0, 0.05, CUT, 1, 5.0, 0.0),
+        (10.0, 0.0, 0.05, CUT, 1, 10.0, 0.0),
+        # Soft ~25° kink (still eastbound).
+        (11.8, 0.85, 0.05, CUT, 1, 11.8, 0.85),
+        (13.6, 1.70, 0.05, CUT, 1, 13.6, 1.70),
+        (20.0, 1.70, 0.05, CUT, 1, 20.0, 1.70),
+        (25.0, 1.70, 0.05, CUT, 1, 25.0, 1.70),
+        # Real U-turn onto a westbound lane.
+        (25.0, 3.70, 0.05, CUT, 1, 25.0, 3.70),
+        (15.0, 3.70, 0.05, CUT, 1, 15.0, 3.70),
+        (5.0, 3.70, 0.05, CUT, 1, 5.0, 3.70),
+    ]
+    out = _enforce_min_turn_radius(raw, R, 60.0, 0.5)
+    assert any(p[3] == MOVE for p in out)
+    # First MOVE sample must be near the U-tip (x≈25), not the soft kink (x≈12).
+    first_move = next(p for p in out if p[3] == MOVE)
+    assert first_move[5] > 18.0, (
+        f"keyhole opened from soft kink at x={first_move[5]:.1f}, expected near U-tip"
+    )
+
+
+def test_equipment_lineup_entry_and_exit():
+    """Straight blade-up of length L before and after a CUT run."""
+    from landlevel import DEFAULT_EQUIPMENT_LENGTH_FT, DEFAULT_TURNING_CIRCLE_FT, FEET_TO_METERS
+    from landlevel.swaths import _enforce_equipment_lineup, CUT, FILL, HAUL, MOVE, START
+
+    L = DEFAULT_EQUIPMENT_LENGTH_FT * FEET_TO_METERS
+    R = DEFAULT_TURNING_CIRCLE_FT * 0.5 * FEET_TO_METERS
+    # Tip-based HAUL loop (full circle samples) must be dropped and rebuilt from exit.
+    raw = [
+        (0.0, 0.0, 0.0, START, 1, 0.0, 0.0),
+        (0.0, 0.0, 0.05, CUT, 1, 0.0, 0.0),
+        (10.0, 0.0, 0.05, CUT, 1, 10.0, 0.0),
+        (20.0, 0.0, 0.05, CUT, 1, 20.0, 0.0),
+        (20.0, 10.0, 0.0, HAUL, 1, 20.0, 10.0),
+        (10.0, 10.0, 0.0, HAUL, 1, 10.0, 10.0),
+        (10.0, 0.0, 0.0, HAUL, 1, 10.0, 0.0),
+        (50.0, 0.0, 0.0, HAUL, 1, 50.0, 0.0),
+        (50.0, 0.0, 0.05, FILL, 1, 50.0, 0.0),
+        (60.0, 0.0, 0.05, FILL, 1, 60.0, 0.0),
+    ]
+    out = _enforce_equipment_lineup(raw, L, 1.0, R)
+
+    # Entry: MOVE samples immediately before first CUT, length ≈ L along +x.
+    first_cut = next(i for i, p in enumerate(out) if p[3] == CUT)
+    approach = 0.0
+    cur = (out[first_cut][5], out[first_cut][6])
+    for i in range(first_cut - 1, -1, -1):
+        p = out[i]
+        if p[3] not in (MOVE, START):
+            break
+        q = (p[5], p[6])
+        seg = math.dist(cur, q)
+        if seg < 1e-9:
+            cur = q
+            continue
+        # Eastbound run → approach from the west (dot with +x).
+        dx = cur[0] - q[0]
+        if (dx / seg) < 0.95:
+            break
+        approach += seg
+        cur = q
+    assert approach >= 0.95 * L, f"entry lineup {approach:.2f}m < 0.95L"
+
+    # Exit: MOVE samples immediately after last tip of first CUT run.
+    tip = first_cut
+    while tip + 1 < len(out) and out[tip + 1][3] == CUT:
+        tip += 1
+    exit_len = 0.0
+    cur = (out[tip][5], out[tip][6])
+    exit_end = None
+    for i in range(tip + 1, len(out)):
+        p = out[i]
+        if p[3] != MOVE:
+            break
+        q = (p[5], p[6])
+        seg = math.dist(cur, q)
+        if seg < 1e-9:
+            cur = q
+            continue
+        dx = q[0] - cur[0]
+        if (dx / seg) < 0.95:
+            break
+        exit_len += seg
+        cur = q
+        exit_end = q
+    assert exit_len >= 0.95 * L, f"exit lineup {exit_len:.2f}m < 0.95L"
+
+    # Intent: old tip-based loop samples must not remain (single track from exit).
+    assert not any(
+        (p[3] == HAUL and abs(p[5] - 20.0) < 1e-6 and abs(p[6] - 10.0) < 1e-6)
+        for p in out
+    ), "old tip-based HAUL loop sample still present"
+    assert exit_end is not None
+    # Intent: after the exit spur, HAUL must continue from ExitEnd — not resume a tip loop.
+    first_haul = next(p for p in out[tip + 1 :] if p[3] == HAUL)
+    assert math.dist((first_haul[5], first_haul[6]), exit_end) < 2.0, (
+        f"HAUL resumes at {first_haul[5]:.1f},{first_haul[6]:.1f}, expected near exit {exit_end}"
+    )
 
 
 def test_guidance_respects_turning_circle(tmp_path):

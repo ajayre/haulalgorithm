@@ -26,9 +26,9 @@ namespace HaulBuilder
         public const Double MPH_TO_MPS = 0.44704;
 
         /// <summary>
-        /// Default square grid cell edge length in feet (~ one blade width).
+        /// Default square grid cell edge length in feet (matches effective blade width).
         /// </summary>
-        public const Double DEFAULT_GRID_SIZE_FT = 7.5;
+        public const Double DEFAULT_GRID_SIZE_FT = 8.5;
 
         /// <summary>
         /// Finished-area elevation tolerance in millimetres.
@@ -61,9 +61,9 @@ namespace HaulBuilder
         public const Double DEFAULT_MAX_DROP_HOP_FT = 100.0;
 
         /// <summary>
-        /// Default scraper blade width in millimetres.
+        /// Default scraper blade width in millimetres (8.5 ft tandem effective width).
         /// </summary>
-        public const Double DEFAULT_BLADE_WIDTH_MM = 2271.0;
+        public const Double DEFAULT_BLADE_WIDTH_MM = 2590.8;
 
         /// <summary>
         /// Field efficiency fraction (productive time); 0.8 = 80%.
@@ -111,9 +111,14 @@ namespace HaulBuilder
         public const Double DEFAULT_GRADE_SPEED_MPH = 8.0;
 
         /// <summary>
-        /// Default tractor+scraper turning circle diameter in feet.
+        /// Default tractor+scraper turning circle diameter in feet (radius 25 ft).
         /// </summary>
-        public const Double DEFAULT_TURNING_CIRCLE_FT = 45.0;
+        public const Double DEFAULT_TURNING_CIRCLE_FT = 50.0;
+
+        /// <summary>
+        /// Default tractor+scraper overall length in feet (lineup before/after CUT/FILL).
+        /// </summary>
+        public const Double DEFAULT_EQUIPMENT_LENGTH_FT = 43.0;
 
         /// <summary>
         /// Default heading-change threshold treated as a true turn in degrees.

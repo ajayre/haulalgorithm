@@ -25,7 +25,7 @@ namespace HaulBuilder
             HeadingStrength = 0.5;
             StripBias = 50.0;
             MaxDropHopFt = Constants.DEFAULT_MAX_DROP_HOP_FT;
-            MinLoadFillPct = 90.0;
+            MinLoadFillPct = 80.0;
             FieldEfficiency = Constants.DEFAULT_FIELD_EFFICIENCY;
             LoadingSpeedMph = Constants.DEFAULT_LOADING_SPEED_MPH;
             HaulSpeedMph = Constants.DEFAULT_HAUL_SPEED_MPH;
@@ -42,8 +42,9 @@ namespace HaulBuilder
             TurnSpeedMph = Constants.DEFAULT_TURN_SPEED_MPH;
             GradeSpeedMph = Constants.DEFAULT_GRADE_SPEED_MPH;
             TurningCircleFt = Constants.DEFAULT_TURNING_CIRCLE_FT;
+            EquipmentLengthFt = Constants.DEFAULT_EQUIPMENT_LENGTH_FT;
             TurnThresholdDeg = Constants.DEFAULT_TURN_THRESHOLD_DEG;
-            ReorderWindow = 0;
+            ReorderWindow = 50;
             AnimateStride = 10;
             AnimatePixelsPerBin = 8;
             AnimateMode = "cutfill";
@@ -243,6 +244,11 @@ namespace HaulBuilder
         /// Gets or sets turning circle diameter in feet.
         /// </summary>
         public Double TurningCircleFt { get; set; }
+
+        /// <summary>
+        /// Gets or sets tractor+scraper overall length in feet (straight lineup before/after CUT/FILL).
+        /// </summary>
+        public Double EquipmentLengthFt { get; set; }
 
         /// <summary>
         /// Gets or sets turn threshold in degrees.

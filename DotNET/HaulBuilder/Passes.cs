@@ -1467,6 +1467,14 @@ namespace HaulBuilder
             return HaveBest ? (BestCell, BestDist) : null;
         }
 
+
+        /// <summary>
+        /// Aggregates local flow vectors over a patch for a dominant heading.
+        /// </summary>
+        /// <param name="FxS">Flow X components.</param>
+        /// <param name="FyS">Flow Y components.</param>
+        /// <param name="Cells">Patch cells.</param>
+        /// <returns>Compass heading in degrees, or NaN when flat.</returns>
         static private Double FlowHeading
             (
             Double[,] FxS,
@@ -1491,6 +1499,13 @@ namespace HaulBuilder
             return (Math.Atan2(SumX, SumY) * 180.0 / Math.PI + 360.0) % 360.0;
         }
 
+        /// <summary>
+        /// Refunds tentatively consumed cells back to the ledger.
+        /// </summary>
+        /// <param name="Remaining">Remaining depth matrix.</param>
+        /// <param name="Cells">Cells to refund.</param>
+        /// <param name="Tracker">Optional depth tracker.</param>
+        /// <param name="IsFill">Whether these are fill cells.</param>
         static private void RefundCells
             (
             Double[,] Remaining,
@@ -1520,6 +1535,12 @@ namespace HaulBuilder
             }
         }
 
+        /// <summary>
+        /// Centroid of patch cell centres.
+        /// </summary>
+        /// <param name="Cells">Patch cells.</param>
+        /// <param name="Grid">Grid geometry.</param>
+        /// <returns>Mean world XY.</returns>
         static private (Double X, Double Y) CentroidCells
             (
             List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Cells,
@@ -1539,6 +1560,13 @@ namespace HaulBuilder
             return (SumX / Cells.Count, SumY / Cells.Count);
         }
 
+        /// <summary>
+        /// Index of the cell farthest from a reference point.
+        /// </summary>
+        /// <param name="Cells">Candidate cells.</param>
+        /// <param name="Ref">Reference world XY.</param>
+        /// <param name="Grid">Grid geometry.</param>
+        /// <returns>Index into <paramref name="Cells"/>.</returns>
         static private Int32 FarthestIndex
             (
             List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Cells,

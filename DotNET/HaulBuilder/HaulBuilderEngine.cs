@@ -518,7 +518,8 @@ namespace HaulBuilder
                 (options.TurningCircleFt * 0.5 * Constants.FEET_TO_METERS),
                 0.7,
                 obstacles,
-                null);
+                null,
+                (options.EquipmentLengthFt * Constants.FEET_TO_METERS));
             result.Guidance = Guidance;
             result.GuidancePoints.AddRange(Guidance.Points);
             result.GuidanceTime = Swaths.EstimateGuidanceTime(
@@ -984,6 +985,7 @@ namespace HaulBuilder
                 TurnSpeedMph = options.TurnSpeedMph,
                 GradeSpeedMph = options.GradeSpeedMph,
                 TurningCircleFt = options.TurningCircleFt,
+                EquipmentLengthFt = options.EquipmentLengthFt,
                 TurnThresholdDeg = options.TurnThresholdDeg,
                 NoGradeReturn = options.NoGradeReturn,
                 NoRouteSmoothing = options.NoRouteSmoothing,

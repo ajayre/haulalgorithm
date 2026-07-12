@@ -31,6 +31,42 @@ internal static class Program
             return;
         }
 
+        if ((args.Length > 0) && (args[0] == "--diag-route3-fill"))
+        {
+            Environment.Exit(DiagRoute3Fill.Run(args.Skip(1).ToArray()));
+            return;
+        }
+
+        if ((args.Length > 0) && (args[0] == "--diag-cut-path"))
+        {
+            Environment.Exit(DiagCutPath.Run(args.Skip(1).ToArray()));
+            return;
+        }
+
+        if ((args.Length > 0) && (args[0] == "--diag-route-loops"))
+        {
+            Environment.Exit(DiagRouteLoops.Run(args.Skip(1).ToArray()));
+            return;
+        }
+
+        if ((args.Length > 0) && (args[0] == "--diag-route-radius"))
+        {
+            Environment.Exit(DiagRouteRadius.Run(args.Skip(1).ToArray()));
+            return;
+        }
+
+        if ((args.Length > 0) && (args[0] == "--diag-route-outside"))
+        {
+            Environment.Exit(DiagRouteOutside.Run(args.Skip(1).ToArray()));
+            return;
+        }
+
+        if ((args.Length > 0) && (args[0] == "--export-first-routes"))
+        {
+            Environment.Exit(ExportFirstRoutes.Run(args.Skip(1).ToArray()));
+            return;
+        }
+
         if ((args.Length > 0) && (args[0] == "--route2-png"))
         {
             String OutPath = (args.Length > 1)
@@ -39,7 +75,19 @@ internal static class Program
             String AgdPath = (args.Length > 2)
                 ? Path.GetFullPath(args[2])
                 : Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "TheShop2_2ft.agd"));
-            WriteRoute2Png(AgdPath, OutPath);
+            WriteRoutePng(AgdPath, OutPath, passIndex: 1);
+            return;
+        }
+
+        if ((args.Length > 0) && (args[0] == "--route11-png"))
+        {
+            String OutPath = (args.Length > 1)
+                ? Path.GetFullPath(args[1])
+                : Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "assets", "theshop2_route11_actual_dotnet.png"));
+            String AgdPath = (args.Length > 2)
+                ? Path.GetFullPath(args[2])
+                : Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "TheShop2_2ft.agd"));
+            WriteRoutePng(AgdPath, OutPath, passIndex: 10);
             return;
         }
 
@@ -81,7 +129,7 @@ internal static class Program
             Constants.DEFAULT_MAX_DROP_HOP_FT * Constants.FEET_TO_METERS,
             Flow,
             true,
-            0.9,
+            0.8,
             Obstacles.EMPTY_OBSTACLES);
         TimeSpan T4 = Sw.Elapsed;
         Route Route = Routing.SequencePasses(
@@ -136,13 +184,20 @@ internal static class Program
     /// </summary>
     /// <param name="agdPath">Path to the AGD fixture.</param>
     /// <param name="outPath">Destination PNG path.</param>
-    private static void WriteRoute2Png
+    /// <summary>
+    /// Writes a single-pass guidance PNG for TheShop2 (1-based pass display via 0-based index).
+    /// </summary>
+    /// <param name="agdPath">Path to the AGD fixture.</param>
+    /// <param name="outPath">Output PNG path.</param>
+    /// <param name="passIndex">0-based index into the sequenced route.</param>
+    private static void WriteRoutePng
         (
         String agdPath,
-        String outPath
+        String outPath,
+        Int32 passIndex
         )
     {
-        // Match the Python route-2 render: 7.5 ft flow-aligned plan, guidance for pass 2 only.
+        // Match the Python single-route render: default grid/blade flow-aligned plan, one ordered pass.
         Double ScraperBcy = Constants.DEFAULT_SCRAPER_CAPACITY_LCY / Constants.DEFAULT_SWELL_FACTOR;
         AgdField Field = Agd.Parse(agdPath);
         Grid Grid = GridMath.BuildGrid(Field, Constants.DEFAULT_GRID_SIZE_FT);
@@ -161,7 +216,7 @@ internal static class Program
             Constants.DEFAULT_MAX_DROP_HOP_FT * Constants.FEET_TO_METERS,
             Flow,
             true,
-            0.9,
+            0.8,
             Obstacles.EMPTY_OBSTACLES);
         Route FullRoute = Routing.SequencePasses(
             PassResult.Passes,
@@ -175,8 +230,20 @@ internal static class Program
         Double Heading = Passes.EstimateSlopeHeading(Grid);
         Swaths.ReprofileKnots(FullRoute, Grid, Constants.DEFAULT_BLADE_WIDTH_MM, 3, Heading, 0.0);
 
-        Pass Pass2 = FullRoute.OrderedPasses[1];
-        Route Mini = new Route(new List<Int32> { 0 }, new List<Pass> { Pass2 }, 0.0);
+        if ((passIndex < 0) || (passIndex >= FullRoute.OrderedPasses.Count))
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(passIndex),
+                passIndex,
+                String.Format(
+                    CultureInfo.InvariantCulture,
+                    "pass index {0} out of range (n={1})",
+                    passIndex,
+                    FullRoute.OrderedPasses.Count));
+        }
+
+        Pass PassN = FullRoute.OrderedPasses[passIndex];
+        Route Mini = new Route(new List<Int32> { 0 }, new List<Pass> { PassN }, 0.0);
         GuidanceResult Guidance = Swaths.BuildGuidance(Grid, Field, Mini, Constants.DEFAULT_BLADE_WIDTH_MM, Heading);
         List<GuidancePoint> Pts = Guidance.Points.Where(Point => Point.PassNo == 1).ToList();
         Double BladeM = Constants.DEFAULT_BLADE_WIDTH_MM / 1000.0;
@@ -189,7 +256,14 @@ internal static class Program
         }
 
         File.WriteAllBytes(outPath, Png);
-        Console.WriteLine(String.Format("wrote {0} ({1} bytes, {2} waypoints, haul_m={3:F1})", outPath, Png.Length, Pts.Count, Pass2.HaulDistanceM));
+        Console.WriteLine(String.Format(
+            CultureInfo.InvariantCulture,
+            "wrote {0} ({1} bytes, {2} waypoints, route={3}, haul_m={4:F1})",
+            outPath,
+            Png.Length,
+            Pts.Count,
+            passIndex + 1,
+            PassN.HaulDistanceM));
     }
 
     /// <summary>
@@ -219,7 +293,7 @@ internal static class Program
             Constants.DEFAULT_MAX_DROP_HOP_FT * Constants.FEET_TO_METERS,
             Flow,
             true,
-            0.9,
+            0.8,
             Obstacles.EMPTY_OBSTACLES);
         Route FullRoute = Routing.SequencePasses(
             PassResult.Passes,

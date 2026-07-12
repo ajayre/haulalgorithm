@@ -22,9 +22,9 @@ FEET_TO_METERS = 0.3048
 MPH_TO_MPS = 0.44704
 
 # Defaults (spec §6.2, §6.3, §6.4).
-# 7.5 ft ~= one blade width (2271 mm), so each scraper load is one continuous
-# blade-wide lane rather than a multi-lane patch that would force tight turns.
-DEFAULT_GRID_SIZE_FT = 7.5
+# 8.5 ft ~= tandem scraper volume-weighted effective blade width (2590.8 mm),
+# so each scraper load is one continuous blade-wide lane.
+DEFAULT_GRID_SIZE_FT = 8.5
 DEFAULT_TOLERANCE_MM = 10.0
 # Scraper capacity is specified in LCY (loose, in the scraper). LCY = BCY × swell,
 # so the per-pass bank limit is scraper_lcy / swell (20 LCY ÷ 1.3 ≈ 15.4 BCY).
@@ -37,7 +37,7 @@ DEFAULT_MAX_DEPTH_MM = 61.0       # 0.2 ft
 # partially full and paying for a whole separate cut-haul-fill-grade cycle later.
 # Within this hop, continuing the current load is cheaper than a new pass.
 DEFAULT_MAX_DROP_HOP_FT = 100.0
-DEFAULT_BLADE_WIDTH_MM = 2271.0
+DEFAULT_BLADE_WIDTH_MM = 2590.8   # 8.5 ft tandem effective width
 DEFAULT_FIELD_EFFICIENCY = 0.8    # 80%: accounts for "Other" (lost) time
 
 DEFAULT_LOADING_SPEED_MPH = 4.0
@@ -50,7 +50,10 @@ DEFAULT_DECEL_TIME_S = 12.0
 # Maneuvering / finishing (operator-guidance realism).
 DEFAULT_TURN_SPEED_MPH = 4.0        # speed through a turn (machine slows to turn)
 DEFAULT_GRADE_SPEED_MPH = 8.0       # speed of the grade/compact return pass over a fill
-DEFAULT_TURNING_CIRCLE_FT = 45.0    # tractor+scraper turning circle (diameter)
+DEFAULT_TURNING_CIRCLE_FT = 50.0    # tractor+scraper turning circle (diameter; radius 25 ft)
+# Tractor+scraper overall length: straight blade-up lineup before/after each CUT/FILL
+# so the train is aligned when the blade drops and again when it lifts.
+DEFAULT_EQUIPMENT_LENGTH_FT = 43.0
 # Equipment (machine) width used as the clearance buffer around exclusion zones:
 # the no-go polygon is offset outward by half this so the machine BODY, not just
 # the GPS centerline, stays out of the zone (spec §12.3).
