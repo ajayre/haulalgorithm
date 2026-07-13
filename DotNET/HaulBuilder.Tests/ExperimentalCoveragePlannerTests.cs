@@ -151,7 +151,7 @@ namespace HaulBuilder.Tests
             ExperimentalCoveragePlanner.PlanResult Plan = ExperimentalCoveragePlanner.Plan(
                 Cells, Grid, BLADE_WIDTH_M, null, null);
 
-            Assert.True(ExperimentalCoveragePlanner.ConservesAllocation(Cells, Plan.OrderedCells));
+            Assert.True(ExperimentalCoveragePlanner.ConservesAllocation(Cells, Plan.AccountedCells));
             Assert.True(Plan.Runs.Count < Cells.Count);
             foreach (ExperimentalCoveragePlanner.Run Run in Plan.Runs)
             {
@@ -163,6 +163,60 @@ namespace HaulBuilder.Tests
                     Assert.True(Grid.ContainsWorldXy(X, Y));
                 }
             }
+        }
+
+        /// <summary>
+        /// Verifies boundary-adjacent work is driven parallel to a straight outer field edge.
+        /// </summary>
+        [Fact]
+        public void Plan_EdgeWork_IsParallelToOuterBoundary
+            (
+            )
+        {
+            Grid Grid = MakeInsetGrid();
+            List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Cells =
+                new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>
+                {
+                    ((3, 2), 0.011),
+                    ((4, 2), 0.012),
+                    ((5, 2), 0.013),
+                    ((6, 2), 0.014),
+                };
+
+            ExperimentalCoveragePlanner.PlanResult Plan = ExperimentalCoveragePlanner.Plan(
+                Cells, Grid, BLADE_WIDTH_M, null, null);
+
+            Assert.Empty(Plan.OmittedCells);
+            Assert.NotEmpty(Plan.Runs);
+            Assert.All(Plan.Runs, Run => Assert.True(
+                ExperimentalFieldEdgePolicy.AxialHeadingDifferenceDeg(
+                    Run.HeadingDeg, 90.0) <= 7.5 + 1e-9));
+        }
+
+        /// <summary>
+        /// Verifies incompatible corner headings are explicitly and minimally omitted, never silently lost.
+        /// </summary>
+        [Fact]
+        public void Plan_IncompatibleCornerWork_IsExplicitlyAccountedAsOmitted
+            (
+            )
+        {
+            Grid Grid = MakeInsetGrid();
+            List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Cells =
+                new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>
+                {
+                    ((4, 2), 0.011),
+                    ((5, 2), 0.012),
+                    ((2, 4), 0.013),
+                };
+
+            ExperimentalCoveragePlanner.PlanResult Plan = ExperimentalCoveragePlanner.Plan(
+                Cells, Grid, BLADE_WIDTH_M, null, null);
+
+            Assert.True(ExperimentalCoveragePlanner.ConservesAllocation(
+                Cells, Plan.AccountedCells));
+            Assert.Single(Plan.OmittedCells);
+            Assert.Equal(2, Plan.OrderedCells.Count);
         }
 
         /// <summary>
@@ -283,6 +337,39 @@ namespace HaulBuilder.Tests
             Valid[2, 2] = true;
             Valid[3, 2] = true;
             Valid[3, 3] = true;
+            return new Grid(
+                1.0,
+                SIZE,
+                SIZE,
+                0.0,
+                0.0,
+                12,
+                true,
+                0.0,
+                0.0,
+                new Double[SIZE, SIZE],
+                new Double[SIZE, SIZE],
+                Valid,
+                1.3,
+                1.2,
+                61.0,
+                new List<List<(Double X, Double Y)>>());
+        }
+
+        /// <summary>Creates a rectangular field surrounded by an invalid exterior margin.</summary>
+        private static Grid MakeInsetGrid
+            (
+            )
+        {
+            const Int32 SIZE = 12;
+            Boolean[,] Valid = new Boolean[SIZE, SIZE];
+            for (Int32 By = 2; By <= 9; By += 1)
+            {
+                for (Int32 Bx = 2; Bx <= 9; Bx += 1)
+                {
+                    Valid[By, Bx] = true;
+                }
+            }
             return new Grid(
                 1.0,
                 SIZE,

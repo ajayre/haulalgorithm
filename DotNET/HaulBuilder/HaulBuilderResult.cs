@@ -58,6 +58,11 @@ namespace HaulBuilder
         public PassResult? PassResult { get; set; }
 
         /// <summary>
+        /// Gets or sets the isolated-edge-patch omission audit applied before routing.
+        /// </summary>
+        public EdgePatchOmissionResult? EdgePatchOmission { get; set; }
+
+        /// <summary>
         /// Gets or sets route sequencing result.
         /// </summary>
         public Route? Route { get; set; }

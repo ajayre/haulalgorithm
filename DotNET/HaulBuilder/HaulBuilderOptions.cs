@@ -56,6 +56,11 @@ namespace HaulBuilder
             PivotPixelsPerBin = 6;
             PivotAnimationStride = 15;
             EquipmentWidthFt = 14.0;
+            OmitIsolatedEdgePatches = true;
+            MaxIsolatedEdgePatchCells = 1;
+            MaxIsolatedEdgePatchVolumeBcy = 0.6;
+            MaxTotalIsolatedEdgePatchOmissionBcy = 2.0;
+            MaxTotalIsolatedEdgePatchOmissionPercent = 1.0;
             ExcludePolygonSpecs = new List<String>();
             Seed = Constants.DEFAULT_SEED;
         }
@@ -369,6 +374,24 @@ namespace HaulBuilder
         /// Gets or sets machine width in feet for obstacle buffering.
         /// </summary>
         public Double EquipmentWidthFt { get; set; }
+
+        /// <summary>
+        /// Gets or sets a value indicating whether isolated, uneconomic edge patches
+        /// may be omitted before route sequencing.
+        /// </summary>
+        public Boolean OmitIsolatedEdgePatches { get; set; }
+
+        /// <summary>Gets or sets the largest connected edge patch eligible for omission.</summary>
+        public Int32 MaxIsolatedEdgePatchCells { get; set; }
+
+        /// <summary>Gets or sets the maximum bank cubic yards in one eligible cut patch.</summary>
+        public Double MaxIsolatedEdgePatchVolumeBcy { get; set; }
+
+        /// <summary>Gets or sets the absolute project-wide omission cap in bank cubic yards.</summary>
+        public Double MaxTotalIsolatedEdgePatchOmissionBcy { get; set; }
+
+        /// <summary>Gets or sets the project-wide omission cap as a percentage of planned cut volume.</summary>
+        public Double MaxTotalIsolatedEdgePatchOmissionPercent { get; set; }
 
         /// <summary>
         /// Gets exclusion polygon specs as <c>lat,lon;lat,lon;...</c>.

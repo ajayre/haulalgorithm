@@ -75,6 +75,30 @@ namespace HaulBuilder.Tests
                 Second.Runs.Select(Run => (Run.Run.StartXy, Run.Run.EndXy)));
         }
 
+        /// <summary>
+        /// Verifies a boundary-facing work run ends early enough to begin a real in-field turn.
+        /// </summary>
+        [Fact]
+        public void Prepare_FieldEdge_RetreatsSoftWorkEndpointForTurnClearance
+            (
+            )
+        {
+            Grid Grid = MakeGrid();
+            ExperimentalCoveragePlanner.Run Run = MakeRun(
+                (5.5, 12.5), (24.5, 12.5), 90.0, (24, 12));
+
+            ExperimentalRunSequencer.SequencedRun Prepared =
+                ExperimentalRunSequencer.Prepare(
+                    Run, 0.0, 4.0, 0.5, Grid);
+
+            Assert.Equal(Run.StartXy, Prepared.Run.StartXy);
+            Assert.True(Prepared.Run.EndXy.X < Run.EndXy.X - 3.0);
+            Assert.Equal(Run.EndXy.Y, Prepared.Run.EndXy.Y, 9);
+            Assert.Same(Run.Cells, Prepared.Run.Cells);
+            Assert.True(Grid.ContainsWorldXy(
+                Prepared.ExitPose.X, Prepared.ExitPose.Y));
+        }
+
         /// <summary>Creates one minimal allocated straight run.</summary>
         private static ExperimentalCoveragePlanner.Run MakeRun
             (

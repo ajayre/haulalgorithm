@@ -82,6 +82,28 @@ namespace HaulBuilder.Tests
             AssertMaximumStep(Result.Points, SAMPLE_SPACING_M + 1e-6);
         }
 
+        /// <summary>Verifies a coincident opposite-heading pose produces a complete keyhole-style turn.</summary>
+        [Fact]
+        public void Connect_CoincidentOppositeHeading_BuildsRadiusValidTurn
+            (
+            )
+        {
+            Grid Grid = MakeGrid(50, 30);
+            ExperimentalConnectorPlanner.Pose Start =
+                new ExperimentalConnectorPlanner.Pose(24.5, 12.5, 90.0);
+            ExperimentalConnectorPlanner.Pose End =
+                new ExperimentalConnectorPlanner.Pose(24.5, 12.5, 270.0);
+
+            ExperimentalConnectorPlanner.Result Result = ExperimentalConnectorPlanner.Connect(
+                Start, End, 4.0, SAMPLE_SPACING_M, Grid);
+
+            Assert.True(Result.Success, Result.FailureReason);
+            Assert.True(Result.LengthM > 0.0);
+            Assert.Equal((Start.X, Start.Y), Result.Points[0]);
+            Assert.Equal((End.X, End.Y), Result.Points[Result.Points.Count - 1]);
+            AssertMaximumStep(Result.Points, SAMPLE_SPACING_M + 1e-6);
+        }
+
         /// <summary>
         /// Verifies consecutive samples stay within the requested interval.
         /// </summary>

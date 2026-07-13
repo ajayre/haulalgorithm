@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace HaulBuilder
 {
@@ -8,6 +9,13 @@ namespace HaulBuilder
     /// </summary>
     public static class ExperimentalLifecyclePlanner
     {
+        private const Double CORRIDOR_HEADING_TOLERANCE_DEG = 20.0;
+        private const Double CORRIDOR_BRIDGE_HEADING_TOLERANCE_DEG = 30.0;
+        private const Double CORRIDOR_LATERAL_TOLERANCE_CELLS = 0.5;
+        private const Double CORRIDOR_GAP_TOLERANCE_CELLS = 2.0;
+        private const Double MANUAL_CONNECTOR_PENALTY_M = 100000.0;
+        private const Int32 CUT_CORRIDOR_EXACT_RUN_LIMIT = 7;
+
         /// <summary>
         /// Strongly typed experimental guidance phases.
         /// </summary>
@@ -54,11 +62,15 @@ namespace HaulBuilder
             public PassPlan
                 (
                 ExperimentalRunSequencer.Result Cut,
-                ExperimentalRunSequencer.Result Fill
+                ExperimentalRunSequencer.Result Fill,
+                Int32 CutOmittedCellCount = 0,
+                Int32 FillOmittedCellCount = 0
                 )
             {
                 this.Cut = Cut;
                 this.Fill = Fill;
+                this.CutOmittedCellCount = CutOmittedCellCount;
+                this.FillOmittedCellCount = FillOmittedCellCount;
             }
 
             /// <summary>Gets sequenced cut work.</summary>
@@ -66,6 +78,12 @@ namespace HaulBuilder
 
             /// <summary>Gets sequenced fill work.</summary>
             public ExperimentalRunSequencer.Result Fill { get; }
+
+            /// <summary>Gets edge/corner cut cells explicitly omitted from guidance.</summary>
+            public Int32 CutOmittedCellCount { get; }
+
+            /// <summary>Gets edge/corner fill cells explicitly omitted from guidance.</summary>
+            public Int32 FillOmittedCellCount { get; }
         }
 
         /// <summary>
@@ -163,9 +181,20 @@ namespace HaulBuilder
                             PassIndex + 1));
                 }
 
+                ExperimentalRunSequencer.Result LifecycleCut = Pass.Cut;
                 if (Pass.Cut.Runs.Count > 0)
                 {
-                    ExperimentalConnectorPlanner.Pose CutEntry = Pass.Cut.Runs[0].EntryPose;
+                    LifecycleCut = BuildContinuousCutSequence(
+                        Pass.Cut,
+                        Current,
+                        Pass.Fill.Runs.Count == 0
+                            ? null
+                            : Pass.Fill.Runs[0].EntryPose,
+                        MinimumRadiusM,
+                        SampleSpacingM,
+                        Field);
+                    ExperimentalConnectorPlanner.Pose CutEntry =
+                        LifecycleCut.Runs[0].EntryPose;
                     if (Current.HasValue)
                     {
                         if (!AppendTransit(
@@ -185,14 +214,25 @@ namespace HaulBuilder
                         Segments.Add(new Segment(Phase.Start, false,
                             new List<(Double X, Double Y)> { (CutEntry.X, CutEntry.Y) }));
                     }
-                    AppendWorkSequence(Segments, Pass.Cut, Phase.LineupCut,
+                    AppendWorkSequence(Segments, LifecycleCut, Phase.LineupCut,
                         Phase.Cut, Phase.ExitCut, Phase.Transit, ref ManualAssistCount);
-                    Current = Pass.Cut.Runs[Pass.Cut.Runs.Count - 1].ExitPose;
+                    Current = LifecycleCut.Runs[
+                        LifecycleCut.Runs.Count - 1].ExitPose;
                 }
 
+                ExperimentalRunSequencer.Result LifecycleFill = Pass.Fill;
                 if (Pass.Fill.Runs.Count > 0)
                 {
-                    ExperimentalConnectorPlanner.Pose FillEntry = Pass.Fill.Runs[0].EntryPose;
+                    LifecycleFill = GradeReturn
+                        ? BuildContinuousFillSequence(
+                            Pass.Fill,
+                            Current,
+                            MinimumRadiusM,
+                            SampleSpacingM,
+                            Field)
+                        : Pass.Fill;
+                    ExperimentalConnectorPlanner.Pose FillEntry =
+                        LifecycleFill.Runs[0].EntryPose;
                     if (Current.HasValue)
                     {
                         if (!AppendTransit(
@@ -207,15 +247,20 @@ namespace HaulBuilder
                                     FailureReason));
                         }
                     }
-                    AppendWorkSequence(Segments, Pass.Fill, Phase.LineupFill,
+                    AppendWorkSequence(Segments, LifecycleFill, Phase.LineupFill,
                         Phase.Fill, Phase.ExitFill, Phase.Transit, ref ManualAssistCount);
-                    Current = Pass.Fill.Runs[Pass.Fill.Runs.Count - 1].ExitPose;
+                    Current = LifecycleFill.Runs[
+                        LifecycleFill.Runs.Count - 1].ExitPose;
                 }
 
                 if (GradeReturn && (Pass.Fill.Runs.Count > 0))
                 {
                     List<ExperimentalRunSequencer.SequencedRun> GradeRuns = BuildGradeRuns(
-                        Pass.Fill.Runs, PreferredLineupM, SampleSpacingM, Field);
+                        LifecycleFill.Runs,
+                        PreferredLineupM,
+                        MinimumRadiusM,
+                        SampleSpacingM,
+                        Field);
                     ExperimentalConnectorPlanner.Pose GradeEntry = GradeRuns[0].EntryPose;
                     if (Current.HasValue)
                     {
@@ -231,15 +276,32 @@ namespace HaulBuilder
                                     FailureReason));
                         }
                     }
-                    if (!AppendPreparedRuns(Segments, GradeRuns, Phase.LineupGrade,
-                        Phase.Grade, Phase.ExitGrade, MinimumRadiusM, SampleSpacingM,
-                        Field, ref ManualAssistCount, out String GradeFailureReason))
+                    Boolean GradeRunsAppended = UsesCorridorBridges(LifecycleFill)
+                        ? AppendPreparedRunsWithReversedConnectors(
+                            Segments,
+                            GradeRuns,
+                            LifecycleFill.Connectors,
+                            Phase.LineupGrade,
+                            Phase.Grade,
+                            Phase.ExitGrade,
+                            ref ManualAssistCount)
+                        : AppendPreparedRuns(
+                            Segments,
+                            GradeRuns,
+                            Phase.LineupGrade,
+                            Phase.Grade,
+                            Phase.ExitGrade,
+                            MinimumRadiusM,
+                            SampleSpacingM,
+                            Field,
+                            ref ManualAssistCount,
+                            out String GradeFailureReason);
+                    if (!GradeRunsAppended)
                     {
                         return Failure(Segments, ManualAssistCount,
                             String.Format(System.Globalization.CultureInfo.InvariantCulture,
-                                "Pass {0} disconnected grade runs cannot be connected in-field: {1}",
-                                PassIndex + 1,
-                                GradeFailureReason));
+                                "Pass {0} disconnected grade runs cannot be connected in-field.",
+                                PassIndex + 1));
                     }
                     Current = GradeRuns[GradeRuns.Count - 1].ExitPose;
                 }
@@ -277,6 +339,730 @@ namespace HaulBuilder
             }
         }
 
+        /// <summary>
+        /// Replaces compatible internal cut turns with short blade-up jogs. The first
+        /// entry lineup and final exit lineup remain unchanged; only the poses between
+        /// nearby, similarly aligned cut fragments are compacted.
+        /// </summary>
+        static public ExperimentalRunSequencer.Result BuildContinuousCutSequence
+            (
+            ExperimentalRunSequencer.Result Sequence,
+            ExperimentalConnectorPlanner.Pose? Inbound,
+            ExperimentalConnectorPlanner.Pose? Outbound,
+            Double MinimumRadiusM,
+            Double SampleSpacingM,
+            Grid Field
+            )
+        {
+            if (Sequence == null) throw new ArgumentNullException(nameof(Sequence));
+            if (!Sequence.Success || (Sequence.Runs.Count <= 1)) return Sequence;
+            if (Sequence.Runs.Count > CUT_CORRIDOR_EXACT_RUN_LIMIT)
+            {
+                return CompactAdjacentCutRuns(Sequence, SampleSpacingM, Field);
+            }
+
+            Int32 RunCount = Sequence.Runs.Count;
+            ExperimentalRunSequencer.SequencedRun[,] Options =
+                new ExperimentalRunSequencer.SequencedRun[RunCount, 2];
+            for (Int32 RunIndex = 0; RunIndex < RunCount; RunIndex += 1)
+            {
+                Options[RunIndex, 0] = Sequence.Runs[RunIndex];
+                Options[RunIndex, 1] = ReverseSequencedRun(Sequence.Runs[RunIndex]);
+            }
+
+            ExperimentalTransitPlanner.Result?[,,,] Transitions =
+                new ExperimentalTransitPlanner.Result?[RunCount, 2, RunCount, 2];
+            for (Int32 FirstIndex = 0; FirstIndex < RunCount; FirstIndex += 1)
+            {
+                for (Int32 FirstOrientation = 0; FirstOrientation < 2; FirstOrientation += 1)
+                {
+                    for (Int32 SecondIndex = 0; SecondIndex < RunCount; SecondIndex += 1)
+                    {
+                        if (FirstIndex == SecondIndex) continue;
+                        for (Int32 SecondOrientation = 0; SecondOrientation < 2; SecondOrientation += 1)
+                        {
+                            Transitions[
+                                FirstIndex,
+                                FirstOrientation,
+                                SecondIndex,
+                                SecondOrientation] = BuildCutConnector(
+                                    Options[FirstIndex, FirstOrientation],
+                                    Options[SecondIndex, SecondOrientation],
+                                    MinimumRadiusM,
+                                    SampleSpacingM,
+                                    Field);
+                        }
+                    }
+                }
+            }
+
+            Int32 StateCount = 1 << RunCount;
+            Double[,,] Costs = new Double[StateCount, RunCount, 2];
+            Int32[,,] PreviousIndices = new Int32[StateCount, RunCount, 2];
+            Int32[,,] PreviousOrientations = new Int32[StateCount, RunCount, 2];
+            for (Int32 Mask = 0; Mask < StateCount; Mask += 1)
+            {
+                for (Int32 RunIndex = 0; RunIndex < RunCount; RunIndex += 1)
+                {
+                    for (Int32 Orientation = 0; Orientation < 2; Orientation += 1)
+                    {
+                        Costs[Mask, RunIndex, Orientation] = Double.PositiveInfinity;
+                        PreviousIndices[Mask, RunIndex, Orientation] = -1;
+                        PreviousOrientations[Mask, RunIndex, Orientation] = -1;
+                    }
+                }
+            }
+
+            for (Int32 RunIndex = 0; RunIndex < RunCount; RunIndex += 1)
+            {
+                for (Int32 Orientation = 0; Orientation < 2; Orientation += 1)
+                {
+                    Double StartCostM = AnchorConnectorCost(
+                        Inbound,
+                        Options[RunIndex, Orientation].EntryPose,
+                        MinimumRadiusM,
+                        SampleSpacingM,
+                        Field);
+                    Costs[1 << RunIndex, RunIndex, Orientation] = StartCostM;
+                }
+            }
+
+            for (Int32 Mask = 1; Mask < StateCount; Mask += 1)
+            {
+                for (Int32 LastIndex = 0; LastIndex < RunCount; LastIndex += 1)
+                {
+                    for (Int32 LastOrientation = 0; LastOrientation < 2; LastOrientation += 1)
+                    {
+                        Double CurrentCostM = Costs[Mask, LastIndex, LastOrientation];
+                        if (!Double.IsFinite(CurrentCostM)) continue;
+                        for (Int32 NextIndex = 0; NextIndex < RunCount; NextIndex += 1)
+                        {
+                            if ((Mask & (1 << NextIndex)) != 0) continue;
+                            for (Int32 NextOrientation = 0; NextOrientation < 2; NextOrientation += 1)
+                            {
+                                ExperimentalTransitPlanner.Result? Connector = Transitions[
+                                    LastIndex,
+                                    LastOrientation,
+                                    NextIndex,
+                                    NextOrientation];
+                                if ((Connector == null) || !Connector.Success) continue;
+                                Int32 NextMask = Mask | (1 << NextIndex);
+                                Double CandidateCostM = CurrentCostM + ConnectorScoreM(Connector);
+                                if (CandidateCostM + 1e-9
+                                    >= Costs[NextMask, NextIndex, NextOrientation])
+                                {
+                                    continue;
+                                }
+                                Costs[NextMask, NextIndex, NextOrientation] = CandidateCostM;
+                                PreviousIndices[NextMask, NextIndex, NextOrientation] = LastIndex;
+                                PreviousOrientations[NextMask, NextIndex, NextOrientation] = LastOrientation;
+                            }
+                        }
+                    }
+                }
+            }
+
+            Int32 FullMask = StateCount - 1;
+            Double BestCostM = Double.PositiveInfinity;
+            Int32 BestIndex = -1;
+            Int32 BestOrientation = -1;
+            for (Int32 RunIndex = 0; RunIndex < RunCount; RunIndex += 1)
+            {
+                for (Int32 Orientation = 0; Orientation < 2; Orientation += 1)
+                {
+                    Double CandidateCostM = Costs[FullMask, RunIndex, Orientation]
+                        + AnchorConnectorCost(
+                            Outbound,
+                            Options[RunIndex, Orientation].ExitPose,
+                            MinimumRadiusM,
+                            SampleSpacingM,
+                            Field,
+                            Reverse: true);
+                    if (CandidateCostM + 1e-9 >= BestCostM) continue;
+                    BestCostM = CandidateCostM;
+                    BestIndex = RunIndex;
+                    BestOrientation = Orientation;
+                }
+            }
+            if (BestIndex < 0)
+            {
+                return CompactAdjacentCutRuns(Sequence, SampleSpacingM, Field);
+            }
+
+            List<(Int32 Index, Int32 Orientation)> OrderedStates =
+                new List<(Int32 Index, Int32 Orientation)>();
+            Int32 ReconstructMask = FullMask;
+            while (BestIndex >= 0)
+            {
+                OrderedStates.Add((BestIndex, BestOrientation));
+                Int32 PreviousIndex = PreviousIndices[
+                    ReconstructMask, BestIndex, BestOrientation];
+                Int32 PreviousOrientation = PreviousOrientations[
+                    ReconstructMask, BestIndex, BestOrientation];
+                ReconstructMask &= ~(1 << BestIndex);
+                BestIndex = PreviousIndex;
+                BestOrientation = PreviousOrientation;
+            }
+            OrderedStates.Reverse();
+
+            List<ExperimentalTransitPlanner.Result> Connectors =
+                new List<ExperimentalTransitPlanner.Result>();
+            Boolean HasDirectBridge = false;
+            for (Int32 Index = 1; Index < OrderedStates.Count; Index += 1)
+            {
+                (Int32 Index, Int32 Orientation) Previous = OrderedStates[Index - 1];
+                (Int32 Index, Int32 Orientation) Next = OrderedStates[Index];
+                ExperimentalTransitPlanner.Result Connector = Transitions[
+                    Previous.Index,
+                    Previous.Orientation,
+                    Next.Index,
+                    Next.Orientation]!;
+                Connectors.Add(Connector);
+                HasDirectBridge = HasDirectBridge || IsCorridorBridge(Connector);
+            }
+            if (!HasDirectBridge)
+            {
+                return CompactAdjacentCutRuns(Sequence, SampleSpacingM, Field);
+            }
+
+            List<ExperimentalRunSequencer.SequencedRun> OrderedRuns =
+                new List<ExperimentalRunSequencer.SequencedRun>();
+            for (Int32 Index = 0; Index < OrderedStates.Count; Index += 1)
+            {
+                (Int32 Index, Int32 Orientation) State = OrderedStates[Index];
+                ExperimentalRunSequencer.SequencedRun Source =
+                    Options[State.Index, State.Orientation];
+                Boolean DirectEntry = (Index > 0) && IsCorridorBridge(Connectors[Index - 1]);
+                Boolean DirectExit = (Index < Connectors.Count) && IsCorridorBridge(Connectors[Index]);
+                OrderedRuns.Add(WithInternalCutPoses(Source, DirectEntry, DirectExit));
+            }
+            return BuildCutSequenceResult(OrderedRuns, Connectors);
+        }
+
+        /// <summary>Compacts only already adjacent cut fragments without changing their order.</summary>
+        private static ExperimentalRunSequencer.Result CompactAdjacentCutRuns
+            (
+            ExperimentalRunSequencer.Result Sequence,
+            Double SampleSpacingM,
+            Grid Field
+            )
+        {
+
+            Int32 TransitionCount = Sequence.Runs.Count - 1;
+            ExperimentalTransitPlanner.Result?[] DirectBridges =
+                new ExperimentalTransitPlanner.Result?[TransitionCount];
+            Boolean AnyBridge = false;
+            for (Int32 Index = 0; Index < TransitionCount; Index += 1)
+            {
+                ExperimentalCoveragePlanner.Run Previous = Sequence.Runs[Index].Run;
+                ExperimentalCoveragePlanner.Run Next = Sequence.Runs[Index + 1].Run;
+                ExperimentalTransitPlanner.Result? Bridge = TryBuildDirectCutBridge(
+                    Previous, Next, SampleSpacingM, Field);
+                if (Bridge == null) continue;
+                DirectBridges[Index] = Bridge;
+                AnyBridge = true;
+            }
+            if (!AnyBridge) return Sequence;
+
+            List<ExperimentalRunSequencer.SequencedRun> Runs =
+                new List<ExperimentalRunSequencer.SequencedRun>();
+            for (Int32 Index = 0; Index < Sequence.Runs.Count; Index += 1)
+            {
+                ExperimentalRunSequencer.SequencedRun Source = Sequence.Runs[Index];
+                Boolean DirectEntry = (Index > 0) && (DirectBridges[Index - 1] != null);
+                Boolean DirectExit = (Index < TransitionCount) && (DirectBridges[Index] != null);
+                Runs.Add(WithInternalCutPoses(Source, DirectEntry, DirectExit));
+            }
+
+            List<ExperimentalTransitPlanner.Result> Connectors =
+                new List<ExperimentalTransitPlanner.Result>();
+            for (Int32 Index = 0; Index < TransitionCount; Index += 1)
+            {
+                ExperimentalTransitPlanner.Result Connector =
+                    DirectBridges[Index] ?? Sequence.Connectors[Index];
+                Connectors.Add(Connector);
+            }
+            return BuildCutSequenceResult(Runs, Connectors);
+        }
+
+        private static ExperimentalTransitPlanner.Result? BuildCutConnector
+            (
+            ExperimentalRunSequencer.SequencedRun Previous,
+            ExperimentalRunSequencer.SequencedRun Next,
+            Double MinimumRadiusM,
+            Double SampleSpacingM,
+            Grid Field
+            )
+        {
+            ExperimentalTransitPlanner.Result? Direct = TryBuildDirectCutBridge(
+                Previous.Run, Next.Run, SampleSpacingM, Field);
+            if (Direct != null) return Direct;
+            ExperimentalTransitPlanner.Result Strict = ExperimentalTransitPlanner.Connect(
+                Previous.ExitPose,
+                Next.EntryPose,
+                MinimumRadiusM,
+                SampleSpacingM,
+                Field,
+                EdgeAllowanceM: Field.GridSizeM);
+            return Strict.Success ? Strict : null;
+        }
+
+        private static ExperimentalTransitPlanner.Result? TryBuildDirectCutBridge
+            (
+            ExperimentalCoveragePlanner.Run Previous,
+            ExperimentalCoveragePlanner.Run Next,
+            Double SampleSpacingM,
+            Grid Field
+            )
+        {
+            if (HeadingDifferenceDeg(Previous.HeadingDeg, Next.HeadingDeg)
+                > CORRIDOR_HEADING_TOLERANCE_DEG) return null;
+            Double DirectM = Distance(Previous.EndXy, Next.StartXy);
+            if ((DirectM <= 1e-9)
+                || (DirectM > CORRIDOR_GAP_TOLERANCE_CELLS * Field.GridSizeM)) return null;
+            Double BridgeHeadingDeg = BearingDeg(Previous.EndXy, Next.StartXy);
+            if ((HeadingDifferenceDeg(Previous.HeadingDeg, BridgeHeadingDeg)
+                    > CORRIDOR_BRIDGE_HEADING_TOLERANCE_DEG)
+                || (HeadingDifferenceDeg(BridgeHeadingDeg, Next.HeadingDeg)
+                    > CORRIDOR_BRIDGE_HEADING_TOLERANCE_DEG)) return null;
+            return BuildDirectCorridorBridge(
+                Previous.EndXy, Next.StartXy, SampleSpacingM, Field);
+        }
+
+        private static ExperimentalRunSequencer.SequencedRun WithInternalCutPoses
+            (
+            ExperimentalRunSequencer.SequencedRun Source,
+            Boolean DirectEntry,
+            Boolean DirectExit
+            ) => new ExperimentalRunSequencer.SequencedRun(
+                Source.Run,
+                DirectEntry ? WorkStartPose(Source.Run) : Source.EntryPose,
+                DirectExit ? WorkEndPose(Source.Run) : Source.ExitPose,
+                DirectEntry ? 0.0 : Source.EntryLineupM,
+                DirectExit ? 0.0 : Source.ExitLineupM,
+                Source.StartCoverageShortfallM,
+                Source.EndCoverageShortfallM);
+
+        private static ExperimentalRunSequencer.Result BuildCutSequenceResult
+            (
+            List<ExperimentalRunSequencer.SequencedRun> Runs,
+            List<ExperimentalTransitPlanner.Result> Connectors
+            )
+        {
+            Double ConnectorDistanceM = Connectors.Sum(Connector => Connector.LengthM);
+            Double MinimumLineupM = Runs.Min(Run =>
+                Math.Min(Run.EntryLineupM, Run.ExitLineupM));
+            return new ExperimentalRunSequencer.Result(
+                true, Runs, Connectors, ConnectorDistanceM,
+                MinimumLineupM, String.Empty);
+        }
+
+        private static Double AnchorConnectorCost
+            (
+            ExperimentalConnectorPlanner.Pose? Anchor,
+            ExperimentalConnectorPlanner.Pose RunPose,
+            Double MinimumRadiusM,
+            Double SampleSpacingM,
+            Grid Field,
+            Boolean Reverse = false
+            )
+        {
+            if (!Anchor.HasValue) return 0.0;
+            ExperimentalTransitPlanner.Result Connector = Reverse
+                ? ExperimentalTransitPlanner.Connect(
+                    RunPose, Anchor.Value, MinimumRadiusM, SampleSpacingM, Field,
+                    EdgeAllowanceM: Field.GridSizeM)
+                : ExperimentalTransitPlanner.Connect(
+                    Anchor.Value, RunPose, MinimumRadiusM, SampleSpacingM, Field,
+                    EdgeAllowanceM: Field.GridSizeM);
+            return Connector.Success ? ConnectorScoreM(Connector) : Double.PositiveInfinity;
+        }
+
+        private static Double ConnectorScoreM
+            (
+            ExperimentalTransitPlanner.Result Connector
+            ) => Connector.LengthM + (Connector.OperatorAlignmentRequired
+                ? MANUAL_CONNECTOR_PENALTY_M
+                : 0.0);
+
+        private static Boolean IsCorridorBridge
+            (
+            ExperimentalTransitPlanner.Result Connector
+            ) => Connector.Mode.Contains("CORRIDOR_BRIDGE", StringComparison.Ordinal);
+
+        /// <summary>
+        /// Stops the last fill at its already retreated work endpoint so a grade
+        /// turnaround begins before an edge instead of consuming the exit lineup.
+        /// </summary>
+        private static ExperimentalRunSequencer.Result StopFinalRunAtWorkEnd
+            (
+            ExperimentalRunSequencer.Result Sequence
+            )
+        {
+            List<ExperimentalRunSequencer.SequencedRun> Runs =
+                new List<ExperimentalRunSequencer.SequencedRun>(Sequence.Runs);
+            ExperimentalRunSequencer.SequencedRun Last = Runs[Runs.Count - 1];
+            Runs[Runs.Count - 1] = new ExperimentalRunSequencer.SequencedRun(
+                Last.Run,
+                Last.EntryPose,
+                new ExperimentalConnectorPlanner.Pose(
+                    Last.Run.EndXy.X,
+                    Last.Run.EndXy.Y,
+                    Last.Run.HeadingDeg),
+                Last.EntryLineupM,
+                0.0,
+                Last.StartCoverageShortfallM,
+                Last.EndCoverageShortfallM);
+            return new ExperimentalRunSequencer.Result(
+                Sequence.Success,
+                Runs,
+                Sequence.Connectors,
+                Sequence.ConnectorDistanceM,
+                0.0,
+                Sequence.FailureReason);
+        }
+
+        /// <summary>
+        /// Converts aligned fragments from one route into a continuous fill corridor.
+        /// Only the first work fragment retains an entry lineup; internal fragments
+        /// are connected directly at blade-up work endpoints and the final exit is
+        /// reserved for the single fill-to-grade turnaround.
+        /// </summary>
+        static public ExperimentalRunSequencer.Result BuildContinuousFillSequence
+            (
+            ExperimentalRunSequencer.Result Sequence,
+            ExperimentalConnectorPlanner.Pose? Inbound,
+            Double MinimumRadiusM,
+            Double SampleSpacingM,
+            Grid Field
+            )
+        {
+            if (Sequence == null) throw new ArgumentNullException(nameof(Sequence));
+            if (!Sequence.Success || (Sequence.Runs.Count <= 1))
+            {
+                return Sequence.Runs.Count == 0
+                    ? Sequence
+                    : StopFinalRunAtWorkEnd(Sequence);
+            }
+
+            ExperimentalRunSequencer.Result? Best = null;
+            Double BestScoreM = Double.PositiveInfinity;
+            Double FirstHeadingDeg = Sequence.Runs[0].Run.HeadingDeg;
+            for (Int32 DirectionIndex = 0; DirectionIndex < 2; DirectionIndex += 1)
+            {
+                Double DirectionDeg = (FirstHeadingDeg + (180.0 * DirectionIndex)) % 360.0;
+                if (!TryBuildCorridorCandidate(
+                    Sequence,
+                    Inbound,
+                    DirectionDeg,
+                    MinimumRadiusM,
+                    SampleSpacingM,
+                    Field,
+                    out ExperimentalRunSequencer.Result Candidate,
+                    out Double ScoreM))
+                {
+                    continue;
+                }
+                if (ScoreM + 1e-9 < BestScoreM)
+                {
+                    Best = Candidate;
+                    BestScoreM = ScoreM;
+                }
+            }
+            return Best ?? StopFinalRunAtWorkEnd(Sequence);
+        }
+
+        /// <summary>Builds one consistently oriented, projection-ordered corridor candidate.</summary>
+        private static Boolean TryBuildCorridorCandidate
+            (
+            ExperimentalRunSequencer.Result Sequence,
+            ExperimentalConnectorPlanner.Pose? Inbound,
+            Double DirectionDeg,
+            Double MinimumRadiusM,
+            Double SampleSpacingM,
+            Grid Field,
+            out ExperimentalRunSequencer.Result Candidate,
+            out Double ScoreM
+            )
+        {
+            Candidate = Sequence;
+            ScoreM = Double.PositiveInfinity;
+            Double DirectionRad = DirectionDeg * Math.PI / 180.0;
+            Double UnitX = Math.Sin(DirectionRad);
+            Double UnitY = Math.Cos(DirectionRad);
+            Double PerpendicularX = UnitY;
+            Double PerpendicularY = -UnitX;
+            List<ExperimentalRunSequencer.SequencedRun> Oriented =
+                new List<ExperimentalRunSequencer.SequencedRun>();
+            foreach (ExperimentalRunSequencer.SequencedRun Source in Sequence.Runs)
+            {
+                ExperimentalRunSequencer.SequencedRun Run =
+                    HeadingDifferenceDeg(Source.Run.HeadingDeg, DirectionDeg) <= 90.0
+                        ? Source
+                        : ReverseSequencedRun(Source);
+                if (HeadingDifferenceDeg(Run.Run.HeadingDeg, DirectionDeg)
+                    > CORRIDOR_HEADING_TOLERANCE_DEG)
+                {
+                    return false;
+                }
+                Oriented.Add(Run);
+            }
+            Oriented.Sort((Left, Right) => Projection(
+                Left.Run.StartXy, UnitX, UnitY).CompareTo(Projection(
+                    Right.Run.StartXy, UnitX, UnitY)));
+
+            ExperimentalCoveragePlanner.Run Reference = Oriented[0].Run;
+            Double ReferenceLateralM = Projection((
+                0.5 * (Reference.StartXy.X + Reference.EndXy.X),
+                0.5 * (Reference.StartXy.Y + Reference.EndXy.Y)),
+                PerpendicularX,
+                PerpendicularY);
+            foreach (ExperimentalRunSequencer.SequencedRun Run in Oriented)
+            {
+                Double LateralM = Projection((
+                    0.5 * (Run.Run.StartXy.X + Run.Run.EndXy.X),
+                    0.5 * (Run.Run.StartXy.Y + Run.Run.EndXy.Y)),
+                    PerpendicularX,
+                    PerpendicularY);
+                if (Math.Abs(LateralM - ReferenceLateralM)
+                    > CORRIDOR_LATERAL_TOLERANCE_CELLS * Field.GridSizeM)
+                {
+                    return false;
+                }
+            }
+
+            List<ExperimentalTransitPlanner.Result> Connectors =
+                new List<ExperimentalTransitPlanner.Result>();
+            Double ConnectorDistanceM = 0.0;
+            for (Int32 Index = 1; Index < Oriented.Count; Index += 1)
+            {
+                ExperimentalRunSequencer.SequencedRun Previous = Oriented[Index - 1];
+                ExperimentalRunSequencer.SequencedRun Next = Oriented[Index];
+                Double DirectM = Distance(Previous.Run.EndXy, Next.Run.StartXy);
+                if ((DirectM > CORRIDOR_GAP_TOLERANCE_CELLS * Field.GridSizeM)
+                    || (DirectM <= 1e-9))
+                {
+                    return false;
+                }
+                Double BridgeHeadingDeg = BearingDeg(
+                    Previous.Run.EndXy, Next.Run.StartXy);
+                if ((HeadingDifferenceDeg(
+                        Previous.Run.HeadingDeg, BridgeHeadingDeg)
+                            > CORRIDOR_BRIDGE_HEADING_TOLERANCE_DEG)
+                    || (HeadingDifferenceDeg(
+                        BridgeHeadingDeg, Next.Run.HeadingDeg)
+                            > CORRIDOR_BRIDGE_HEADING_TOLERANCE_DEG))
+                {
+                    return false;
+                }
+                ExperimentalTransitPlanner.Result? Connector =
+                    BuildDirectCorridorBridge(
+                        Previous.Run.EndXy,
+                        Next.Run.StartXy,
+                        SampleSpacingM,
+                        Field);
+                if (Connector == null) return false;
+                Connectors.Add(Connector);
+                ConnectorDistanceM += Connector.LengthM;
+            }
+
+            List<ExperimentalRunSequencer.SequencedRun> Runs =
+                new List<ExperimentalRunSequencer.SequencedRun>();
+            for (Int32 Index = 0; Index < Oriented.Count; Index += 1)
+            {
+                ExperimentalRunSequencer.SequencedRun Source = Oriented[Index];
+                Runs.Add(new ExperimentalRunSequencer.SequencedRun(
+                    Source.Run,
+                    Index == 0 ? Source.EntryPose : WorkStartPose(Source.Run),
+                    WorkEndPose(Source.Run),
+                    Index == 0 ? Source.EntryLineupM : 0.0,
+                    0.0,
+                    Source.StartCoverageShortfallM,
+                    Source.EndCoverageShortfallM));
+            }
+
+            Double InboundM = 0.0;
+            if (Inbound.HasValue)
+            {
+                ExperimentalTransitPlanner.Result Incoming =
+                    ExperimentalTransitPlanner.Connect(
+                        Inbound.Value,
+                        Runs[0].EntryPose,
+                        MinimumRadiusM,
+                        SampleSpacingM,
+                        Field,
+                        EdgeAllowanceM: Field.GridSizeM);
+                if (!Incoming.Success) return false;
+                InboundM = Incoming.LengthM
+                    + (Incoming.OperatorAlignmentRequired
+                        ? MANUAL_CONNECTOR_PENALTY_M
+                        : 0.0);
+            }
+            ScoreM = InboundM + ConnectorDistanceM;
+            Candidate = new ExperimentalRunSequencer.Result(
+                true,
+                Runs,
+                Connectors,
+                ConnectorDistanceM,
+                0.0,
+                String.Empty);
+            return true;
+        }
+
+        /// <summary>
+        /// Builds a short direct bridge between compatible work fragments. This is
+        /// deliberately not sent through the general turn planner: endpoint heading
+        /// differences were already limited above and represent a slight correction,
+        /// not a request for a full-radius loop.
+        /// </summary>
+        private static ExperimentalTransitPlanner.Result? BuildDirectCorridorBridge
+            (
+            (Double X, Double Y) Start,
+            (Double X, Double Y) End,
+            Double SampleSpacingM,
+            Grid Field
+            )
+        {
+            List<(Double X, Double Y)> Points = SampleStraight(
+                Start, End, SampleSpacingM);
+            ExperimentalFieldEdgePolicy Policy =
+                new ExperimentalFieldEdgePolicy(Field, Field.GridSizeM);
+            if (!Points.TrueForAll(Point =>
+                Policy.ContainsWithExteriorAllowance(Point.X, Point.Y)))
+            {
+                return null;
+            }
+            Boolean LeavesField = Points.Exists(Point =>
+                !Field.ContainsWorldXy(Point.X, Point.Y));
+            Double LengthM = Distance(Start, End);
+            String Mode = LeavesField
+                ? "MANUAL_EDGE_CORRIDOR_BRIDGE"
+                : "AUTO_CORRIDOR_BRIDGE";
+            return new ExperimentalTransitPlanner.Result(
+                true,
+                LeavesField,
+                Points,
+                LengthM,
+                new List<ExperimentalTransitPlanner.Leg>
+                {
+                    new ExperimentalTransitPlanner.Leg(LeavesField, Points),
+                },
+                LeavesField ? LengthM : 0.0,
+                Mode,
+                String.Empty,
+                LeavesField);
+        }
+
+        /// <summary>Samples one direct bridge densely enough for boundary validation.</summary>
+        private static List<(Double X, Double Y)> SampleStraight
+            (
+            (Double X, Double Y) Start,
+            (Double X, Double Y) End,
+            Double SampleSpacingM
+            )
+        {
+            Double LengthM = Distance(Start, End);
+            Int32 Steps = Math.Max(1, (Int32)Math.Ceiling(LengthM / SampleSpacingM));
+            List<(Double X, Double Y)> Points =
+                new List<(Double X, Double Y)>(Steps + 1);
+            for (Int32 Index = 0; Index <= Steps; Index += 1)
+            {
+                Double T = (Double)Index / Steps;
+                Points.Add((
+                    Start.X + ((End.X - Start.X) * T),
+                    Start.Y + ((End.Y - Start.Y) * T)));
+            }
+            return Points;
+        }
+
+        /// <summary>Reverses one sequenced run while retaining its available lineups.</summary>
+        private static ExperimentalRunSequencer.SequencedRun ReverseSequencedRun
+            (
+            ExperimentalRunSequencer.SequencedRun Source
+            )
+        {
+            List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Cells =
+                new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>(Source.Run.Cells);
+            Cells.Reverse();
+            ExperimentalCoveragePlanner.Run Reversed = new ExperimentalCoveragePlanner.Run(
+                Cells,
+                Source.Run.EndXy,
+                Source.Run.StartXy,
+                (Source.Run.HeadingDeg + 180.0) % 360.0,
+                Source.Run.MaximumLateralErrorM);
+            return new ExperimentalRunSequencer.SequencedRun(
+                Reversed,
+                ReversePose(Source.ExitPose),
+                ReversePose(Source.EntryPose),
+                Source.ExitLineupM,
+                Source.EntryLineupM,
+                Source.EndCoverageShortfallM,
+                Source.StartCoverageShortfallM);
+        }
+
+        /// <summary>Creates a work-start pose with no preceding lineup.</summary>
+        private static ExperimentalConnectorPlanner.Pose WorkStartPose
+            (
+            ExperimentalCoveragePlanner.Run Run
+            ) => new ExperimentalConnectorPlanner.Pose(
+                Run.StartXy.X, Run.StartXy.Y, Run.HeadingDeg);
+
+        /// <summary>Creates a work-end pose with no following exit lineup.</summary>
+        private static ExperimentalConnectorPlanner.Pose WorkEndPose
+            (
+            ExperimentalCoveragePlanner.Run Run
+            ) => new ExperimentalConnectorPlanner.Pose(
+                Run.EndXy.X, Run.EndXy.Y, Run.HeadingDeg);
+
+        /// <summary>Reverses a pose heading without moving its position.</summary>
+        private static ExperimentalConnectorPlanner.Pose ReversePose
+            (
+            ExperimentalConnectorPlanner.Pose Pose
+            ) => new ExperimentalConnectorPlanner.Pose(
+                Pose.X, Pose.Y, (Pose.HeadingDeg + 180.0) % 360.0);
+
+        /// <summary>Projects one point onto a unit direction.</summary>
+        private static Double Projection
+            (
+            (Double X, Double Y) Point,
+            Double UnitX,
+            Double UnitY
+            ) => (Point.X * UnitX) + (Point.Y * UnitY);
+
+        /// <summary>Returns Euclidean point distance.</summary>
+        private static Double Distance
+            (
+            (Double X, Double Y) A,
+            (Double X, Double Y) B
+            )
+        {
+            Double Dx = B.X - A.X;
+            Double Dy = B.Y - A.Y;
+            return Math.Sqrt((Dx * Dx) + (Dy * Dy));
+        }
+
+        /// <summary>Returns the navigation bearing used by work-run headings.</summary>
+        private static Double BearingDeg
+            (
+            (Double X, Double Y) A,
+            (Double X, Double Y) B
+            )
+        {
+            Double Bearing = Math.Atan2(B.X - A.X, B.Y - A.Y) * 180.0 / Math.PI;
+            return (Bearing + 360.0) % 360.0;
+        }
+
+        /// <summary>Returns the unsigned shortest heading difference.</summary>
+        private static Double HeadingDifferenceDeg
+            (
+            Double A,
+            Double B
+            )
+        {
+            Double Delta = Math.Abs(((A - B + 540.0) % 360.0) - 180.0);
+            return Delta;
+        }
+
         /// <summary>Appends grade runs with newly computed connectors.</summary>
         private static Boolean AppendPreparedRuns
             (
@@ -307,6 +1093,87 @@ namespace HaulBuilder
             return true;
         }
 
+        /// <summary>Returns true when every internal fill transition is a direct corridor bridge.</summary>
+        private static Boolean UsesCorridorBridges
+            (
+            ExperimentalRunSequencer.Result Sequence
+            )
+        {
+            if ((Sequence.Runs.Count <= 1)
+                || (Sequence.Connectors.Count != Sequence.Runs.Count - 1))
+            {
+                return false;
+            }
+            foreach (ExperimentalTransitPlanner.Result Connector in Sequence.Connectors)
+            {
+                if (!Connector.Mode.EndsWith(
+                    "CORRIDOR_BRIDGE", StringComparison.Ordinal)) return false;
+            }
+            return true;
+        }
+
+        /// <summary>
+        /// Appends reverse-order grading while retracing each accepted fill bridge.
+        /// This preserves one continuous grade phase without replanning short gaps as turns.
+        /// </summary>
+        private static Boolean AppendPreparedRunsWithReversedConnectors
+            (
+            List<Segment> Output,
+            List<ExperimentalRunSequencer.SequencedRun> Runs,
+            List<ExperimentalTransitPlanner.Result> FillConnectors,
+            Phase LineupPhase,
+            Phase WorkPhase,
+            Phase ExitPhase,
+            ref Int32 ManualAssistCount
+            )
+        {
+            if (FillConnectors.Count != Runs.Count - 1) return false;
+            for (Int32 Index = 0; Index < Runs.Count; Index += 1)
+            {
+                if (Index > 0)
+                {
+                    ExperimentalTransitPlanner.Result Connector = ReverseTransit(
+                        FillConnectors[FillConnectors.Count - Index]);
+                    AppendTransitResult(
+                        Output, ref ManualAssistCount, Connector, Phase.Transit);
+                }
+                AppendPreparedRun(Output, Runs[Index], LineupPhase, WorkPhase, ExitPhase);
+            }
+            return true;
+        }
+
+        /// <summary>Reverses one fully sampled transit and all of its action legs.</summary>
+        private static ExperimentalTransitPlanner.Result ReverseTransit
+            (
+            ExperimentalTransitPlanner.Result Source
+            )
+        {
+            List<(Double X, Double Y)> Points =
+                new List<(Double X, Double Y)>(Source.Points);
+            Points.Reverse();
+            List<ExperimentalTransitPlanner.Leg> Legs =
+                new List<ExperimentalTransitPlanner.Leg>();
+            for (Int32 Index = Source.Legs.Count - 1; Index >= 0; Index -= 1)
+            {
+                ExperimentalTransitPlanner.Leg SourceLeg = Source.Legs[Index];
+                List<(Double X, Double Y)> LegPoints =
+                    new List<(Double X, Double Y)>(SourceLeg.Points);
+                LegPoints.Reverse();
+                Legs.Add(new ExperimentalTransitPlanner.Leg(
+                    SourceLeg.OperatorAlignmentRequired, LegPoints));
+            }
+            return new ExperimentalTransitPlanner.Result(
+                Source.Success,
+                Source.OperatorAlignmentRequired,
+                Points,
+                Source.LengthM,
+                Legs,
+                Source.ManualAssistDistanceM,
+                "REVERSE_" + Source.Mode,
+                Source.FailureReason,
+                Source.LeavesField);
+        }
+
         /// <summary>Appends entry lineup, blade-down work, and exit lineup.</summary>
         private static void AppendPreparedRun
             (
@@ -335,10 +1202,11 @@ namespace HaulBuilder
         }
 
         /// <summary>Builds reverse-drive-order grade runs over completed fill work.</summary>
-        private static List<ExperimentalRunSequencer.SequencedRun> BuildGradeRuns
+        static public List<ExperimentalRunSequencer.SequencedRun> BuildGradeRuns
             (
             List<ExperimentalRunSequencer.SequencedRun> FillRuns,
             Double PreferredLineupM,
+            Double MinimumRadiusM,
             Double SampleSpacingM,
             Grid Field
             )
@@ -357,8 +1225,27 @@ namespace HaulBuilder
                     Fill.StartXy,
                     (Fill.HeadingDeg + 180.0) % 360.0,
                     Fill.MaximumLateralErrorM);
-                Output.Add(ExperimentalRunSequencer.Prepare(
-                    Grade, PreferredLineupM, SampleSpacingM, Field));
+                ExperimentalRunSequencer.SequencedRun Prepared =
+                    ExperimentalRunSequencer.Prepare(
+                    Grade,
+                    PreferredLineupM,
+                    MinimumRadiusM,
+                    SampleSpacingM,
+                    Field);
+                Output.Add(new ExperimentalRunSequencer.SequencedRun(
+                    Prepared.Run,
+                    new ExperimentalConnectorPlanner.Pose(
+                        Prepared.Run.StartXy.X,
+                        Prepared.Run.StartXy.Y,
+                        Prepared.Run.HeadingDeg),
+                    new ExperimentalConnectorPlanner.Pose(
+                        Prepared.Run.EndXy.X,
+                        Prepared.Run.EndXy.Y,
+                        Prepared.Run.HeadingDeg),
+                    0.0,
+                    0.0,
+                    Prepared.StartCoverageShortfallM,
+                    Prepared.EndCoverageShortfallM));
             }
             return Output;
         }
@@ -378,7 +1265,12 @@ namespace HaulBuilder
             )
         {
             ExperimentalTransitPlanner.Result Transit = ExperimentalTransitPlanner.Connect(
-                Start, End, MinimumRadiusM, SampleSpacingM, Field);
+                Start,
+                End,
+                MinimumRadiusM,
+                SampleSpacingM,
+                Field,
+                AllowKeyholeHybrid: TransitPhase == Phase.TransitToNextCut);
             FailureReason = Transit.FailureReason;
             if (!Transit.Success) return false;
             AppendTransitResult(Output, ref ManualAssistCount, Transit, TransitPhase);

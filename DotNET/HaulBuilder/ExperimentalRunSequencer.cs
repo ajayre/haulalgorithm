@@ -10,6 +10,8 @@ namespace HaulBuilder
     {
         private const Double COST_TOLERANCE = 1e-9;
         private const Double LINEUP_SHORTFALL_WEIGHT = 4.0;
+        private const Double TURN_CLEARANCE_ANGLE_RAD = 0.5 * Math.PI;
+        private const Double MANUAL_ASSIST_COST_M = 100000.0;
         private const Int32 EXACT_RUN_LIMIT = 5;
         private const Int32 FALLBACK_EXACT_RUN_LIMIT = 7;
 
@@ -26,13 +28,17 @@ namespace HaulBuilder
             /// <param name="ExitPose">Blade-up pose after the work end.</param>
             /// <param name="EntryLineupM">Available straight entry distance.</param>
             /// <param name="ExitLineupM">Available straight exit distance.</param>
+            /// <param name="StartCoverageShortfallM">Nominal work omitted before the driven start.</param>
+            /// <param name="EndCoverageShortfallM">Nominal work omitted after the driven end.</param>
             public SequencedRun
                 (
                 ExperimentalCoveragePlanner.Run Run,
                 ExperimentalConnectorPlanner.Pose EntryPose,
                 ExperimentalConnectorPlanner.Pose ExitPose,
                 Double EntryLineupM,
-                Double ExitLineupM
+                Double ExitLineupM,
+                Double StartCoverageShortfallM,
+                Double EndCoverageShortfallM
                 )
             {
                 // Keep work allocation unchanged while attaching drive geometry.
@@ -41,6 +47,8 @@ namespace HaulBuilder
                 this.ExitPose = ExitPose;
                 this.EntryLineupM = EntryLineupM;
                 this.ExitLineupM = ExitLineupM;
+                this.StartCoverageShortfallM = StartCoverageShortfallM;
+                this.EndCoverageShortfallM = EndCoverageShortfallM;
             }
 
             /// <summary>Gets the oriented straight work run.</summary>
@@ -57,6 +65,12 @@ namespace HaulBuilder
 
             /// <summary>Gets available straight distance after work.</summary>
             public Double ExitLineupM { get; }
+
+            /// <summary>Gets nominal work distance intentionally omitted at the driven start.</summary>
+            public Double StartCoverageShortfallM { get; }
+
+            /// <summary>Gets nominal work distance intentionally omitted at the driven end.</summary>
+            public Double EndCoverageShortfallM { get; }
         }
 
         /// <summary>
@@ -144,9 +158,9 @@ namespace HaulBuilder
             for (Int32 RunIndex = 0; RunIndex < Runs.Count; RunIndex += 1)
             {
                 Options[RunIndex, 0] = Prepare(
-                    Runs[RunIndex], PreferredLineupM, SampleSpacingM, Field);
+                    Runs[RunIndex], PreferredLineupM, MinimumRadiusM, SampleSpacingM, Field);
                 Options[RunIndex, 1] = Prepare(
-                    Reverse(Runs[RunIndex]), PreferredLineupM, SampleSpacingM, Field);
+                    Reverse(Runs[RunIndex]), PreferredLineupM, MinimumRadiusM, SampleSpacingM, Field);
             }
             if (Runs.Count > EXACT_RUN_LIMIT)
             {
@@ -350,25 +364,201 @@ namespace HaulBuilder
             Grid Field
             )
         {
-            Double HeadingRad = Run.HeadingDeg * Math.PI / 180.0;
+            return Prepare(Run, PreferredLineupM, 0.0, SampleSpacingM, Field);
+        }
+
+        /// <summary>
+        /// Attaches lineups and retreats soft work endpoints when field-edge clearance prevents a turn.
+        /// </summary>
+        static public SequencedRun Prepare
+            (
+            ExperimentalCoveragePlanner.Run Run,
+            Double PreferredLineupM,
+            Double MinimumRadiusM,
+            Double SampleSpacingM,
+            Grid Field
+            )
+        {
+            ExperimentalCoveragePlanner.Run DriveRun = MinimumRadiusM > 0.0
+                ? RetreatForTurnClearance(
+                    Run, PreferredLineupM, MinimumRadiusM, SampleSpacingM, Field)
+                : Run;
+            Double HeadingRad = DriveRun.HeadingDeg * Math.PI / 180.0;
             Double UnitX = Math.Sin(HeadingRad);
             Double UnitY = Math.Cos(HeadingRad);
             Double EntryM = AvailableStraight(
-                Run.StartXy, -UnitX, -UnitY, PreferredLineupM, SampleSpacingM, Field);
+                DriveRun.StartXy, -UnitX, -UnitY, PreferredLineupM, SampleSpacingM, Field);
             Double ExitM = AvailableStraight(
-                Run.EndXy, UnitX, UnitY, PreferredLineupM, SampleSpacingM, Field);
+                DriveRun.EndXy, UnitX, UnitY, PreferredLineupM, SampleSpacingM, Field);
             return new SequencedRun(
-                Run,
+                DriveRun,
                 new ExperimentalConnectorPlanner.Pose(
-                    Run.StartXy.X - (UnitX * EntryM),
-                    Run.StartXy.Y - (UnitY * EntryM),
-                    Run.HeadingDeg),
+                    DriveRun.StartXy.X - (UnitX * EntryM),
+                    DriveRun.StartXy.Y - (UnitY * EntryM),
+                    DriveRun.HeadingDeg),
                 new ExperimentalConnectorPlanner.Pose(
-                    Run.EndXy.X + (UnitX * ExitM),
-                    Run.EndXy.Y + (UnitY * ExitM),
-                    Run.HeadingDeg),
+                    DriveRun.EndXy.X + (UnitX * ExitM),
+                    DriveRun.EndXy.Y + (UnitY * ExitM),
+                    DriveRun.HeadingDeg),
                 EntryM,
-                ExitM);
+                ExitM,
+                Distance(Run.StartXy, DriveRun.StartXy),
+                Distance(Run.EndXy, DriveRun.EndXy));
+        }
+
+        /// <summary>
+        /// Moves work endpoints inward only as far as required to begin an in-field quarter turn.
+        /// </summary>
+        private static ExperimentalCoveragePlanner.Run RetreatForTurnClearance
+            (
+            ExperimentalCoveragePlanner.Run Run,
+            Double PreferredLineupM,
+            Double MinimumRadiusM,
+            Double SampleSpacingM,
+            Grid Field
+            )
+        {
+            if (Run.LengthM <= Field.GridSizeM) return Run;
+            Double HeadingRad = Run.HeadingDeg * Math.PI / 180.0;
+            Double UnitX = Math.Sin(HeadingRad);
+            Double UnitY = Math.Cos(HeadingRad);
+            Double StepM = Math.Min(SampleSpacingM, Field.GridSizeM * 0.5);
+            Double MinimumWorkM = Math.Max(Field.GridSizeM * 0.5, StepM);
+            Double MaximumTotalRetreatM = Math.Max(0.0, Run.LengthM - MinimumWorkM);
+
+            Double StartRetreatM = RequiredRetreat(
+                Run.StartXy,
+                UnitX,
+                UnitY,
+                true,
+                Run.HeadingDeg,
+                MaximumTotalRetreatM,
+                PreferredLineupM,
+                MinimumRadiusM,
+                SampleSpacingM,
+                Field);
+            Double EndRetreatM = RequiredRetreat(
+                Run.EndXy,
+                -UnitX,
+                -UnitY,
+                false,
+                Run.HeadingDeg,
+                Math.Max(0.0, MaximumTotalRetreatM - StartRetreatM),
+                PreferredLineupM,
+                MinimumRadiusM,
+                SampleSpacingM,
+                Field);
+            if ((StartRetreatM <= COST_TOLERANCE) && (EndRetreatM <= COST_TOLERANCE))
+            {
+                return Run;
+            }
+
+            return new ExperimentalCoveragePlanner.Run(
+                Run.Cells,
+                (
+                    Run.StartXy.X + (UnitX * StartRetreatM),
+                    Run.StartXy.Y + (UnitY * StartRetreatM)),
+                (
+                    Run.EndXy.X - (UnitX * EndRetreatM),
+                    Run.EndXy.Y - (UnitY * EndRetreatM)),
+                Run.HeadingDeg,
+                Run.MaximumLateralErrorM);
+        }
+
+        /// <summary>Finds the first inward endpoint whose available lineup can begin a turn.</summary>
+        private static Double RequiredRetreat
+            (
+            (Double X, Double Y) Original,
+            Double InwardUnitX,
+            Double InwardUnitY,
+            Boolean Entry,
+            Double HeadingDeg,
+            Double MaximumRetreatM,
+            Double PreferredLineupM,
+            Double MinimumRadiusM,
+            Double SampleSpacingM,
+            Grid Field
+            )
+        {
+            Double StepM = Math.Min(SampleSpacingM, Field.GridSizeM * 0.5);
+            for (Double RetreatM = 0.0;
+                RetreatM <= MaximumRetreatM + COST_TOLERANCE;
+                RetreatM += StepM)
+            {
+                Double CandidateM = Math.Min(RetreatM, MaximumRetreatM);
+                (Double X, Double Y) WorkPoint = (
+                    Original.X + (InwardUnitX * CandidateM),
+                    Original.Y + (InwardUnitY * CandidateM));
+                Double HeadingRad = HeadingDeg * Math.PI / 180.0;
+                Double UnitX = Math.Sin(HeadingRad);
+                Double UnitY = Math.Cos(HeadingRad);
+                Double LineupM = Entry
+                    ? AvailableStraight(
+                        WorkPoint, -UnitX, -UnitY,
+                        PreferredLineupM, SampleSpacingM, Field)
+                    : AvailableStraight(
+                        WorkPoint, UnitX, UnitY,
+                        PreferredLineupM, SampleSpacingM, Field);
+                ExperimentalConnectorPlanner.Pose TurnPose = Entry
+                    ? new ExperimentalConnectorPlanner.Pose(
+                        WorkPoint.X - (UnitX * LineupM),
+                        WorkPoint.Y - (UnitY * LineupM),
+                        HeadingDeg + 180.0)
+                    : new ExperimentalConnectorPlanner.Pose(
+                        WorkPoint.X + (UnitX * LineupM),
+                        WorkPoint.Y + (UnitY * LineupM),
+                        HeadingDeg);
+                if (CanBeginTurn(
+                    TurnPose, MinimumRadiusM, SampleSpacingM, Field))
+                {
+                    return CandidateM;
+                }
+                if (CandidateM >= MaximumRetreatM - COST_TOLERANCE) break;
+            }
+            return 0.0;
+        }
+
+        /// <summary>Checks whether either minimum-radius turn direction stays in field for 90 degrees.</summary>
+        private static Boolean CanBeginTurn
+            (
+            ExperimentalConnectorPlanner.Pose Pose,
+            Double RadiusM,
+            Double SampleSpacingM,
+            Grid Field
+            )
+        {
+            Double HeadingRad = Pose.HeadingDeg * Math.PI / 180.0;
+            Double UnitX = Math.Sin(HeadingRad);
+            Double UnitY = Math.Cos(HeadingRad);
+            Double LeftX = -UnitY;
+            Double LeftY = UnitX;
+            Int32 Samples = Math.Max(
+                2,
+                (Int32)Math.Ceiling(
+                    (TURN_CLEARANCE_ANGLE_RAD * RadiusM) / SampleSpacingM));
+            foreach (Double Direction in new[] { -1.0, 1.0 })
+            {
+                Double CenterX = Pose.X + (Direction * RadiusM * LeftX);
+                Double CenterY = Pose.Y + (Direction * RadiusM * LeftY);
+                Double RadialX = Pose.X - CenterX;
+                Double RadialY = Pose.Y - CenterY;
+                Boolean Inside = true;
+                for (Int32 Index = 0; Index <= Samples; Index += 1)
+                {
+                    Double Angle = Direction * TURN_CLEARANCE_ANGLE_RAD * Index / Samples;
+                    Double Cos = Math.Cos(Angle);
+                    Double Sin = Math.Sin(Angle);
+                    Double X = CenterX + (RadialX * Cos) - (RadialY * Sin);
+                    Double Y = CenterY + (RadialX * Sin) + (RadialY * Cos);
+                    if (!Field.ContainsWorldXy(X, Y))
+                    {
+                        Inside = false;
+                        break;
+                    }
+                }
+                if (Inside) return true;
+            }
+            return false;
         }
 
         /// <summary>
@@ -572,11 +762,21 @@ namespace HaulBuilder
         {
             ExperimentalTransitPlanner.Result Connector = ExperimentalTransitPlanner.Connect(
                 Start, End, MinimumRadiusM, SampleSpacingM, Field);
-            Double Dx = End.X - Start.X;
-            Double Dy = End.Y - Start.Y;
-            Double DirectM = Math.Sqrt((Dx * Dx) + (Dy * Dy));
             if (!Connector.Success) return Double.PositiveInfinity;
-            return Connector.LengthM;
+            return Connector.LengthM
+                + (Connector.OperatorAlignmentRequired ? MANUAL_ASSIST_COST_M : 0.0);
+        }
+
+        /// <summary>Computes planar distance between two work points.</summary>
+        private static Double Distance
+            (
+            (Double X, Double Y) First,
+            (Double X, Double Y) Second
+            )
+        {
+            Double Dx = Second.X - First.X;
+            Double Dy = Second.Y - First.Y;
+            return Math.Sqrt((Dx * Dx) + (Dy * Dy));
         }
 
         /// <summary>

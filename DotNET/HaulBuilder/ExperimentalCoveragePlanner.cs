@@ -14,6 +14,8 @@ namespace HaulBuilder
         private const Double RUN_COUNT_WEIGHT = 1000000.0;
         private const Double CONNECTOR_WEIGHT = 100.0;
         private const Double WORK_DISTANCE_WEIGHT = 0.01;
+        private const Double OMITTED_CELL_WEIGHT = 1000000000000.0;
+        private const Double EDGE_PARALLEL_TOLERANCE_DEG = 7.5;
         private const Double NUMERIC_TOLERANCE = 1e-9;
         private const Double ENDPOINT_EXTENSION_GRID_FRACTION = 0.49;
 
@@ -87,13 +89,15 @@ namespace HaulBuilder
             /// <param name="ConnectorDistanceM">Straight-line distance between coverage runs.</param>
             /// <param name="AnchorDistanceM">Distance to requested start/end anchors.</param>
             /// <param name="Score">Deterministic candidate score.</param>
+            /// <param name="OmittedCells">Edge/corner cells that cannot be worked at the required boundary heading.</param>
             public PlanResult
                 (
                 Double HeadingDeg,
                 List<Run> Runs,
                 Double ConnectorDistanceM,
                 Double AnchorDistanceM,
-                Double Score
+                Double Score,
+                List<((Int32 Bx, Int32 By) Cell, Double DepthM)> OmittedCells
                 )
             {
                 // Store candidate metrics separately from production timing and turn construction.
@@ -102,6 +106,7 @@ namespace HaulBuilder
                 this.ConnectorDistanceM = ConnectorDistanceM;
                 this.AnchorDistanceM = AnchorDistanceM;
                 this.Score = Score;
+                this.OmittedCells = OmittedCells;
             }
 
             /// <summary>Gets the selected common sweep heading.</summary>
@@ -118,6 +123,9 @@ namespace HaulBuilder
 
             /// <summary>Gets deterministic candidate score.</summary>
             public Double Score { get; }
+
+            /// <summary>Gets allocated corner cells deliberately omitted from work guidance.</summary>
+            public List<((Int32 Bx, Int32 By) Cell, Double DepthM)> OmittedCells { get; }
 
             /// <summary>Gets total straight blade-down centerline distance.</summary>
             public Double WorkDistanceM => Runs.Sum(Run => Run.LengthM);
@@ -138,6 +146,17 @@ namespace HaulBuilder
                     {
                         Output.AddRange(CoverageRun.Cells);
                     }
+                    return Output;
+                }
+            }
+
+            /// <summary>Gets driven and deliberately omitted allocation entries together.</summary>
+            public List<((Int32 Bx, Int32 By) Cell, Double DepthM)> AccountedCells
+            {
+                get
+                {
+                    List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Output = OrderedCells;
+                    Output.AddRange(OmittedCells);
                     return Output;
                 }
             }
@@ -217,26 +236,46 @@ namespace HaulBuilder
             {
                 return new List<PlanResult>
                 {
-                    new PlanResult(0.0, new List<Run>(), 0.0, 0.0, 0.0),
+                    new PlanResult(
+                        0.0,
+                        new List<Run>(),
+                        0.0,
+                        0.0,
+                        0.0,
+                        new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>()),
                 };
             }
 
+            ExperimentalFieldEdgePolicy EdgePolicy =
+                new ExperimentalFieldEdgePolicy(Grid, BladeWidthM);
             List<PlanResult> Candidates = new List<PlanResult>();
             for (Double HeadingDeg = 0.0; HeadingDeg < 180.0; HeadingDeg += HEADING_STEP_DEG)
             {
+                List<((Int32 Bx, Int32 By) Cell, Double DepthM)> WorkCells = Cells
+                    .Where(Entry => EdgePolicy.IsParallelToEdge(
+                        Entry.Cell,
+                        HeadingDeg,
+                        EDGE_PARALLEL_TOLERANCE_DEG))
+                    .ToList();
+                HashSet<((Int32 Bx, Int32 By) Cell, Double DepthM)> WorkSet =
+                    new HashSet<((Int32 Bx, Int32 By) Cell, Double DepthM)>(WorkCells);
+                List<((Int32 Bx, Int32 By) Cell, Double DepthM)> OmittedCells = Cells
+                    .Where(Entry => !WorkSet.Contains(Entry))
+                    .ToList();
                 foreach (Boolean DescendingCross in new Boolean[] { false, true })
                 {
                     PlanResult Candidate = BuildCandidate(
-                        Cells,
+                        WorkCells,
                         Grid,
                         BladeWidthM,
                         HeadingDeg,
                         DescendingCross,
                         OrientStartXy,
-                        OrientEndXy);
-                    if (!ConservesAllocation(Cells, Candidate.OrderedCells))
+                        OrientEndXy,
+                        OmittedCells);
+                    if (!ConservesAllocation(Cells, Candidate.AccountedCells))
                         throw new InvalidOperationException(
-                            "Experimental coverage planning changed the cell/depth multiset.");
+                            "Experimental coverage planning failed to account for the cell/depth multiset.");
                     Candidates.Add(Candidate);
                 }
             }
@@ -291,9 +330,20 @@ namespace HaulBuilder
             Double HeadingDeg,
             Boolean DescendingCross,
             (Double X, Double Y)? OrientStartXy,
-            (Double X, Double Y)? OrientEndXy
+            (Double X, Double Y)? OrientEndXy,
+            List<((Int32 Bx, Int32 By) Cell, Double DepthM)> OmittedCells
             )
         {
+            if (Cells.Count == 0)
+            {
+                return new PlanResult(
+                    HeadingDeg,
+                    new List<Run>(),
+                    0.0,
+                    0.0,
+                    OmittedCells.Count * OMITTED_CELL_WEIGHT,
+                    new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>(OmittedCells));
+            }
             Double Theta = HeadingDeg * Math.PI / 180.0;
             (Double X, Double Y) AlongUnit = (Math.Sin(Theta), Math.Cos(Theta));
             (Double X, Double Y) CrossUnit = (Math.Cos(Theta), -Math.Sin(Theta));
@@ -322,8 +372,15 @@ namespace HaulBuilder
             Double Score = (Runs.Count * RUN_COUNT_WEIGHT)
                 + (ConnectorDistanceM * CONNECTOR_WEIGHT)
                 + AnchorDistanceM
-                + (WorkDistanceM * WORK_DISTANCE_WEIGHT);
-            return new PlanResult(HeadingDeg, Runs, ConnectorDistanceM, AnchorDistanceM, Score);
+                + (WorkDistanceM * WORK_DISTANCE_WEIGHT)
+                + (OmittedCells.Count * OMITTED_CELL_WEIGHT);
+            return new PlanResult(
+                HeadingDeg,
+                Runs,
+                ConnectorDistanceM,
+                AnchorDistanceM,
+                Score,
+                new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>(OmittedCells));
         }
 
         /// <summary>

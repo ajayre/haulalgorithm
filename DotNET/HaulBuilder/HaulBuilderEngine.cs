@@ -30,6 +30,7 @@ namespace HaulBuilder
             if (String.IsNullOrWhiteSpace(options.AgdPath)) throw new ArgumentException("AGD path is required.", nameof(options));
             if (!File.Exists(options.AgdPath)) throw new ArgumentException($"AGD file not found: {options.AgdPath}", nameof(options));
             if (options.PixelsPerBin <= 0) throw new ArgumentException("PixelsPerBin must be > 0.", nameof(options));
+            ValidateEdgePatchOptions(options);
 
             HaulBuilderOptions Opt = CloneOptions(options);
             HaulBuilderResult Result = new HaulBuilderResult
@@ -76,7 +77,24 @@ namespace HaulBuilder
                 FlowAligned,
                 (Opt.MinLoadFillPct / 100.0),
                 Obstacles);
+            EdgePatchOmissionResult EdgePatchResult = EdgePatchOmission.Apply(
+                PassResult,
+                Grid,
+                Opt,
+                Obstacles);
+            PassResult = EdgePatchResult.PassResult;
+            Result.EdgePatchOmission = EdgePatchResult;
             Result.PassResult = PassResult;
+            if (EdgePatchResult.OmittedComponentCount > 0)
+            {
+                Result.Messages.Add(String.Format(
+                    CultureInfo.InvariantCulture,
+                    "Omitted {0} isolated edge cut patch(es): {1:F2} BCY cut and {2:F2} BCY matching fill demand across {3} cut cell(s).",
+                    EdgePatchResult.OmittedComponentCount,
+                    EdgePatchResult.OmittedCutBcy,
+                    EdgePatchResult.OmittedFillBcy,
+                    EdgePatchResult.OmittedCutCells.Count));
+            }
 
             Route Route = Routing.SequencePasses(
                 PassResult.Passes,
@@ -1010,12 +1028,53 @@ namespace HaulBuilder
                 PivotFramesPath = options.PivotFramesPath,
                 PivotAnimationStride = options.PivotAnimationStride,
                 EquipmentWidthFt = options.EquipmentWidthFt,
+                OmitIsolatedEdgePatches = options.OmitIsolatedEdgePatches,
+                MaxIsolatedEdgePatchCells = options.MaxIsolatedEdgePatchCells,
+                MaxIsolatedEdgePatchVolumeBcy = options.MaxIsolatedEdgePatchVolumeBcy,
+                MaxTotalIsolatedEdgePatchOmissionBcy = options.MaxTotalIsolatedEdgePatchOmissionBcy,
+                MaxTotalIsolatedEdgePatchOmissionPercent = options.MaxTotalIsolatedEdgePatchOmissionPercent,
                 NoPlan = options.NoPlan,
                 PairSampleCount = options.PairSampleCount,
                 Seed = options.Seed,
             };
             Copy.ExcludePolygonSpecs.AddRange(options.ExcludePolygonSpecs);
             return Copy;
+        }
+
+        private static void ValidateEdgePatchOptions
+            (
+            HaulBuilderOptions options
+            )
+        {
+            if (!options.OmitIsolatedEdgePatches) return;
+            if (options.MaxIsolatedEdgePatchCells < 1)
+            {
+                throw new ArgumentException(
+                    "MaxIsolatedEdgePatchCells must be at least 1 when edge-patch omission is enabled.",
+                    nameof(options));
+            }
+            if (!Double.IsFinite(options.MaxIsolatedEdgePatchVolumeBcy)
+                || (options.MaxIsolatedEdgePatchVolumeBcy < 0.0))
+            {
+                throw new ArgumentException(
+                    "MaxIsolatedEdgePatchVolumeBcy must be finite and non-negative.",
+                    nameof(options));
+            }
+            if (!Double.IsFinite(options.MaxTotalIsolatedEdgePatchOmissionBcy)
+                || (options.MaxTotalIsolatedEdgePatchOmissionBcy < 0.0))
+            {
+                throw new ArgumentException(
+                    "MaxTotalIsolatedEdgePatchOmissionBcy must be finite and non-negative.",
+                    nameof(options));
+            }
+            if (!Double.IsFinite(options.MaxTotalIsolatedEdgePatchOmissionPercent)
+                || (options.MaxTotalIsolatedEdgePatchOmissionPercent < 0.0)
+                || (options.MaxTotalIsolatedEdgePatchOmissionPercent > 100.0))
+            {
+                throw new ArgumentException(
+                    "MaxTotalIsolatedEdgePatchOmissionPercent must be between 0 and 100.",
+                    nameof(options));
+            }
         }
     }
 }

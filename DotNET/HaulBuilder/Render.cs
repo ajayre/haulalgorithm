@@ -592,6 +592,9 @@ namespace HaulBuilder
         /// <param name="pixelsPerBin">Pixels per grid bin.</param>
         /// <param name="padCells">Crop padding in grid cells.</param>
         /// <param name="manualAssistRuns">Explicit operator-alignment polylines.</param>
+        /// <param name="routeMarkers">Optional numbered route marker locations.</param>
+        /// <param name="drawDirectionArrows">Whether to draw arrowheads along the complete route.</param>
+        /// <param name="directionArrowSpacingM">Distance between route arrowheads in metres.</param>
         /// <returns>Cropped PNG bytes.</returns>
         static public Byte[] RenderCoverageRunsPng
             (
@@ -602,12 +605,25 @@ namespace HaulBuilder
             Double bladeWidthM = 2.271,
             Int32 pixelsPerBin = 26,
             Int32 padCells = 4,
-            IReadOnlyList<IReadOnlyList<(Double X, Double Y)>>? manualAssistRuns = null
+            IReadOnlyList<IReadOnlyList<(Double X, Double Y)>>? manualAssistRuns = null,
+            IReadOnlyList<((Double X, Double Y) Point, String Label)>? routeMarkers = null,
+            Boolean drawDirectionArrows = false,
+            Double directionArrowSpacingM = 0.0
             )
         {
             // Draw each work run independently so blade-up repositioning never becomes a thick work overlay.
             Int32 Ppb = Math.Max(1, pixelsPerBin);
             using Image<Rgba32> Base = DiffToImageDigitize(grid.Delta(), grid.Valid, Ppb);
+            for (Int32 Y = 0; Y < Base.Height; Y += 1)
+            {
+                for (Int32 X = 0; X < Base.Width; X += 1)
+                {
+                    if (Base[X, Y].A == 0)
+                    {
+                        Base[X, Y] = new Rgba32(238, 238, 238, 255);
+                    }
+                }
+            }
             DimTowardsWhite(Base, 0.45);
             Int32 BladePx = Math.Max(
                 3,
@@ -640,6 +656,31 @@ namespace HaulBuilder
                         Base, grid, Run, Ppb, new Rgba32(255, 140, 0, 255), AssistWidth);
                 }
             }
+            if (drawDirectionArrows && (routePoints.Count >= 2))
+            {
+                Double SpacingM = directionArrowSpacingM > 0.0
+                    ? directionArrowSpacingM
+                    : 6.0 * grid.GridSizeM;
+                DrawRouteDirectionArrows(Base, grid, routePoints, Ppb, SpacingM);
+            }
+            if (routeMarkers != null)
+            {
+                Int32 MarkerRadius = Math.Max(8, BladePx / 2);
+                foreach (((Double X, Double Y) Point, String Label) Marker in routeMarkers)
+                {
+                    (Double Px, Double Py) = WorldToPixel(
+                        grid, Marker.Point.X, Marker.Point.Y, Ppb);
+                    DrawCircle(
+                        Base, Px, Py, MarkerRadius,
+                        new Rgba32(255, 255, 255, 235),
+                        new Rgba32(0, 0, 0, 255));
+                    DrawTextDigit(
+                        Base,
+                        (Int32)Math.Round(Px),
+                        (Int32)Math.Round(Py),
+                        Marker.Label);
+                }
+            }
 
             List<(Double X, Double Y)> Bounds = new List<(Double X, Double Y)>(routePoints);
             foreach (IReadOnlyList<(Double X, Double Y)> Run in cutRuns)
@@ -656,6 +697,10 @@ namespace HaulBuilder
                 {
                     Bounds.AddRange(Run);
                 }
+            }
+            if (routeMarkers != null)
+            {
+                Bounds.AddRange(routeMarkers.Select(Marker => Marker.Point));
             }
             if (Bounds.Count == 0) return ToPng(Base);
 
@@ -891,6 +936,59 @@ namespace HaulBuilder
                     DrawThinLineBresenham(image, TipX, TipY, RightX, RightY, new Rgba32(0, 0, 0, 255));
                     DrawThinLineBresenham(image, LeftX, LeftY, RightX, RightY, new Rgba32(0, 0, 0, 255));
                 }
+            }
+        }
+
+        /// <summary>Draws high-contrast arrowheads at regular travelled distances along a route.</summary>
+        private static void DrawRouteDirectionArrows
+            (
+            Image<Rgba32> image,
+            Grid grid,
+            IReadOnlyList<(Double X, Double Y)> routePoints,
+            Int32 ppb,
+            Double spacingM
+            )
+        {
+            if ((routePoints.Count < 2) || (spacingM <= 0.0)) return;
+            Double UntilArrowM = 0.5 * spacingM;
+            Double ArrowLengthPx = Math.Max(8.0, ppb * 0.42);
+            Double HalfWidthPx = Math.Max(4.0, ppb * 0.18);
+            Int32 OutlineWidth = Math.Max(3, ppb / 8);
+            Int32 InnerWidth = Math.Max(1, OutlineWidth / 2);
+            Rgba32 Outline = new Rgba32(0, 0, 0, 255);
+            Rgba32 Inner = new Rgba32(255, 255, 255, 255);
+
+            for (Int32 Index = 1; Index < routePoints.Count; Index += 1)
+            {
+                (Double X, Double Y) A = routePoints[Index - 1];
+                (Double X, Double Y) B = routePoints[Index];
+                Double DxM = B.X - A.X;
+                Double DyM = B.Y - A.Y;
+                Double SegmentM = Math.Sqrt((DxM * DxM) + (DyM * DyM));
+                if (SegmentM <= 1e-9) continue;
+                while (UntilArrowM <= SegmentM + 1e-9)
+                {
+                    Double Fraction = Math.Min(1.0, UntilArrowM / SegmentM);
+                    Double X = A.X + (Fraction * DxM);
+                    Double Y = A.Y + (Fraction * DyM);
+                    (Double TipX, Double TipY) = WorldToPixel(grid, X, Y, ppb);
+                    Double UnitX = DxM / SegmentM;
+                    Double UnitY = -DyM / SegmentM;
+                    Double BaseX = TipX - (ArrowLengthPx * UnitX);
+                    Double BaseY = TipY - (ArrowLengthPx * UnitY);
+                    Double PerpendicularX = -UnitY;
+                    Double PerpendicularY = UnitX;
+                    Double LeftX = BaseX + (HalfWidthPx * PerpendicularX);
+                    Double LeftY = BaseY + (HalfWidthPx * PerpendicularY);
+                    Double RightX = BaseX - (HalfWidthPx * PerpendicularX);
+                    Double RightY = BaseY - (HalfWidthPx * PerpendicularY);
+                    DrawLine(image, TipX, TipY, LeftX, LeftY, Outline, OutlineWidth);
+                    DrawLine(image, TipX, TipY, RightX, RightY, Outline, OutlineWidth);
+                    DrawLine(image, TipX, TipY, LeftX, LeftY, Inner, InnerWidth);
+                    DrawLine(image, TipX, TipY, RightX, RightY, Inner, InnerWidth);
+                    UntilArrowM += spacingM;
+                }
+                UntilArrowM -= SegmentM;
             }
         }
 
