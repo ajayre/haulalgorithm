@@ -67,6 +67,12 @@ internal static class Program
             return;
         }
 
+        if ((args.Length > 0) && (args[0] == "--compare-experimental-coverage"))
+        {
+            Environment.Exit(CompareExperimentalCoverage.Run(args.Skip(1).ToArray()));
+            return;
+        }
+
         if ((args.Length > 0) && (args[0] == "--route2-png"))
         {
             String OutPath = (args.Length > 1)

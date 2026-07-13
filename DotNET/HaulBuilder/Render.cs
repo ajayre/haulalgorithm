@@ -582,6 +582,125 @@ namespace HaulBuilder
             ) => RenderSinglePairPng(grid, pts, 2.271, pixels_per_bin);
 
         /// <summary>
+        /// Renders explicitly separated coverage runs for diagnostic comparison.
+        /// </summary>
+        /// <param name="grid">Grid geometry and grade surface.</param>
+        /// <param name="cutRuns">Independent straight cut polylines.</param>
+        /// <param name="fillRuns">Independent straight fill polylines.</param>
+        /// <param name="routePoints">Complete thin diagnostic route.</param>
+        /// <param name="bladeWidthM">Displayed blade width in metres.</param>
+        /// <param name="pixelsPerBin">Pixels per grid bin.</param>
+        /// <param name="padCells">Crop padding in grid cells.</param>
+        /// <param name="manualAssistRuns">Explicit operator-alignment polylines.</param>
+        /// <returns>Cropped PNG bytes.</returns>
+        static public Byte[] RenderCoverageRunsPng
+            (
+            Grid grid,
+            IReadOnlyList<IReadOnlyList<(Double X, Double Y)>> cutRuns,
+            IReadOnlyList<IReadOnlyList<(Double X, Double Y)>> fillRuns,
+            IReadOnlyList<(Double X, Double Y)> routePoints,
+            Double bladeWidthM = 2.271,
+            Int32 pixelsPerBin = 26,
+            Int32 padCells = 4,
+            IReadOnlyList<IReadOnlyList<(Double X, Double Y)>>? manualAssistRuns = null
+            )
+        {
+            // Draw each work run independently so blade-up repositioning never becomes a thick work overlay.
+            Int32 Ppb = Math.Max(1, pixelsPerBin);
+            using Image<Rgba32> Base = DiffToImageDigitize(grid.Delta(), grid.Valid, Ppb);
+            DimTowardsWhite(Base, 0.45);
+            Int32 BladePx = Math.Max(
+                3,
+                (Int32)Math.Round(
+                    (bladeWidthM / grid.GridSizeM) * Ppb,
+                    MidpointRounding.AwayFromZero));
+
+            foreach (IReadOnlyList<(Double X, Double Y)> Run in cutRuns)
+            {
+                DrawWorldPolyline(
+                    Base, grid, Run, Ppb, new Rgba32(200, 0, 0, 255), BladePx);
+            }
+            foreach (IReadOnlyList<(Double X, Double Y)> Run in fillRuns)
+            {
+                DrawWorldPolyline(
+                    Base, grid, Run, Ppb, new Rgba32(0, 90, 220, 255), BladePx);
+            }
+            if (routePoints.Count >= 2)
+            {
+                Int32 RouteWidth = Math.Max(1, BladePx / 8);
+                DrawWorldPolyline(
+                    Base, grid, routePoints, Ppb, new Rgba32(35, 35, 35, 255), RouteWidth);
+            }
+            if (manualAssistRuns != null)
+            {
+                Int32 AssistWidth = Math.Max(2, BladePx / 5);
+                foreach (IReadOnlyList<(Double X, Double Y)> Run in manualAssistRuns)
+                {
+                    DrawWorldPolyline(
+                        Base, grid, Run, Ppb, new Rgba32(255, 140, 0, 255), AssistWidth);
+                }
+            }
+
+            List<(Double X, Double Y)> Bounds = new List<(Double X, Double Y)>(routePoints);
+            foreach (IReadOnlyList<(Double X, Double Y)> Run in cutRuns)
+            {
+                Bounds.AddRange(Run);
+            }
+            foreach (IReadOnlyList<(Double X, Double Y)> Run in fillRuns)
+            {
+                Bounds.AddRange(Run);
+            }
+            if (manualAssistRuns != null)
+            {
+                foreach (IReadOnlyList<(Double X, Double Y)> Run in manualAssistRuns)
+                {
+                    Bounds.AddRange(Run);
+                }
+            }
+            if (Bounds.Count == 0) return ToPng(Base);
+
+            List<(Double X, Double Y)> Pixels = Bounds.Select(Point =>
+                WorldToPixel(grid, Point.X, Point.Y, Ppb)).ToList();
+            Int32 Pad = padCells * Ppb;
+            Int32 X0 = Math.Max(0, TruncTowardZero(Pixels.Min(Point => Point.X) - Pad));
+            Int32 Y0 = Math.Max(0, TruncTowardZero(Pixels.Min(Point => Point.Y) - Pad));
+            Int32 X1 = Math.Min(Base.Width, TruncTowardZero(Pixels.Max(Point => Point.X) + Pad));
+            Int32 Y1 = Math.Min(Base.Height, TruncTowardZero(Pixels.Max(Point => Point.Y) + Pad));
+            if ((X1 > X0) && (Y1 > Y0))
+            {
+                Base.Mutate(Context => Context.Crop(new Rectangle(X0, Y0, X1 - X0, Y1 - Y0)));
+            }
+            return ToPng(Base);
+        }
+
+        /// <summary>
+        /// Converts a world polyline to pixels and draws it at a fixed width.
+        /// </summary>
+        /// <param name="image">Destination image.</param>
+        /// <param name="grid">Grid projection.</param>
+        /// <param name="points">World polyline.</param>
+        /// <param name="pixelsPerBin">Pixels per grid bin.</param>
+        /// <param name="color">Line color.</param>
+        /// <param name="width">Line width in pixels.</param>
+        private static void DrawWorldPolyline
+            (
+            Image<Rgba32> image,
+            Grid grid,
+            IReadOnlyList<(Double X, Double Y)> points,
+            Int32 pixelsPerBin,
+            Rgba32 color,
+            Int32 width
+            )
+        {
+            if (points.Count < 2) return;
+
+            // Reuse the established raster primitive after one coordinate conversion pass.
+            List<(Double X, Double Y)> Pixels = points.Select(Point =>
+                WorldToPixel(grid, Point.X, Point.Y, pixelsPerBin)).ToList();
+            DrawPolylinePixels(image, Pixels, color, width);
+        }
+
+        /// <summary>
         /// Renders several consecutive pass pairs as one operator-track figure.
         /// </summary>
         static public Byte[] RenderPairSequencePng

@@ -1,0 +1,650 @@
+using System;
+using System.Collections.Generic;
+
+namespace HaulBuilder
+{
+    /// <summary>
+    /// Orders experimental straight work runs using in-field lineups and strict connectors.
+    /// </summary>
+    public static class ExperimentalRunSequencer
+    {
+        private const Double COST_TOLERANCE = 1e-9;
+        private const Double LINEUP_SHORTFALL_WEIGHT = 4.0;
+        private const Int32 EXACT_RUN_LIMIT = 5;
+        private const Int32 FALLBACK_EXACT_RUN_LIMIT = 7;
+
+        /// <summary>
+        /// One oriented work run with the longest available straight entry and exit lineups.
+        /// </summary>
+        public sealed class SequencedRun
+        {
+            /// <summary>
+            /// Initializes an oriented run and its lineup geometry.
+            /// </summary>
+            /// <param name="Run">Oriented straight work run.</param>
+            /// <param name="EntryPose">Blade-up pose before the work start.</param>
+            /// <param name="ExitPose">Blade-up pose after the work end.</param>
+            /// <param name="EntryLineupM">Available straight entry distance.</param>
+            /// <param name="ExitLineupM">Available straight exit distance.</param>
+            public SequencedRun
+                (
+                ExperimentalCoveragePlanner.Run Run,
+                ExperimentalConnectorPlanner.Pose EntryPose,
+                ExperimentalConnectorPlanner.Pose ExitPose,
+                Double EntryLineupM,
+                Double ExitLineupM
+                )
+            {
+                // Keep work allocation unchanged while attaching drive geometry.
+                this.Run = Run;
+                this.EntryPose = EntryPose;
+                this.ExitPose = ExitPose;
+                this.EntryLineupM = EntryLineupM;
+                this.ExitLineupM = ExitLineupM;
+            }
+
+            /// <summary>Gets the oriented straight work run.</summary>
+            public ExperimentalCoveragePlanner.Run Run { get; }
+
+            /// <summary>Gets the blade-up entry pose.</summary>
+            public ExperimentalConnectorPlanner.Pose EntryPose { get; }
+
+            /// <summary>Gets the blade-up exit pose.</summary>
+            public ExperimentalConnectorPlanner.Pose ExitPose { get; }
+
+            /// <summary>Gets available straight distance before work.</summary>
+            public Double EntryLineupM { get; }
+
+            /// <summary>Gets available straight distance after work.</summary>
+            public Double ExitLineupM { get; }
+        }
+
+        /// <summary>
+        /// Result of exact run ordering across both drive orientations.
+        /// </summary>
+        public sealed class Result
+        {
+            /// <summary>
+            /// Initializes an experimental sequence result.
+            /// </summary>
+            /// <param name="Success">Whether all required strict connectors exist.</param>
+            /// <param name="Runs">Ordered oriented runs with lineups.</param>
+            /// <param name="Connectors">Strict connectors between successive runs.</param>
+            /// <param name="ConnectorDistanceM">Total curved connector distance.</param>
+            /// <param name="MinimumLineupM">Shortest available entry or exit lineup.</param>
+            /// <param name="FailureReason">Reason no complete sequence was accepted.</param>
+            public Result
+                (
+                Boolean Success,
+                List<SequencedRun> Runs,
+                List<ExperimentalTransitPlanner.Result> Connectors,
+                Double ConnectorDistanceM,
+                Double MinimumLineupM,
+                String FailureReason
+                )
+            {
+                // Report failure explicitly instead of silently inserting an invalid chord.
+                this.Success = Success;
+                this.Runs = Runs;
+                this.Connectors = Connectors;
+                this.ConnectorDistanceM = ConnectorDistanceM;
+                this.MinimumLineupM = MinimumLineupM;
+                this.FailureReason = FailureReason;
+            }
+
+            /// <summary>Gets whether every connector is valid.</summary>
+            public Boolean Success { get; }
+
+            /// <summary>Gets ordered oriented runs.</summary>
+            public List<SequencedRun> Runs { get; }
+
+            /// <summary>Gets strict connectors between successive runs.</summary>
+            public List<ExperimentalTransitPlanner.Result> Connectors { get; }
+
+            /// <summary>Gets total curved connector distance.</summary>
+            public Double ConnectorDistanceM { get; }
+
+            /// <summary>Gets the shortest available lineup.</summary>
+            public Double MinimumLineupM { get; }
+
+            /// <summary>Gets the failure reason.</summary>
+            public String FailureReason { get; }
+        }
+
+        /// <summary>
+        /// Finds the lowest-cost complete ordering with field-clamped lineups.
+        /// </summary>
+        /// <param name="Runs">Unordered straight work runs.</param>
+        /// <param name="Start">Optional inbound pose before the first lineup.</param>
+        /// <param name="End">Optional outbound pose after the final lineup.</param>
+        /// <param name="PreferredLineupM">Desired straight distance before and after work.</param>
+        /// <param name="MinimumRadiusM">Minimum connector turning radius.</param>
+        /// <param name="SampleSpacingM">Maximum validation sample spacing.</param>
+        /// <param name="Field">Raw field mask.</param>
+        /// <returns>Complete strict sequence or explicit failure.</returns>
+        static public Result Optimize
+            (
+            List<ExperimentalCoveragePlanner.Run> Runs,
+            ExperimentalConnectorPlanner.Pose? Start,
+            ExperimentalConnectorPlanner.Pose? End,
+            Double PreferredLineupM,
+            Double MinimumRadiusM,
+            Double SampleSpacingM,
+            Grid Field
+            )
+        {
+            if (Runs == null) throw new ArgumentNullException(nameof(Runs));
+            if (PreferredLineupM < 0.0) throw new ArgumentOutOfRangeException(nameof(PreferredLineupM));
+            if (Runs.Count == 0)
+            {
+                return new Result(true, new List<SequencedRun>(),
+                    new List<ExperimentalTransitPlanner.Result>(), 0.0, 0.0, String.Empty);
+            }
+            SequencedRun[,] Options = new SequencedRun[Runs.Count, 2];
+            for (Int32 RunIndex = 0; RunIndex < Runs.Count; RunIndex += 1)
+            {
+                Options[RunIndex, 0] = Prepare(
+                    Runs[RunIndex], PreferredLineupM, SampleSpacingM, Field);
+                Options[RunIndex, 1] = Prepare(
+                    Reverse(Runs[RunIndex]), PreferredLineupM, SampleSpacingM, Field);
+            }
+            if (Runs.Count > EXACT_RUN_LIMIT)
+            {
+                Result Greedy = OptimizeGreedy(
+                    Options,
+                    Start,
+                    End,
+                    PreferredLineupM,
+                    MinimumRadiusM,
+                    SampleSpacingM,
+                    Field);
+                if (Greedy.Success || (Runs.Count > FALLBACK_EXACT_RUN_LIMIT))
+                {
+                    return Greedy;
+                }
+            }
+
+            Int32 StateCount = 1 << Runs.Count;
+            Double[,,] Costs = new Double[StateCount, Runs.Count, 2];
+            Int32[,,] PreviousIndices = new Int32[StateCount, Runs.Count, 2];
+            Int32[,,] PreviousOrientations = new Int32[StateCount, Runs.Count, 2];
+            InitializeTables(Costs, PreviousIndices, PreviousOrientations);
+
+            for (Int32 RunIndex = 0; RunIndex < Runs.Count; RunIndex += 1)
+            {
+                for (Int32 Orientation = 0; Orientation < 2; Orientation += 1)
+                {
+                    SequencedRun Option = Options[RunIndex, Orientation];
+                    Double Cost = LineupPenalty(Option, PreferredLineupM);
+                    if (Start.HasValue)
+                    {
+                        Cost += ConnectorCost(
+                            Start.Value, Option.EntryPose, MinimumRadiusM, SampleSpacingM, Field);
+                    }
+                    Costs[1 << RunIndex, RunIndex, Orientation] = Cost;
+                }
+            }
+
+            for (Int32 Mask = 1; Mask < StateCount; Mask += 1)
+            {
+                ExpandState(Mask, Runs.Count, Options, Costs, PreviousIndices,
+                    PreviousOrientations, PreferredLineupM, MinimumRadiusM, SampleSpacingM, Field);
+            }
+
+            (Int32 Index, Int32 Orientation) Best = FindBestEnd(
+                Costs, Options, End, MinimumRadiusM, SampleSpacingM, Field);
+            if (Best.Index < 0)
+            {
+                return Failure("No ordering connects every lineup without leaving the field.");
+            }
+
+            List<SequencedRun> Ordered = Reconstruct(
+                StateCount - 1, Best.Index, Best.Orientation, Options,
+                PreviousIndices, PreviousOrientations);
+            return BuildResult(Ordered, MinimumRadiusM, SampleSpacingM, Field);
+        }
+
+        /// <summary>
+        /// Builds a deterministic validated sequence when exact subset search would be excessive.
+        /// </summary>
+        private static Result OptimizeGreedy
+            (
+            SequencedRun[,] Options,
+            ExperimentalConnectorPlanner.Pose? Start,
+            ExperimentalConnectorPlanner.Pose? End,
+            Double PreferredLineupM,
+            Double MinimumRadiusM,
+            Double SampleSpacingM,
+            Grid Field
+            )
+        {
+            Int32 RunCount = Options.GetLength(0);
+            if (TryGreedyOrder(
+                Options, Start, End, PreferredLineupM, MinimumRadiusM,
+                SampleSpacingM, Field, -1, -1,
+                out List<SequencedRun> Ordered, out Double IgnoredCost))
+            {
+                return BuildResult(Ordered, MinimumRadiusM, SampleSpacingM, Field);
+            }
+
+            List<SequencedRun>? BestOrdered = null;
+            Double BestTotalCost = Double.PositiveInfinity;
+            for (Int32 FirstIndex = 0; FirstIndex < RunCount; FirstIndex += 1)
+            {
+                for (Int32 FirstOrientation = 0; FirstOrientation < 2; FirstOrientation += 1)
+                {
+                    if (!TryGreedyOrder(
+                        Options, Start, End, PreferredLineupM, MinimumRadiusM,
+                        SampleSpacingM, Field, FirstIndex, FirstOrientation,
+                        out List<SequencedRun> Candidate, out Double CandidateCost))
+                    {
+                        continue;
+                    }
+                    if (CandidateCost + COST_TOLERANCE < BestTotalCost)
+                    {
+                        BestTotalCost = CandidateCost;
+                        BestOrdered = Candidate;
+                    }
+                }
+            }
+            return BestOrdered == null
+                ? Failure("Greedy sequencing could not reach every lineup in-field.")
+                : BuildResult(BestOrdered, MinimumRadiusM, SampleSpacingM, Field);
+        }
+
+        /// <summary>Builds one deterministic greedy order with an optional forced first run.</summary>
+        private static Boolean TryGreedyOrder
+            (
+            SequencedRun[,] Options,
+            ExperimentalConnectorPlanner.Pose? Start,
+            ExperimentalConnectorPlanner.Pose? End,
+            Double PreferredLineupM,
+            Double MinimumRadiusM,
+            Double SampleSpacingM,
+            Grid Field,
+            Int32 ForcedFirstIndex,
+            Int32 ForcedFirstOrientation,
+            out List<SequencedRun> Ordered,
+            out Double TotalCost
+            )
+        {
+            Int32 RunCount = Options.GetLength(0);
+            Boolean[] Used = new Boolean[RunCount];
+            Ordered = new List<SequencedRun>();
+            TotalCost = 0.0;
+            for (Int32 Position = 0; Position < RunCount; Position += 1)
+            {
+                Double BestCost = Double.PositiveInfinity;
+                Int32 BestIndex = -1;
+                Int32 BestOrientation = -1;
+                for (Int32 RunIndex = 0; RunIndex < RunCount; RunIndex += 1)
+                {
+                    if (Used[RunIndex]) continue;
+                    for (Int32 Orientation = 0; Orientation < 2; Orientation += 1)
+                    {
+                        if ((Position == 0) && (ForcedFirstIndex >= 0)
+                            && ((RunIndex != ForcedFirstIndex)
+                                || (Orientation != ForcedFirstOrientation)))
+                        {
+                            continue;
+                        }
+                        SequencedRun Candidate = Options[RunIndex, Orientation];
+                        Double Cost = LineupPenalty(Candidate, PreferredLineupM);
+                        if (Ordered.Count > 0)
+                        {
+                            Cost += ConnectorCost(
+                                Ordered[Ordered.Count - 1].ExitPose,
+                                Candidate.EntryPose,
+                                MinimumRadiusM,
+                                SampleSpacingM,
+                                Field);
+                        }
+                        else if (Start.HasValue)
+                        {
+                            Cost += ConnectorCost(
+                                Start.Value,
+                                Candidate.EntryPose,
+                                MinimumRadiusM,
+                                SampleSpacingM,
+                                Field);
+                        }
+                        if ((Position == RunCount - 1) && End.HasValue
+                            && Double.IsFinite(Cost))
+                        {
+                            Cost += ConnectorCost(
+                                Candidate.ExitPose,
+                                End.Value,
+                                MinimumRadiusM,
+                                SampleSpacingM,
+                                Field);
+                        }
+                        if (Cost + COST_TOLERANCE < BestCost)
+                        {
+                            BestCost = Cost;
+                            BestIndex = RunIndex;
+                            BestOrientation = Orientation;
+                        }
+                    }
+                }
+                if ((BestIndex < 0) || !Double.IsFinite(BestCost))
+                {
+                    Ordered.Clear();
+                    TotalCost = Double.PositiveInfinity;
+                    return false;
+                }
+                Used[BestIndex] = true;
+                Ordered.Add(Options[BestIndex, BestOrientation]);
+                TotalCost += BestCost;
+            }
+            return true;
+        }
+
+        /// <summary>
+        /// Attaches the longest first-contiguous in-field lineups to one oriented run.
+        /// </summary>
+        static public SequencedRun Prepare
+            (
+            ExperimentalCoveragePlanner.Run Run,
+            Double PreferredLineupM,
+            Double SampleSpacingM,
+            Grid Field
+            )
+        {
+            Double HeadingRad = Run.HeadingDeg * Math.PI / 180.0;
+            Double UnitX = Math.Sin(HeadingRad);
+            Double UnitY = Math.Cos(HeadingRad);
+            Double EntryM = AvailableStraight(
+                Run.StartXy, -UnitX, -UnitY, PreferredLineupM, SampleSpacingM, Field);
+            Double ExitM = AvailableStraight(
+                Run.EndXy, UnitX, UnitY, PreferredLineupM, SampleSpacingM, Field);
+            return new SequencedRun(
+                Run,
+                new ExperimentalConnectorPlanner.Pose(
+                    Run.StartXy.X - (UnitX * EntryM),
+                    Run.StartXy.Y - (UnitY * EntryM),
+                    Run.HeadingDeg),
+                new ExperimentalConnectorPlanner.Pose(
+                    Run.EndXy.X + (UnitX * ExitM),
+                    Run.EndXy.Y + (UnitY * ExitM),
+                    Run.HeadingDeg),
+                EntryM,
+                ExitM);
+        }
+
+        /// <summary>
+        /// Expands all feasible transitions out of one dynamic-programming mask.
+        /// </summary>
+        private static void ExpandState
+            (
+            Int32 Mask,
+            Int32 RunCount,
+            SequencedRun[,] Options,
+            Double[,,] Costs,
+            Int32[,,] PreviousIndices,
+            Int32[,,] PreviousOrientations,
+            Double PreferredLineupM,
+            Double MinimumRadiusM,
+            Double SampleSpacingM,
+            Grid Field
+            )
+        {
+            for (Int32 LastIndex = 0; LastIndex < RunCount; LastIndex += 1)
+            {
+                for (Int32 LastOrientation = 0; LastOrientation < 2; LastOrientation += 1)
+                {
+                    Double CurrentCost = Costs[Mask, LastIndex, LastOrientation];
+                    if (!Double.IsFinite(CurrentCost)) continue;
+                    for (Int32 NextIndex = 0; NextIndex < RunCount; NextIndex += 1)
+                    {
+                        if ((Mask & (1 << NextIndex)) != 0) continue;
+                        for (Int32 NextOrientation = 0; NextOrientation < 2; NextOrientation += 1)
+                        {
+                            SequencedRun Next = Options[NextIndex, NextOrientation];
+                            Double TransitionM = ConnectorCost(
+                                Options[LastIndex, LastOrientation].ExitPose,
+                                Next.EntryPose,
+                                MinimumRadiusM,
+                                SampleSpacingM,
+                                Field);
+                            if (!Double.IsFinite(TransitionM)) continue;
+                            Int32 NextMask = Mask | (1 << NextIndex);
+                            Double CandidateCost = CurrentCost + TransitionM
+                                + LineupPenalty(Next, PreferredLineupM);
+                            if (CandidateCost + COST_TOLERANCE
+                                < Costs[NextMask, NextIndex, NextOrientation])
+                            {
+                                Costs[NextMask, NextIndex, NextOrientation] = CandidateCost;
+                                PreviousIndices[NextMask, NextIndex, NextOrientation] = LastIndex;
+                                PreviousOrientations[NextMask, NextIndex, NextOrientation] = LastOrientation;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        /// <summary>
+        /// Selects the cheapest complete state, including an optional outbound connector.
+        /// </summary>
+        private static (Int32 Index, Int32 Orientation) FindBestEnd
+            (
+            Double[,,] Costs,
+            SequencedRun[,] Options,
+            ExperimentalConnectorPlanner.Pose? End,
+            Double MinimumRadiusM,
+            Double SampleSpacingM,
+            Grid Field
+            )
+        {
+            Int32 FullMask = Costs.GetLength(0) - 1;
+            Double BestCost = Double.PositiveInfinity;
+            (Int32 Index, Int32 Orientation) Best = (-1, -1);
+            for (Int32 RunIndex = 0; RunIndex < Costs.GetLength(1); RunIndex += 1)
+            {
+                for (Int32 Orientation = 0; Orientation < 2; Orientation += 1)
+                {
+                    Double CandidateCost = Costs[FullMask, RunIndex, Orientation];
+                    if (End.HasValue && Double.IsFinite(CandidateCost))
+                    {
+                        CandidateCost += ConnectorCost(
+                            Options[RunIndex, Orientation].ExitPose,
+                            End.Value,
+                            MinimumRadiusM,
+                            SampleSpacingM,
+                            Field);
+                    }
+                    if (CandidateCost + COST_TOLERANCE < BestCost)
+                    {
+                        BestCost = CandidateCost;
+                        Best = (RunIndex, Orientation);
+                    }
+                }
+            }
+            return Best;
+        }
+
+        /// <summary>
+        /// Reconstructs one complete ordered sequence.
+        /// </summary>
+        private static List<SequencedRun> Reconstruct
+            (
+            Int32 Mask,
+            Int32 Index,
+            Int32 Orientation,
+            SequencedRun[,] Options,
+            Int32[,,] PreviousIndices,
+            Int32[,,] PreviousOrientations
+            )
+        {
+            List<SequencedRun> ReverseOrder = new List<SequencedRun>();
+            while (Index >= 0)
+            {
+                ReverseOrder.Add(Options[Index, Orientation]);
+                Int32 PreviousIndex = PreviousIndices[Mask, Index, Orientation];
+                Int32 PreviousOrientation = PreviousOrientations[Mask, Index, Orientation];
+                Mask &= ~(1 << Index);
+                Index = PreviousIndex;
+                Orientation = PreviousOrientation;
+            }
+            ReverseOrder.Reverse();
+            return ReverseOrder;
+        }
+
+        /// <summary>
+        /// Recomputes strict connectors for the selected sequence and summarizes its geometry.
+        /// </summary>
+        private static Result BuildResult
+            (
+            List<SequencedRun> Runs,
+            Double MinimumRadiusM,
+            Double SampleSpacingM,
+            Grid Field
+            )
+        {
+            List<ExperimentalTransitPlanner.Result> Connectors =
+                new List<ExperimentalTransitPlanner.Result>();
+            Double ConnectorDistanceM = 0.0;
+            Double MinimumLineupM = Double.PositiveInfinity;
+            foreach (SequencedRun Run in Runs)
+            {
+                MinimumLineupM = Math.Min(MinimumLineupM,
+                    Math.Min(Run.EntryLineupM, Run.ExitLineupM));
+            }
+            for (Int32 Index = 1; Index < Runs.Count; Index += 1)
+            {
+                ExperimentalTransitPlanner.Result Connector = ExperimentalTransitPlanner.Connect(
+                    Runs[Index - 1].ExitPose,
+                    Runs[Index].EntryPose,
+                    MinimumRadiusM,
+                    SampleSpacingM,
+                    Field);
+                if (!Connector.Success)
+                {
+                    return Failure("Selected sequence failed strict connector reconstruction.");
+                }
+                Connectors.Add(Connector);
+                ConnectorDistanceM += Connector.LengthM;
+            }
+            return new Result(true, Runs, Connectors, ConnectorDistanceM,
+                Double.IsFinite(MinimumLineupM) ? MinimumLineupM : 0.0, String.Empty);
+        }
+
+        /// <summary>
+        /// Finds the longest contiguous straight extension that remains inside the field.
+        /// </summary>
+        private static Double AvailableStraight
+            (
+            (Double X, Double Y) Origin,
+            Double UnitX,
+            Double UnitY,
+            Double PreferredM,
+            Double SampleSpacingM,
+            Grid Field
+            )
+        {
+            if ((PreferredM <= 0.0) || !Field.ContainsWorldXy(Origin.X, Origin.Y)) return 0.0;
+            Double StepM = Math.Min(SampleSpacingM, Field.GridSizeM * 0.5);
+            Double GoodM = 0.0;
+            while (GoodM + COST_TOLERANCE < PreferredM)
+            {
+                Double CandidateM = Math.Min(PreferredM, GoodM + StepM);
+                if (!Field.ContainsWorldXy(
+                    Origin.X + (UnitX * CandidateM), Origin.Y + (UnitY * CandidateM)))
+                {
+                    break;
+                }
+                GoodM = CandidateM;
+            }
+            return GoodM;
+        }
+
+        /// <summary>
+        /// Computes a strict transition cost or positive infinity.
+        /// </summary>
+        private static Double ConnectorCost
+            (
+            ExperimentalConnectorPlanner.Pose Start,
+            ExperimentalConnectorPlanner.Pose End,
+            Double MinimumRadiusM,
+            Double SampleSpacingM,
+            Grid Field
+            )
+        {
+            ExperimentalTransitPlanner.Result Connector = ExperimentalTransitPlanner.Connect(
+                Start, End, MinimumRadiusM, SampleSpacingM, Field);
+            Double Dx = End.X - Start.X;
+            Double Dy = End.Y - Start.Y;
+            Double DirectM = Math.Sqrt((Dx * Dx) + (Dy * Dy));
+            if (!Connector.Success) return Double.PositiveInfinity;
+            return Connector.LengthM;
+        }
+
+        /// <summary>
+        /// Penalizes orientations which cannot provide the preferred lineups.
+        /// </summary>
+        private static Double LineupPenalty
+            (
+            SequencedRun Run,
+            Double PreferredLineupM
+            )
+        {
+            return LINEUP_SHORTFALL_WEIGHT
+                * ((PreferredLineupM - Run.EntryLineupM) + (PreferredLineupM - Run.ExitLineupM));
+        }
+
+        /// <summary>
+        /// Reverses one run without changing its allocated cells or geometry.
+        /// </summary>
+        private static ExperimentalCoveragePlanner.Run Reverse
+            (
+            ExperimentalCoveragePlanner.Run Input
+            )
+        {
+            List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Cells =
+                new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>(Input.Cells);
+            Cells.Reverse();
+            return new ExperimentalCoveragePlanner.Run(
+                Cells,
+                Input.EndXy,
+                Input.StartXy,
+                (Input.HeadingDeg + 180.0) % 360.0,
+                Input.MaximumLateralErrorM);
+        }
+
+        /// <summary>
+        /// Initializes dynamic-programming tables with unreachable sentinels.
+        /// </summary>
+        private static void InitializeTables
+            (
+            Double[,,] Costs,
+            Int32[,,] PreviousIndices,
+            Int32[,,] PreviousOrientations
+            )
+        {
+            for (Int32 Mask = 0; Mask < Costs.GetLength(0); Mask += 1)
+            {
+                for (Int32 Index = 0; Index < Costs.GetLength(1); Index += 1)
+                {
+                    for (Int32 Orientation = 0; Orientation < 2; Orientation += 1)
+                    {
+                        Costs[Mask, Index, Orientation] = Double.PositiveInfinity;
+                        PreviousIndices[Mask, Index, Orientation] = -1;
+                        PreviousOrientations[Mask, Index, Orientation] = -1;
+                    }
+                }
+            }
+        }
+
+        /// <summary>
+        /// Creates an empty explicit failure result.
+        /// </summary>
+        private static Result Failure
+            (
+            String Reason
+            )
+        {
+            return new Result(false, new List<SequencedRun>(),
+                new List<ExperimentalTransitPlanner.Result>(), 0.0, 0.0, Reason);
+        }
+    }
+}
