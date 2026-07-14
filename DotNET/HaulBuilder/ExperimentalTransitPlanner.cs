@@ -5,11 +5,12 @@ using System.Linq;
 namespace HaulBuilder
 {
     /// <summary>
-    /// Builds radius-valid experimental transit with explicit operator-alignment fallback.
+    /// Builds forward-only radius-valid experimental transit with explicit operator-alignment fallback.
     /// </summary>
     public static class ExperimentalTransitPlanner
     {
         private const Double AUTOMATIC_ALIGNMENT_TOLERANCE_DEG = 5.0;
+        private const Double SHORT_ALIGNMENT_JOG_TOLERANCE_DEG = 15.0;
         private const Double MAX_MANUAL_HEADING_CORRECTION_DEG = 30.0;
         private static readonly Object AllowanceCacheLock = new Object();
         private static readonly Dictionary<(Grid Field, Int64 AllowanceBits),
@@ -110,17 +111,39 @@ namespace HaulBuilder
             Boolean AllowManualAssist = true,
             Double MaxManualAssistM = 45.0 * Constants.FEET_TO_METERS,
             Double EdgeAllowanceM = Constants.DEFAULT_BLADE_WIDTH_MM / 1000.0,
-            Boolean AllowKeyholeHybrid = false
+            Boolean AllowForwardDetour = false
             )
         {
             List<(Double X, Double Y)> Gentle = GentleBend(
                 Start, End, MinimumRadiusM, SampleSpacingM, Field);
             Double GentleLengthM = Gentle.Count > 0 ? PolylineLength(Gentle) : Double.PositiveInfinity;
+            List<(Double X, Double Y)> ShortJog = ShortAlignmentJog(
+                Start, End, SampleSpacingM, Field);
+            Double ShortJogLengthM = ShortJog.Count > 0
+                ? PolylineLength(ShortJog)
+                : Double.PositiveInfinity;
             ExperimentalConnectorPlanner.Result Automatic = ExperimentalConnectorPlanner.Connect(
                 Start, End, MinimumRadiusM, SampleSpacingM, Field);
-            if ((Gentle.Count > 0)
-                && DensePolylineAllowed(Gentle, Field, null)
-                && (!Automatic.Success || (GentleLengthM + 1e-9 < Automatic.LengthM)))
+            Boolean GentleAllowed = (Gentle.Count > 0)
+                && DensePolylineAllowed(Gentle, Field, null);
+            Boolean AutomaticAllowed = Automatic.Success
+                && DensePolylineAllowed(Automatic.Points, Field, null);
+            Boolean ShortJogAllowed = (ShortJog.Count > 0)
+                && DensePolylineAllowed(ShortJog, Field, null);
+            Double BestExactLengthM = Math.Min(
+                GentleAllowed ? GentleLengthM : Double.PositiveInfinity,
+                AutomaticAllowed ? Automatic.LengthM : Double.PositiveInfinity);
+            if (ShortJogAllowed && IsGrosslyDisproportionate(
+                BestExactLengthM, ShortJogLengthM, MinimumRadiusM))
+            {
+                return new Result(true, false, ShortJog,
+                    ShortJogLengthM,
+                    new List<Leg> { new Leg(false, ShortJog) },
+                    0.0,
+                    "AUTO_SHORT_ALIGNMENT_JOG", String.Empty);
+            }
+            if (GentleAllowed
+                && (!AutomaticAllowed || (GentleLengthM + 1e-9 < Automatic.LengthM)))
             {
                 return new Result(true, false, Gentle,
                     GentleLengthM,
@@ -128,13 +151,20 @@ namespace HaulBuilder
                     0.0,
                     "AUTO_BEND", String.Empty);
             }
-            if (Automatic.Success && DensePolylineAllowed(Automatic.Points, Field, null))
+            if (AutomaticAllowed)
             {
                 return new Result(true, false, Automatic.Points,
                     Automatic.LengthM,
                     new List<Leg> { new Leg(false, Automatic.Points) },
                     0.0,
                     "AUTO_CURVE", String.Empty);
+            }
+
+            if (AllowForwardDetour)
+            {
+                Result? Detour = TryForwardDetour(
+                    Start, End, MinimumRadiusM, SampleSpacingM, Field);
+                if (Detour != null) return Detour;
             }
 
             if (!AllowManualAssist)
@@ -177,34 +207,9 @@ namespace HaulBuilder
                 }
             }
 
-            Double MinimumKeyholePullM = 0.5
-                * Constants.DEFAULT_EQUIPMENT_LENGTH_FT
-                * Constants.FEET_TO_METERS;
-            Result? Keyhole = TryManualKeyhole(
-                Start,
-                End,
-                SampleSpacingM,
-                MinimumKeyholePullM,
-                MaxManualAssistM,
-                Field,
-                null);
-            if (Keyhole != null) return Keyhole;
-
-            if (AllowKeyholeHybrid)
-            {
-                Result? Hybrid = TryEndpointKeyholeHybrid(
-                    Start,
-                    End,
-                    MinimumRadiusM,
-                    SampleSpacingM,
-                    Field,
-                    MaxManualAssistM,
-                    EdgeAllowanceM);
-                if (Hybrid != null) return Hybrid;
-            }
-
             Result? Exterior = TryExteriorConnector(
-                Start, End, MinimumRadiusM, SampleSpacingM, Field, EdgeAllowanceM);
+                Start, End, MinimumRadiusM, SampleSpacingM, Field, EdgeAllowanceM,
+                AllowForwardDetour);
             if (Exterior != null) return Exterior;
             if (InFieldFallback != null) return InFieldFallback;
 
@@ -214,313 +219,344 @@ namespace HaulBuilder
         }
 
         /// <summary>
-        /// Builds a local pull-forward/reverse maneuver with endpoint-aligned legs.
-        /// Detailed vehicle articulation is deliberately left to the manual operator zone.
+        /// Rejects exact-pose geometry whose distance is grossly out of proportion
+        /// to an already validated small-angle forward alternative.
         /// </summary>
-        private static Result? TryManualKeyhole
+        private static Boolean IsGrosslyDisproportionate
+            (
+            Double ExactLengthM,
+            Double AlternativeLengthM,
+            Double MinimumRadiusM
+            ) => ExactLengthM > Math.Max(
+                4.0 * AlternativeLengthM,
+                2.0 * MinimumRadiusM);
+
+        /// <summary>
+        /// Uses a short forward jog when two nearby poses differ only by the small
+        /// endpoint correction intentionally delegated to guidance/operator tracking.
+        /// This prevents an exact-pose Dubins solution from inserting a full loop to
+        /// resolve a few degrees across approximately one blade width.
+        /// </summary>
+        private static List<(Double X, Double Y)> ShortAlignmentJog
             (
             ExperimentalConnectorPlanner.Pose Start,
             ExperimentalConnectorPlanner.Pose End,
             Double SampleSpacingM,
-            Double MinimumPullM,
-            Double MaximumLengthM,
-            Grid Field,
-            ExperimentalFieldEdgePolicy? ExteriorPolicy
+            Grid Field
             )
         {
-            Double StartRad = Start.HeadingDeg * Math.PI / 180.0;
-            Double EndRad = End.HeadingDeg * Math.PI / 180.0;
-            (Double X, Double Y) StartUnit =
-                (Math.Sin(StartRad), Math.Cos(StartRad));
-            (Double X, Double Y) EndUnit =
-                (Math.Sin(EndRad), Math.Cos(EndRad));
-            List<(Double X, Double Y)> Best = new List<(Double X, Double Y)>();
-            Double BestLengthM = Double.PositiveInfinity;
-            String BestMode = "MANUAL_KEYHOLE";
-
-            void ConsiderPoints(List<(Double X, Double Y)> Points, String Mode)
+            Double DirectM = Distance((Start.X, Start.Y), (End.X, End.Y));
+            if (DirectM <= SampleSpacingM)
             {
-                if (Points.Count < 3) return;
-                Double StartErrorDeg = HeadingDifferenceDeg(
-                    Start.HeadingDeg, BearingDeg(Points[0], Points[1]));
-                Double EndErrorDeg = HeadingDifferenceDeg(
-                    BearingDeg(Points[Points.Count - 2], Points[Points.Count - 1]),
-                    End.HeadingDeg);
-                Double MaximumReversalDeg = 0.0;
-                for (Int32 Index = 1; Index + 1 < Points.Count; Index += 1)
-                {
-                    MaximumReversalDeg = Math.Max(
-                        MaximumReversalDeg,
-                        CornerDeflectionDeg(
-                            Points[Index - 1], Points[Index], Points[Index + 1]));
-                }
-                if ((StartErrorDeg > MAX_MANUAL_HEADING_CORRECTION_DEG)
-                    || (EndErrorDeg > MAX_MANUAL_HEADING_CORRECTION_DEG)
-                    || (MaximumReversalDeg < 90.0))
-                {
-                    return;
-                }
-                if (!DensePolylineAllowed(Points, Field, ExteriorPolicy)) return;
-                Double LengthM = PolylineLength(Points);
-                if (LengthM > MaximumLengthM + 1e-9) return;
-                if (LengthM >= BestLengthM - 1e-9) return;
-                Best = Points;
-                BestLengthM = LengthM;
-                BestMode = Mode;
+                return new List<(Double X, Double Y)>();
             }
-
-            void ConsiderCusp((Double X, Double Y) Cusp)
-            {
-                List<(Double X, Double Y)> First = SampleLine(
-                    (Start.X, Start.Y), Cusp, SampleSpacingM);
-                List<(Double X, Double Y)> Second = SampleLine(
-                    Cusp, (End.X, End.Y), SampleSpacingM);
-                if ((First.Count < 2) || (Second.Count < 2)) return;
-                List<(Double X, Double Y)> Points =
-                    new List<(Double X, Double Y)>(First);
-                Points.AddRange(Second.Skip(1));
-                ConsiderPoints(Points, "MANUAL_KEYHOLE");
-            }
-
-            void ConsiderThreePoint(Double PullM, Double Side)
-            {
-                (Double X, Double Y) Perpendicular =
-                    (-StartUnit.Y, StartUnit.X);
-                Double LateralM = 0.18 * PullM * Side;
-                (Double X, Double Y) Forward = (
-                    Start.X + (StartUnit.X * PullM),
-                    Start.Y + (StartUnit.Y * PullM));
-                (Double X, Double Y) Reverse = (
-                    Start.X + (StartUnit.X * 0.55 * PullM)
-                        + (Perpendicular.X * LateralM),
-                    Start.Y + (StartUnit.Y * 0.55 * PullM)
-                        + (Perpendicular.Y * LateralM));
-                List<(Double X, Double Y)> First = SampleLine(
-                    (Start.X, Start.Y), Forward, SampleSpacingM);
-                List<(Double X, Double Y)> Second = SampleLine(
-                    Forward, Reverse, SampleSpacingM);
-                List<(Double X, Double Y)> Third = SampleLine(
-                    Reverse, (End.X, End.Y), SampleSpacingM);
-                List<(Double X, Double Y)> Points =
-                    new List<(Double X, Double Y)>(First);
-                Points.AddRange(Second.Skip(1));
-                Points.AddRange(Third.Skip(1));
-                ConsiderPoints(Points, "MANUAL_THREE_POINT_KEYHOLE");
-            }
-
-            Double DeltaX = End.X - Start.X;
-            Double DeltaY = End.Y - Start.Y;
-            Double Determinant = (StartUnit.X * EndUnit.Y)
-                - (StartUnit.Y * EndUnit.X);
-            if (Math.Abs(Determinant) > 1e-9)
-            {
-                Double ForwardM = ((DeltaX * EndUnit.Y) - (DeltaY * EndUnit.X))
-                    / Determinant;
-                Double ReverseM = ((StartUnit.X * DeltaY) - (StartUnit.Y * DeltaX))
-                    / Determinant;
-                if ((ForwardM >= MinimumPullM - 1e-9)
-                    && (ReverseM >= MinimumPullM - 1e-9))
-                {
-                    ConsiderCusp((
-                        Start.X + (StartUnit.X * ForwardM),
-                        Start.Y + (StartUnit.Y * ForwardM)));
-                }
-            }
-
-            Double StepM = Math.Max(SampleSpacingM, Field.GridSizeM * 0.25);
-            Double MaximumM = 2.0 * Constants.DEFAULT_EQUIPMENT_LENGTH_FT
-                * Constants.FEET_TO_METERS;
-            Double PositionDistanceM = Distance(
+            Double DirectHeadingDeg = BearingDeg(
                 (Start.X, Start.Y), (End.X, End.Y));
-            Boolean CoincidentOpposing = PositionDistanceM <= SampleSpacingM
-                && HeadingDifferenceDeg(Start.HeadingDeg, End.HeadingDeg) >= 150.0;
-            for (Double DistanceM = Math.Max(MinimumPullM, StepM);
-                DistanceM <= MaximumM + 1e-9;
-                DistanceM += StepM)
+            if ((HeadingDifferenceDeg(Start.HeadingDeg, DirectHeadingDeg)
+                    > SHORT_ALIGNMENT_JOG_TOLERANCE_DEG)
+                || (HeadingDifferenceDeg(DirectHeadingDeg, End.HeadingDeg)
+                    > SHORT_ALIGNMENT_JOG_TOLERANCE_DEG))
             {
-                if (CoincidentOpposing)
-                {
-                    ConsiderThreePoint(DistanceM, -1.0);
-                    ConsiderThreePoint(DistanceM, 1.0);
-                    continue;
-                }
-                ConsiderCusp((
-                    End.X - (EndUnit.X * DistanceM),
-                    End.Y - (EndUnit.Y * DistanceM)));
-                ConsiderCusp((
-                    Start.X + (StartUnit.X * DistanceM),
-                    Start.Y + (StartUnit.Y * DistanceM)));
+                return new List<(Double X, Double Y)>();
             }
-            if (Best.Count == 0) return null;
-            return new Result(
-                true,
-                true,
-                Best,
-                BestLengthM,
-                new List<Leg> { new Leg(true, Best) },
-                BestLengthM,
-                BestMode,
-                String.Empty);
+            return SampleLine(
+                (Start.X, Start.Y),
+                (End.X, End.Y),
+                SampleSpacingM);
+        }
+
+        private readonly record struct ForwardStateKey
+        {
+            /// <summary>Initializes one quantized forward-search state.</summary>
+            public ForwardStateKey(Int32 X, Int32 Y, Int32 Heading)
+            {
+                this.X = X;
+                this.Y = Y;
+                this.Heading = Heading;
+            }
+
+            public Int32 X { get; }
+            public Int32 Y { get; }
+            public Int32 Heading { get; }
+        }
+
+        private sealed class ForwardSearchNode
+        {
+            /// <summary>Initializes one forward-only pose-lattice node.</summary>
+            public ForwardSearchNode
+                (
+                ExperimentalConnectorPlanner.Pose Pose,
+                Int32 ParentIndex,
+                List<(Double X, Double Y)> Incoming,
+                Double CostM
+                )
+            {
+                this.Pose = Pose;
+                this.ParentIndex = ParentIndex;
+                this.Incoming = Incoming;
+                this.CostM = CostM;
+            }
+
+            public ExperimentalConnectorPlanner.Pose Pose { get; }
+            public Int32 ParentIndex { get; }
+            public List<(Double X, Double Y)> Incoming { get; }
+            public Double CostM { get; }
         }
 
         /// <summary>
-        /// Adds a local three-point reversal before or after a long transit when an
-        /// endpoint faces substantially away from the required direction of travel.
+        /// Searches a bounded field in forward pose space, then uses an exact Dubins
+        /// connection to reach the requested terminal pose. This discovers longer
+        /// obstacle-avoiding loops which the six compact Dubins candidates cannot.
         /// </summary>
-        private static Result? TryEndpointKeyholeHybrid
+        private static Result? TryForwardDetour
             (
             ExperimentalConnectorPlanner.Pose Start,
             ExperimentalConnectorPlanner.Pose End,
             Double MinimumRadiusM,
             Double SampleSpacingM,
-            Grid Field,
-            Double MaxManualAssistM,
-            Double EdgeAllowanceM
+            Grid AllowedField
             )
         {
-            Double DirectM = Distance((Start.X, Start.Y), (End.X, End.Y));
-            if (DirectM <= SampleSpacingM) return null;
-            Double DirectHeadingDeg = BearingDeg(
-                (Start.X, Start.Y), (End.X, End.Y));
-            Boolean ReverseStart = HeadingDifferenceDeg(
-                Start.HeadingDeg, DirectHeadingDeg) > 60.0;
-            Boolean ReverseEnd = HeadingDifferenceDeg(
-                DirectHeadingDeg, End.HeadingDeg) > 60.0;
-            if (!ReverseStart && !ReverseEnd) return null;
-
-            ExperimentalConnectorPlanner.Pose FlippedStart =
-                new ExperimentalConnectorPlanner.Pose(
-                    Start.X, Start.Y, Start.HeadingDeg + 180.0);
-            ExperimentalConnectorPlanner.Pose FlippedEnd =
-                new ExperimentalConnectorPlanner.Pose(
-                    End.X, End.Y, End.HeadingDeg + 180.0);
-            Result? StartTurn = null;
-            Result? EndTurn = null;
-            List<Result> Candidates = new List<Result>();
-            if (ReverseStart)
+            const Int32 HEADING_BIN_COUNT = 24;
+            const Int32 MAX_EXPANSIONS = 60000;
+            Double SpatialResolutionM = Math.Max(
+                SampleSpacingM,
+                Math.Min(0.5 * AllowedField.GridSizeM, 0.25 * MinimumRadiusM));
+            Double PrimitiveLengthM = Math.Max(
+                2.0 * SampleSpacingM,
+                Math.Min(AllowedField.GridSizeM, Math.PI * MinimumRadiusM / 12.0));
+            Double MaximumLengthM = Math.Max(
+                16.0 * MinimumRadiusM,
+                Distance((Start.X, Start.Y), (End.X, End.Y))
+                    + (12.0 * MinimumRadiusM));
+            List<ForwardSearchNode> Nodes = new List<ForwardSearchNode>
             {
-                StartTurn = Connect(
+                new ForwardSearchNode(
                     Start,
-                    FlippedStart,
-                    MinimumRadiusM,
-                    SampleSpacingM,
-                    Field,
-                    true,
-                    MaxManualAssistM,
-                    EdgeAllowanceM,
-                    false);
-                if (StartTurn.Success)
+                    -1,
+                    new List<(Double X, Double Y)> { (Start.X, Start.Y) },
+                    0.0),
+            };
+            PriorityQueue<Int32, Double> Open = new PriorityQueue<Int32, Double>();
+            Dictionary<ForwardStateKey, Double> BestCost =
+                new Dictionary<ForwardStateKey, Double>();
+            ForwardStateKey StartKey = QuantizeForwardState(
+                Start, AllowedField, SpatialResolutionM, HEADING_BIN_COUNT);
+            BestCost[StartKey] = 0.0;
+            Open.Enqueue(0, ForwardHeuristicM(Start, End, MinimumRadiusM));
+            Int32 ExpansionCount = 0;
+
+            while ((Open.Count > 0) && (ExpansionCount < MAX_EXPANSIONS))
+            {
+                Int32 NodeIndex = Open.Dequeue();
+                ForwardSearchNode Node = Nodes[NodeIndex];
+                ForwardStateKey NodeKey = QuantizeForwardState(
+                    Node.Pose, AllowedField, SpatialResolutionM, HEADING_BIN_COUNT);
+                if (BestCost.TryGetValue(NodeKey, out Double KnownCostM)
+                    && (Node.CostM > KnownCostM + 1e-9))
                 {
-                    Result Tail = Connect(
-                        FlippedStart,
+                    continue;
+                }
+                ExpansionCount += 1;
+
+                ExperimentalConnectorPlanner.Result Exact =
+                    ExperimentalConnectorPlanner.Connect(
+                        Node.Pose,
                         End,
                         MinimumRadiusM,
                         SampleSpacingM,
-                        Field,
-                        true,
-                        MaxManualAssistM,
-                        EdgeAllowanceM,
-                        false);
-                    if (Tail.Success)
+                        AllowedField);
+                if (Exact.Success)
+                {
+                    List<(Double X, Double Y)> Points = ReconstructForwardPath(
+                        Nodes, NodeIndex, Exact.Points);
+                    if (PolylineLength(Points) <= MaximumLengthM + 1e-9
+                        && IsForwardContinuous(Points))
                     {
-                        Candidates.Add(Combine(
-                            new[] { StartTurn, Tail },
-                            "START_KEYHOLE_HYBRID"));
+                        Double LengthM = PolylineLength(Points);
+                        return new Result(
+                            true,
+                            false,
+                            Points,
+                            LengthM,
+                            new List<Leg> { new Leg(false, Points) },
+                            0.0,
+                            "AUTO_FORWARD_DETOUR",
+                            String.Empty);
                     }
                 }
-            }
-            if (ReverseEnd)
-            {
-                EndTurn = Connect(
-                    FlippedEnd,
-                    End,
-                    MinimumRadiusM,
-                    SampleSpacingM,
-                    Field,
-                    true,
-                    MaxManualAssistM,
-                    EdgeAllowanceM,
-                    false);
-                if (EndTurn.Success)
+
+                if (Node.CostM + PrimitiveLengthM > MaximumLengthM + 1e-9) continue;
+                foreach (Int32 Steering in new[] { -1, 0, 1 })
                 {
-                    Result Head = Connect(
-                        Start,
-                        FlippedEnd,
+                    List<(Double X, Double Y)> Primitive = SampleForwardPrimitive(
+                        Node.Pose,
+                        Steering,
+                        PrimitiveLengthM,
                         MinimumRadiusM,
                         SampleSpacingM,
-                        Field,
-                        true,
-                        MaxManualAssistM,
-                        EdgeAllowanceM,
-                        false);
-                    if (Head.Success)
+                        out ExperimentalConnectorPlanner.Pose NextPose);
+                    if (!Primitive.All(Point =>
+                        AllowedField.ContainsWorldXy(Point.X, Point.Y)))
                     {
-                        Candidates.Add(Combine(
-                            new[] { Head, EndTurn },
-                            "END_KEYHOLE_HYBRID"));
+                        continue;
                     }
+                    Double NextCostM = Node.CostM + PrimitiveLengthM;
+                    ForwardStateKey NextKey = QuantizeForwardState(
+                        NextPose, AllowedField, SpatialResolutionM, HEADING_BIN_COUNT);
+                    if (BestCost.TryGetValue(NextKey, out Double PreviousCostM)
+                        && (PreviousCostM <= NextCostM + 1e-9))
+                    {
+                        continue;
+                    }
+                    BestCost[NextKey] = NextCostM;
+                    Int32 NextIndex = Nodes.Count;
+                    Nodes.Add(new ForwardSearchNode(
+                        NextPose, NodeIndex, Primitive, NextCostM));
+                    Open.Enqueue(
+                        NextIndex,
+                        NextCostM + ForwardHeuristicM(
+                            NextPose, End, MinimumRadiusM));
                 }
             }
-            if (ReverseStart
-                && ReverseEnd
-                && (StartTurn?.Success ?? false)
-                && (EndTurn?.Success ?? false))
-            {
-                Result Middle = Connect(
-                    FlippedStart,
-                    FlippedEnd,
-                    MinimumRadiusM,
-                    SampleSpacingM,
-                    Field,
-                    true,
-                    MaxManualAssistM,
-                    EdgeAllowanceM,
-                    false);
-                if (Middle.Success)
-                {
-                    Candidates.Add(Combine(
-                        new[] { StartTurn!, Middle, EndTurn! },
-                        "BOTH_KEYHOLE_HYBRID"));
-                }
-            }
-            return Candidates
-                .OrderBy(Candidate => Candidate.LengthM)
-                .ThenBy(Candidate => Candidate.Mode, StringComparer.Ordinal)
-                .FirstOrDefault();
+            return null;
         }
 
-        /// <summary>Combines contiguous validated connectors into one lifecycle transit.</summary>
-        private static Result Combine
+        /// <summary>Samples one forward straight or minimum-radius arc primitive.</summary>
+        private static List<(Double X, Double Y)> SampleForwardPrimitive
             (
-            IEnumerable<Result> Parts,
-            String Mode
+            ExperimentalConnectorPlanner.Pose Start,
+            Int32 Steering,
+            Double LengthM,
+            Double RadiusM,
+            Double SampleSpacingM,
+            out ExperimentalConnectorPlanner.Pose End
             )
         {
-            List<Result> Ordered = Parts.ToList();
-            List<(Double X, Double Y)> Points = new List<(Double X, Double Y)>();
-            List<Leg> Legs = new List<Leg>();
-            foreach (Result Part in Ordered)
+            Int32 Count = Math.Max(1, (Int32)Math.Ceiling(LengthM / SampleSpacingM));
+            List<(Double X, Double Y)> Points = new List<(Double X, Double Y)>(Count + 1)
             {
-                if (Points.Count == 0)
+                (Start.X, Start.Y),
+            };
+            Double HeadingRad = Start.HeadingDeg * Math.PI / 180.0;
+            if (Steering == 0)
+            {
+                for (Int32 Index = 1; Index <= Count; Index += 1)
                 {
-                    Points.AddRange(Part.Points);
+                    Double TravelM = LengthM * Index / Count;
+                    Points.Add((
+                        Start.X + (Math.Sin(HeadingRad) * TravelM),
+                        Start.Y + (Math.Cos(HeadingRad) * TravelM)));
                 }
-                else
-                {
-                    Points.AddRange(Part.Points.Skip(1));
-                }
-                Legs.AddRange(Part.Legs);
+                (Double X, Double Y) Last = Points[Points.Count - 1];
+                End = new ExperimentalConnectorPlanner.Pose(
+                    Last.X, Last.Y, Start.HeadingDeg);
+                return Points;
             }
-            return new Result(
-                true,
-                Ordered.Any(Part => Part.OperatorAlignmentRequired),
-                Points,
-                Ordered.Sum(Part => Part.LengthM),
-                Legs,
-                Ordered.Sum(Part => Part.ManualAssistDistanceM),
-                Mode,
-                String.Empty,
-                Ordered.Any(Part => Part.LeavesField));
+
+            Double TurnSign = Math.Sign(Steering);
+            Double CenterX = Start.X + (TurnSign * RadiusM * Math.Cos(HeadingRad));
+            Double CenterY = Start.Y - (TurnSign * RadiusM * Math.Sin(HeadingRad));
+            Double RadiusX = Start.X - CenterX;
+            Double RadiusY = Start.Y - CenterY;
+            Double TotalTurnRad = TurnSign * LengthM / RadiusM;
+            for (Int32 Index = 1; Index <= Count; Index += 1)
+            {
+                Double TurnRad = TotalTurnRad * Index / Count;
+                Double Cos = Math.Cos(TurnRad);
+                Double Sin = Math.Sin(TurnRad);
+                Points.Add((
+                    CenterX + (RadiusX * Cos) + (RadiusY * Sin),
+                    CenterY - (RadiusX * Sin) + (RadiusY * Cos)));
+            }
+            (Double X, Double Y) ArcEnd = Points[Points.Count - 1];
+            End = new ExperimentalConnectorPlanner.Pose(
+                ArcEnd.X,
+                ArcEnd.Y,
+                Start.HeadingDeg + (TotalTurnRad * 180.0 / Math.PI));
+            return Points;
+        }
+
+        /// <summary>Quantizes one continuous pose for bounded forward search.</summary>
+        private static ForwardStateKey QuantizeForwardState
+            (
+            ExperimentalConnectorPlanner.Pose Pose,
+            Grid Field,
+            Double SpatialResolutionM,
+            Int32 HeadingBinCount
+            )
+        {
+            Int32 X = (Int32)Math.Round(
+                (Pose.X - Field.MinX) / SpatialResolutionM,
+                MidpointRounding.AwayFromZero);
+            Int32 Y = (Int32)Math.Round(
+                (Pose.Y - Field.MinY) / SpatialResolutionM,
+                MidpointRounding.AwayFromZero);
+            Int32 Heading = (Int32)Math.Round(
+                Pose.HeadingDeg * HeadingBinCount / 360.0,
+                MidpointRounding.AwayFromZero) % HeadingBinCount;
+            if (Heading < 0) Heading += HeadingBinCount;
+            return new ForwardStateKey(X, Y, Heading);
+        }
+
+        /// <summary>Returns an admissible distance/heading lower bound.</summary>
+        private static Double ForwardHeuristicM
+            (
+            ExperimentalConnectorPlanner.Pose Start,
+            ExperimentalConnectorPlanner.Pose End,
+            Double RadiusM
+            )
+        {
+            Double PositionM = Distance((Start.X, Start.Y), (End.X, End.Y));
+            Double HeadingM = RadiusM * HeadingDifferenceDeg(
+                Start.HeadingDeg, End.HeadingDeg) * Math.PI / 180.0;
+            return Math.Max(PositionM, HeadingM);
+        }
+
+        /// <summary>Reconstructs lattice primitives and appends the exact terminal curve.</summary>
+        private static List<(Double X, Double Y)> ReconstructForwardPath
+            (
+            List<ForwardSearchNode> Nodes,
+            Int32 NodeIndex,
+            List<(Double X, Double Y)> Tail
+            )
+        {
+            List<List<(Double X, Double Y)>> Parts =
+                new List<List<(Double X, Double Y)>>();
+            Int32 Current = NodeIndex;
+            while (Current >= 0)
+            {
+                ForwardSearchNode Node = Nodes[Current];
+                if (Node.ParentIndex >= 0) Parts.Add(Node.Incoming);
+                Current = Node.ParentIndex;
+            }
+            Parts.Reverse();
+            List<(Double X, Double Y)> Points = new List<(Double X, Double Y)>();
+            foreach (List<(Double X, Double Y)> Part in Parts)
+            {
+                if (Points.Count == 0) Points.AddRange(Part);
+                else Points.AddRange(Part.Skip(1));
+            }
+            if (Points.Count == 0) Points.AddRange(Tail);
+            else Points.AddRange(Tail.Skip(1));
+            return Points;
+        }
+
+        /// <summary>Rejects cusps and instantaneous direction reversals.</summary>
+        private static Boolean IsForwardContinuous
+            (
+            List<(Double X, Double Y)> Points
+            )
+        {
+            for (Int32 Index = 1; Index + 1 < Points.Count; Index += 1)
+            {
+                if (CornerDeflectionDeg(
+                    Points[Index - 1], Points[Index], Points[Index + 1]) >= 90.0)
+                {
+                    return false;
+                }
+            }
+            return true;
         }
 
         /// <summary>
@@ -533,7 +569,8 @@ namespace HaulBuilder
             Double MinimumRadiusM,
             Double SampleSpacingM,
             Grid Field,
-            Double EdgeAllowanceM
+            Double EdgeAllowanceM,
+            Boolean AllowForwardDetour
             )
         {
             (ExperimentalFieldEdgePolicy Policy, Grid AllowanceGrid) =
@@ -564,34 +601,20 @@ namespace HaulBuilder
                 Selected = Curve.Points;
                 SelectedLengthM = Curve.LengthM;
             }
-            if (Selected.Count == 0)
+            if ((Selected.Count == 0) && AllowForwardDetour)
             {
-                Result? Keyhole = TryManualKeyhole(
-                    Start,
-                    End,
-                    SampleSpacingM,
-                    0.5 * Constants.DEFAULT_EQUIPMENT_LENGTH_FT
-                        * Constants.FEET_TO_METERS,
-                    Double.PositiveInfinity,
-                    Field,
-                    Policy);
-                if ((Keyhole != null)
-                    && Keyhole.Points.Any(
-                        Point => Policy.IsPermittedExterior(Point.X, Point.Y)))
+                Result? Detour = TryForwardDetour(
+                    Start, End, MinimumRadiusM, SampleSpacingM, AllowanceGrid);
+                if ((Detour != null)
+                    && Detour.Points.Any(
+                        Point => Policy.IsPermittedExterior(Point.X, Point.Y))
+                    && DensePolylineAllowed(Detour.Points, Field, Policy))
                 {
-                    return new Result(
-                        true,
-                        true,
-                        Keyhole.Points,
-                        Keyhole.LengthM,
-                        Keyhole.Legs,
-                        Keyhole.ManualAssistDistanceM,
-                        "EXTERIOR_MANUAL_KEYHOLE",
-                        String.Empty,
-                        true);
+                    Selected = Detour.Points;
+                    SelectedLengthM = Detour.LengthM;
                 }
-                return null;
             }
+            if (Selected.Count == 0) return null;
             return new Result(
                 true,
                 true,
@@ -784,6 +807,12 @@ namespace HaulBuilder
             {
                 return new Result(false, false, new List<(Double X, Double Y)>(), 0.0,
                     new List<Leg>(), 0.0, "FAILED", "Positional fallback has no driven segment.");
+            }
+            if (!IsForwardContinuous(Points))
+            {
+                return new Result(false, true, new List<(Double X, Double Y)>(), 0.0,
+                    new List<Leg>(), 0.0, "FAILED",
+                    "Positional fallback contains a cusp or direction reversal.");
             }
 
             List<(Double FromM, Double ToM)> ManualIntervals =

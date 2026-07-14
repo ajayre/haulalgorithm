@@ -7,76 +7,130 @@ using HaulBuilder;
 namespace HaulBuilder.Tests
 {
     /// <summary>
-    /// Verifies loop rejection and explicit operator-alignment transit fallback.
+    /// Verifies forward-only detours and explicit operator-alignment transit fallback.
     /// </summary>
     public sealed class ExperimentalTransitPlannerTests
     {
         /// <summary>
-        /// Verifies an opposing endpoint heading becomes an explicit bounded manual keyhole.
+        /// Verifies an opposing endpoint heading is reached without a cusp or reverse maneuver.
         /// </summary>
         [Fact]
-        public void Connect_OpposingEndpointHeading_UsesBoundedManualKeyhole
+        public void Connect_OpposingEndpointHeading_UsesForwardOnlyCurve
             (
             )
         {
-            Grid Grid = MakeGrid(30, 10, null);
+            Grid Grid = MakeGrid(30, 20, null);
             ExperimentalConnectorPlanner.Pose Start =
-                new ExperimentalConnectorPlanner.Pose(5.5, 5.5, 90.0);
+                new ExperimentalConnectorPlanner.Pose(5.5, 10.5, 90.0);
             ExperimentalConnectorPlanner.Pose End =
-                new ExperimentalConnectorPlanner.Pose(20.5, 5.5, 270.0);
+                new ExperimentalConnectorPlanner.Pose(20.5, 10.5, 270.0);
 
             ExperimentalTransitPlanner.Result Result = ExperimentalTransitPlanner.Connect(
-                Start, End, 5.0, 0.5, Grid, true, 30.0);
+                Start, End, 5.0, 0.5, Grid, true, 30.0, 1.0, true);
 
             Assert.True(Result.Success, Result.FailureReason);
-            Assert.True(Result.OperatorAlignmentRequired);
-            Assert.Equal("MANUAL_KEYHOLE", Result.Mode);
-            Assert.InRange(Result.ManualAssistDistanceM, 0.0, 30.0);
+            Assert.False(Result.OperatorAlignmentRequired);
+            Assert.StartsWith("AUTO_", Result.Mode, StringComparison.Ordinal);
+            Assert.Equal(0.0, Result.ManualAssistDistanceM, 9);
             Assert.Single(Result.Legs);
-            Assert.True(Result.Legs[0].OperatorAlignmentRequired);
+            Assert.False(Result.Legs[0].OperatorAlignmentRequired);
             Assert.True(Result.Points.Count > 2);
+            Assert.True(MaximumInteriorDeflectionDeg(Result.Points) < 90.0);
             Assert.All(Result.Points,
                 Point => Assert.True(Grid.ContainsWorldXy(Point.X, Point.Y)));
         }
 
         /// <summary>
-        /// Verifies a coincident grade reversal is a visible equipment-scale three-point
-        /// maneuver rather than a sub-cell out-and-back with an instantaneous heading flip.
+        /// Verifies a coincident grade turnaround near an edge takes a longer forward loop
+        /// through open field space instead of using a three-point reversal.
         /// </summary>
         [Fact]
-        public void Connect_CoincidentOpposingHeading_UsesVisibleThreePointKeyhole
+        public void Connect_CoincidentOpposingHeading_UsesForwardOnlyDetour
             (
             )
         {
-            Grid Grid = MakeGrid(40, 4, null);
+            Grid Grid = MakeGrid(50, 30, null);
             ExperimentalConnectorPlanner.Pose Start =
                 new ExperimentalConnectorPlanner.Pose(12.5, 1.5, 90.0);
             ExperimentalConnectorPlanner.Pose End =
                 new ExperimentalConnectorPlanner.Pose(12.5, 1.5, 270.0);
 
             ExperimentalTransitPlanner.Result Result = ExperimentalTransitPlanner.Connect(
-                Start, End, 5.0, 0.25, Grid, true, 14.0);
-
-            Double MinimumPullM = 0.5
-                * Constants.DEFAULT_EQUIPMENT_LENGTH_FT
-                * Constants.FEET_TO_METERS;
-            Double MaximumExcursionM = Result.Points.Max(Point =>
-            {
-                Double Dx = Point.X - Start.X;
-                Double Dy = Point.Y - Start.Y;
-                return Math.Sqrt((Dx * Dx) + (Dy * Dy));
-            });
-            Double LateralSpanM = Result.Points.Max(Point => Point.Y)
-                - Result.Points.Min(Point => Point.Y);
+                Start, End, 5.0, 0.25, Grid, true, 14.0, 1.0, true);
 
             Assert.True(Result.Success, Result.FailureReason);
-            Assert.True(Result.OperatorAlignmentRequired);
-            Assert.Equal("MANUAL_THREE_POINT_KEYHOLE", Result.Mode);
-            Assert.InRange(Result.LengthM, 13.0, 14.0);
-            Assert.True(MaximumExcursionM >= MinimumPullM - 1e-9);
-            Assert.True(LateralSpanM >= 1.0);
+            Assert.False(Result.OperatorAlignmentRequired);
+            Assert.Equal("AUTO_FORWARD_DETOUR", Result.Mode);
+            Assert.True(Result.LengthM > 2.0 * Math.PI * 5.0);
+            Assert.True(MaximumInteriorDeflectionDeg(Result.Points) < 90.0);
+            Assert.True(MinimumObservedRadiusM(Result.Points) >= 5.0 * 0.99);
+            Assert.Equal((Start.X, Start.Y), Result.Points[0]);
+            Assert.Equal((End.X, End.Y), Result.Points[Result.Points.Count - 1]);
             Assert.All(Result.Points,
                 Point => Assert.True(Grid.ContainsWorldXy(Point.X, Point.Y)));
+        }
+
+        /// <summary>Returns the largest sampled heading change within a polyline.</summary>
+        private static Double MaximumInteriorDeflectionDeg
+            (
+            List<(Double X, Double Y)> Points
+            )
+        {
+            Double MaximumDeg = 0.0;
+            for (Int32 Index = 1; Index + 1 < Points.Count; Index += 1)
+            {
+                (Double X, Double Y) Before = Points[Index - 1];
+                (Double X, Double Y) Point = Points[Index];
+                (Double X, Double Y) After = Points[Index + 1];
+                Double InX = Point.X - Before.X;
+                Double InY = Point.Y - Before.Y;
+                Double OutX = After.X - Point.X;
+                Double OutY = After.Y - Point.Y;
+                Double Denominator = Math.Sqrt((InX * InX) + (InY * InY))
+                    * Math.Sqrt((OutX * OutX) + (OutY * OutY));
+                if (Denominator <= 1e-12) continue;
+                Double Cos = Math.Clamp(
+                    ((InX * OutX) + (InY * OutY)) / Denominator,
+                    -1.0,
+                    1.0);
+                MaximumDeg = Math.Max(MaximumDeg, Math.Acos(Cos) * 180.0 / Math.PI);
+            }
+            return MaximumDeg;
+        }
+
+        /// <summary>Returns the smallest non-collinear circumradius in a polyline.</summary>
+        private static Double MinimumObservedRadiusM
+            (
+            List<(Double X, Double Y)> Points
+            )
+        {
+            Double MinimumM = Double.PositiveInfinity;
+            for (Int32 Index = 1; Index + 1 < Points.Count; Index += 1)
+            {
+                Double A = Distance(Points[Index - 1], Points[Index]);
+                Double B = Distance(Points[Index], Points[Index + 1]);
+                Double C = Distance(Points[Index - 1], Points[Index + 1]);
+                Double Cross = Math.Abs(
+                    ((Points[Index].X - Points[Index - 1].X)
+                        * (Points[Index + 1].Y - Points[Index - 1].Y))
+                    - ((Points[Index].Y - Points[Index - 1].Y)
+                        * (Points[Index + 1].X - Points[Index - 1].X)));
+                if (Cross <= 1e-9) continue;
+                MinimumM = Math.Min(MinimumM, (A * B * C) / (2.0 * Cross));
+            }
+            return MinimumM;
+        }
+
+        /// <summary>Returns Euclidean distance between two points.</summary>
+        private static Double Distance
+            (
+            (Double X, Double Y) First,
+            (Double X, Double Y) Second
+            )
+        {
+            Double Dx = Second.X - First.X;
+            Double Dy = Second.Y - First.Y;
+            return Math.Sqrt((Dx * Dx) + (Dy * Dy));
         }
 
         /// <summary>
@@ -124,6 +178,100 @@ namespace HaulBuilder.Tests
             Assert.Equal(0.0, Result.ManualAssistDistanceM, 9);
             Assert.All(Result.Points,
                 Point => Assert.True(Grid.ContainsWorldXy(Point.X, Point.Y)));
+        }
+
+        /// <summary>
+        /// Verifies nearby aligned poses use the permitted short tracking correction
+        /// instead of an exact-pose loop many times longer than their separation.
+        /// </summary>
+        [Fact]
+        public void Connect_NearbyAlignedPoses_UseShortAlignmentJog
+            (
+            )
+        {
+            Grid Grid = MakeGrid(40, 30, null);
+            ExperimentalConnectorPlanner.Pose Start =
+                new ExperimentalConnectorPlanner.Pose(20.0, 15.0, 270.0);
+            ExperimentalConnectorPlanner.Pose End =
+                new ExperimentalConnectorPlanner.Pose(19.0, 15.23, 275.0);
+
+            ExperimentalTransitPlanner.Result Result = ExperimentalTransitPlanner.Connect(
+                Start, End, 3.4, 0.1, Grid, true, 8.0);
+
+            Assert.True(Result.Success, Result.FailureReason);
+            Assert.False(Result.OperatorAlignmentRequired);
+            Assert.Equal("AUTO_SHORT_ALIGNMENT_JOG", Result.Mode);
+            Assert.InRange(Result.LengthM, 1.0, 1.1);
+            Assert.Equal((Start.X, Start.Y), Result.Points[0]);
+            Assert.Equal((End.X, End.Y), Result.Points[Result.Points.Count - 1]);
+            Assert.All(Result.Points,
+                Point => Assert.True(Grid.ContainsWorldXy(Point.X, Point.Y)));
+        }
+
+        /// <summary>
+        /// Sweeps more than three thousand nearby pose combinations and verifies the
+        /// global connector quality gate never returns a disproportionate loop.
+        /// </summary>
+        [Fact]
+        public void Connect_ShortAlignedPoseSweep_NeverReturnsGrossLoop
+            (
+            )
+        {
+            const Double RADIUS_M = 3.4;
+            Grid Grid = MakeGrid(100, 100, null);
+            Double[] DistancesM = { 0.6, 1.0, 1.4 };
+            Double[] HeadingOffsetsDeg = { -14.0, -10.0, -5.0, 0.0, 5.0, 10.0, 14.0 };
+            Int32 Cases = 0;
+            for (Double TravelHeadingDeg = 0.0;
+                TravelHeadingDeg < 360.0;
+                TravelHeadingDeg += 15.0)
+            {
+                Double TravelRad = TravelHeadingDeg * Math.PI / 180.0;
+                foreach (Double DistanceM in DistancesM)
+                {
+                    ExperimentalConnectorPlanner.Pose StartPosition =
+                        new ExperimentalConnectorPlanner.Pose(50.0, 50.0, 0.0);
+                    Double EndX = StartPosition.X + (Math.Sin(TravelRad) * DistanceM);
+                    Double EndY = StartPosition.Y + (Math.Cos(TravelRad) * DistanceM);
+                    foreach (Double StartOffsetDeg in HeadingOffsetsDeg)
+                    {
+                        foreach (Double EndOffsetDeg in HeadingOffsetsDeg)
+                        {
+                            ExperimentalConnectorPlanner.Pose Start =
+                                new ExperimentalConnectorPlanner.Pose(
+                                    StartPosition.X,
+                                    StartPosition.Y,
+                                    TravelHeadingDeg + StartOffsetDeg);
+                            ExperimentalConnectorPlanner.Pose End =
+                                new ExperimentalConnectorPlanner.Pose(
+                                    EndX,
+                                    EndY,
+                                    TravelHeadingDeg + EndOffsetDeg);
+                            ExperimentalTransitPlanner.Result Result =
+                                ExperimentalTransitPlanner.Connect(
+                                    Start, End, RADIUS_M, 0.1, Grid, true, 8.0);
+                            Double MaximumReasonableM = Math.Max(
+                                4.0 * DistanceM,
+                                2.0 * RADIUS_M);
+                            Assert.True(Result.Success, Result.FailureReason);
+                            Assert.True(
+                                Result.LengthM <= MaximumReasonableM + 1e-9,
+                                String.Format(
+                                    System.Globalization.CultureInfo.InvariantCulture,
+                                    "heading={0:F0} start_offset={1:F0} end_offset={2:F0} distance={3:F1} mode={4} length={5:F2} limit={6:F2}",
+                                    TravelHeadingDeg,
+                                    StartOffsetDeg,
+                                    EndOffsetDeg,
+                                    DistanceM,
+                                    Result.Mode,
+                                    Result.LengthM,
+                                    MaximumReasonableM));
+                            Cases += 1;
+                        }
+                    }
+                }
+            }
+            Assert.Equal(3528, Cases);
         }
 
         /// <summary>

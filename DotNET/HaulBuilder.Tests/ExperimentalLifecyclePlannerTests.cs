@@ -161,13 +161,269 @@ namespace HaulBuilder.Tests
                 .Where(Segment => SegmentLength(Segment) > 1e-9)
                 .ToList();
             Assert.Single(Turnaround);
-            Assert.True(
-                (Turnaround[0].Phase == ExperimentalLifecyclePlanner.Phase.TurnToGrade)
-                    || (Turnaround[0].Phase
-                        == ExperimentalLifecyclePlanner.Phase.ManualAssist));
+            Assert.Equal(
+                ExperimentalLifecyclePlanner.Phase.TurnToGrade,
+                Turnaround[0].Phase);
+            Assert.True(MaximumInteriorDeflectionDeg(Turnaround[0].Points) < 90.0);
             Assert.All(Result.Segments.Where(Segment => Segment.Phase
                 == ExperimentalLifecyclePlanner.Phase.Transit),
                 Segment => Assert.InRange(SegmentLength(Segment), 3.0, 4.0));
+        }
+
+        /// <summary>
+        /// Verifies a loaded westbound approach fills an aligned corridor immediately
+        /// instead of deadheading west across it and returning to fill eastbound.
+        /// </summary>
+        [Fact]
+        public void ContinuousFillSequence_LoadedAlignedApproachChoosesInboundDirection
+            (
+            )
+        {
+            Grid Grid = MakeGrid();
+            ExperimentalRunSequencer.SequencedRun WestFragment =
+                ExperimentalRunSequencer.Prepare(
+                    MakeRun(12.0, 20.0, 15.0, 90.0),
+                    LINEUP_M,
+                    RADIUS_M,
+                    SAMPLE_M,
+                    Grid);
+            ExperimentalRunSequencer.SequencedRun EastFragment =
+                ExperimentalRunSequencer.Prepare(
+                    MakeRun(21.0, 29.0, 15.0, 90.0),
+                    LINEUP_M,
+                    RADIUS_M,
+                    SAMPLE_M,
+                    Grid);
+            ExperimentalTransitPlanner.Result LegacyConnector =
+                ExperimentalTransitPlanner.Connect(
+                    WestFragment.ExitPose,
+                    EastFragment.EntryPose,
+                    RADIUS_M,
+                    SAMPLE_M,
+                    Grid);
+            Assert.True(LegacyConnector.Success, LegacyConnector.FailureReason);
+            ExperimentalRunSequencer.Result Original =
+                new ExperimentalRunSequencer.Result(
+                    true,
+                    new List<ExperimentalRunSequencer.SequencedRun>
+                    {
+                        WestFragment,
+                        EastFragment,
+                    },
+                    new List<ExperimentalTransitPlanner.Result> { LegacyConnector },
+                    LegacyConnector.LengthM,
+                    LINEUP_M,
+                    String.Empty);
+            ExperimentalConnectorPlanner.Pose LoadedInbound =
+                new ExperimentalConnectorPlanner.Pose(35.0, 15.0, 270.0);
+
+            ExperimentalRunSequencer.Result Result =
+                ExperimentalLifecyclePlanner.BuildContinuousFillSequence(
+                    Original,
+                    LoadedInbound,
+                    RADIUS_M,
+                    SAMPLE_M,
+                    Grid);
+
+            Assert.True(Result.Success, Result.FailureReason);
+            Assert.Equal(2, Result.Runs.Count);
+            Assert.All(Result.Runs, Run => Assert.InRange(
+                Run.Run.HeadingDeg, 269.999, 270.001));
+            Assert.Equal((29.0, 15.0), Result.Runs[0].Run.StartXy);
+            Assert.Equal((12.0, 15.0), Result.Runs[1].Run.EndXy);
+            Assert.Single(Result.Connectors);
+            Assert.Equal("AUTO_CORRIDOR_BRIDGE", Result.Connectors[0].Mode);
+        }
+
+        /// <summary>
+        /// Verifies a nearby parallel fill fragment borrows work distance for a
+        /// compact blade-down lane shift and retraces it while grading.
+        /// </summary>
+        [Fact]
+        public void ContinuousFillSequence_ParallelFragmentUsesReversibleWorkLaneShift
+            (
+            )
+        {
+            Grid Grid = MakeGrid();
+            ExperimentalRunSequencer.SequencedRun LongRun =
+                ExperimentalRunSequencer.Prepare(
+                    MakeRun(30.0, 10.0, 15.0, 270.0),
+                    LINEUP_M,
+                    RADIUS_M,
+                    SAMPLE_M,
+                    Grid);
+            ExperimentalRunSequencer.SequencedRun ShortRun =
+                ExperimentalRunSequencer.Prepare(
+                    MakeRun(10.0, 8.0, 16.5, 270.0),
+                    LINEUP_M,
+                    RADIUS_M,
+                    SAMPLE_M,
+                    Grid);
+            ExperimentalTransitPlanner.Result LegacyConnector =
+                ExperimentalTransitPlanner.Connect(
+                    LongRun.ExitPose,
+                    ShortRun.EntryPose,
+                    RADIUS_M,
+                    SAMPLE_M,
+                    Grid);
+            Assert.True(LegacyConnector.Success, LegacyConnector.FailureReason);
+            ExperimentalRunSequencer.Result Original =
+                new ExperimentalRunSequencer.Result(
+                    true,
+                    new List<ExperimentalRunSequencer.SequencedRun>
+                    {
+                        LongRun,
+                        ShortRun,
+                    },
+                    new List<ExperimentalTransitPlanner.Result> { LegacyConnector },
+                    LegacyConnector.LengthM,
+                    LINEUP_M,
+                    String.Empty);
+
+            ExperimentalRunSequencer.Result Continuous =
+                ExperimentalLifecyclePlanner.BuildContinuousFillSequence(
+                    Original,
+                    new ExperimentalConnectorPlanner.Pose(35.0, 15.0, 270.0),
+                    RADIUS_M,
+                    SAMPLE_M,
+                    Grid);
+
+            Assert.True(Continuous.Success, Continuous.FailureReason);
+            Assert.Single(Continuous.Connectors);
+            Assert.Equal(
+                "AUTO_WORK_CORRIDOR_BRIDGE",
+                Continuous.Connectors[0].Mode);
+            Assert.True(Continuous.Connectors[0].LengthM < 4.0 * RADIUS_M);
+            Assert.True(Continuous.Runs[0].Run.EndXy.X > 10.0);
+
+            ExperimentalRunSequencer.Result Empty =
+                new ExperimentalRunSequencer.Result(
+                    true,
+                    new List<ExperimentalRunSequencer.SequencedRun>(),
+                    new List<ExperimentalTransitPlanner.Result>(),
+                    0.0,
+                    0.0,
+                    String.Empty);
+            ExperimentalLifecyclePlanner.Result Lifecycle =
+                ExperimentalLifecyclePlanner.Build(
+                    new List<ExperimentalLifecyclePlanner.PassPlan>
+                    {
+                        new ExperimentalLifecyclePlanner.PassPlan(Empty, Continuous),
+                    },
+                    true,
+                    LINEUP_M,
+                    RADIUS_M,
+                    SAMPLE_M,
+                    Grid);
+
+            Assert.True(Lifecycle.Success, Lifecycle.FailureReason);
+            Assert.Equal(3, Lifecycle.Segments.Count(Segment =>
+                Segment.Phase == ExperimentalLifecyclePlanner.Phase.Fill));
+            Assert.Equal(3, Lifecycle.Segments.Count(Segment =>
+                Segment.Phase == ExperimentalLifecyclePlanner.Phase.Grade));
+            Assert.Single(Lifecycle.Segments, Segment =>
+                Segment.Phase == ExperimentalLifecyclePlanner.Phase.TurnToGrade);
+            Assert.DoesNotContain(Lifecycle.Segments, Segment =>
+                Segment.Phase == ExperimentalLifecyclePlanner.Phase.Transit
+                && SegmentLength(Segment) > 4.0 * RADIUS_M);
+        }
+
+        /// <summary>
+        /// Verifies a one-cell fragment embedded beside a longer fill is absorbed
+        /// into that blade-width swath instead of forcing fill and grade loops.
+        /// </summary>
+        [Fact]
+        public void ContinuousFillSequence_NestedCellMergesBeforeLaneShift
+            (
+            )
+        {
+            const Double HAUL_GRID_M = 8.5 * Constants.FEET_TO_METERS;
+            const Double EQUIPMENT_M = Constants.DEFAULT_EQUIPMENT_LENGTH_FT
+                * Constants.FEET_TO_METERS;
+            const Double TURN_RADIUS_M = 0.5 * Constants.DEFAULT_TURNING_CIRCLE_FT
+                * Constants.FEET_TO_METERS;
+            Grid Grid = MakeGrid(HAUL_GRID_M);
+            ExperimentalRunSequencer.SequencedRun First =
+                ExperimentalRunSequencer.Prepare(
+                    MakeRun(74.3, 58.9, 24.4, 275.0, 25.8),
+                    EQUIPMENT_M, TURN_RADIUS_M, SAMPLE_M, Grid);
+            ExperimentalRunSequencer.SequencedRun Long =
+                ExperimentalRunSequencer.Prepare(
+                    MakeRun(56.3, 19.4, 22.6, 275.0, 25.8),
+                    EQUIPMENT_M, TURN_RADIUS_M, SAMPLE_M, Grid);
+            ExperimentalRunSequencer.SequencedRun Nested =
+                ExperimentalRunSequencer.Prepare(
+                    MakeRun(43.3, 45.9, 25.2, 95.0, 25.0),
+                    EQUIPMENT_M, TURN_RADIUS_M, SAMPLE_M, Grid);
+            ExperimentalTransitPlanner.Result FirstConnector =
+                ExperimentalTransitPlanner.Connect(
+                    First.ExitPose, Long.EntryPose,
+                    TURN_RADIUS_M, SAMPLE_M, Grid);
+            ExperimentalTransitPlanner.Result SecondConnector =
+                ExperimentalTransitPlanner.Connect(
+                    Long.ExitPose, Nested.EntryPose,
+                    TURN_RADIUS_M, SAMPLE_M, Grid);
+            Assert.True(FirstConnector.Success, FirstConnector.FailureReason);
+            Assert.True(SecondConnector.Success, SecondConnector.FailureReason);
+            ExperimentalRunSequencer.Result Original =
+                new ExperimentalRunSequencer.Result(
+                    true,
+                    new List<ExperimentalRunSequencer.SequencedRun>
+                    {
+                        First,
+                        Long,
+                        Nested,
+                    },
+                    new List<ExperimentalTransitPlanner.Result>
+                    {
+                        FirstConnector,
+                        SecondConnector,
+                    },
+                    FirstConnector.LengthM + SecondConnector.LengthM,
+                    EQUIPMENT_M,
+                    String.Empty);
+
+            ExperimentalRunSequencer.Result Continuous =
+                ExperimentalLifecyclePlanner.BuildContinuousFillSequence(
+                    Original,
+                    new ExperimentalConnectorPlanner.Pose(76.9, 23.8, 270.0),
+                    TURN_RADIUS_M,
+                    SAMPLE_M,
+                    Grid);
+
+            Assert.True(Continuous.Success, Continuous.FailureReason);
+            Assert.Equal(2, Continuous.Runs.Count);
+            Assert.Single(Continuous.Connectors);
+            Assert.Equal(
+                "AUTO_WORK_CORRIDOR_BRIDGE",
+                Continuous.Connectors[0].Mode);
+            Assert.Contains(Continuous.Runs, Run => Run.Run.Cells.Count == 2);
+
+            ExperimentalRunSequencer.Result Empty =
+                new ExperimentalRunSequencer.Result(
+                    true,
+                    new List<ExperimentalRunSequencer.SequencedRun>(),
+                    new List<ExperimentalTransitPlanner.Result>(),
+                    0.0,
+                    0.0,
+                    String.Empty);
+            ExperimentalLifecyclePlanner.Result Lifecycle =
+                ExperimentalLifecyclePlanner.Build(
+                    new List<ExperimentalLifecyclePlanner.PassPlan>
+                    {
+                        new ExperimentalLifecyclePlanner.PassPlan(Empty, Continuous),
+                    },
+                    true,
+                    EQUIPMENT_M,
+                    TURN_RADIUS_M,
+                    SAMPLE_M,
+                    Grid);
+
+            Assert.True(Lifecycle.Success, Lifecycle.FailureReason);
+            Assert.Single(Lifecycle.Segments, Segment =>
+                Segment.Phase == ExperimentalLifecyclePlanner.Phase.TurnToGrade);
+            Assert.DoesNotContain(Lifecycle.Segments, Segment =>
+                Segment.Phase == ExperimentalLifecyclePlanner.Phase.Transit);
         }
 
         /// <summary>
@@ -308,6 +564,34 @@ namespace HaulBuilder.Tests
                 LengthM += Math.Sqrt((Dx * Dx) + (Dy * Dy));
             }
             return LengthM;
+        }
+
+        /// <summary>Returns the largest sampled heading change within a polyline.</summary>
+        private static Double MaximumInteriorDeflectionDeg
+            (
+            List<(Double X, Double Y)> Points
+            )
+        {
+            Double MaximumDeg = 0.0;
+            for (Int32 Index = 1; Index + 1 < Points.Count; Index += 1)
+            {
+                (Double X, Double Y) Before = Points[Index - 1];
+                (Double X, Double Y) Point = Points[Index];
+                (Double X, Double Y) After = Points[Index + 1];
+                Double InX = Point.X - Before.X;
+                Double InY = Point.Y - Before.Y;
+                Double OutX = After.X - Point.X;
+                Double OutY = After.Y - Point.Y;
+                Double Denominator = Math.Sqrt((InX * InX) + (InY * InY))
+                    * Math.Sqrt((OutX * OutX) + (OutY * OutY));
+                if (Denominator <= 1e-12) continue;
+                Double Cos = Math.Clamp(
+                    ((InX * OutX) + (InY * OutY)) / Denominator,
+                    -1.0,
+                    1.0);
+                MaximumDeg = Math.Max(MaximumDeg, Math.Acos(Cos) * 180.0 / Math.PI);
+            }
+            return MaximumDeg;
         }
 
         /// <summary>Creates two simple cut/fill pass plans.</summary>

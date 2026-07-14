@@ -76,6 +76,45 @@ namespace HaulBuilder.Tests
         }
 
         /// <summary>
+        /// Verifies a loaded inbound path starts the overlapping long fill instead
+        /// of crossing it blade-up to reach a small interior fragment first.
+        /// </summary>
+        [Fact]
+        public void Optimize_LoadedApproach_DoesNotDeadheadAcrossUnfilledRun
+            (
+            )
+        {
+            Grid Grid = MakeGrid();
+            ExperimentalCoveragePlanner.Run LongRun = MakeRun(
+                (5.5, 10.5), (18.5, 10.5), 90.0, (5, 10));
+            ExperimentalCoveragePlanner.Run InteriorFragment = MakeRun(
+                (14.5, 11.0), (12.5, 11.0), 270.0, (12, 11));
+            ExperimentalConnectorPlanner.Pose LoadedInbound =
+                new ExperimentalConnectorPlanner.Pose(22.5, 10.5, 270.0);
+
+            ExperimentalRunSequencer.Result Result =
+                ExperimentalRunSequencer.Optimize(
+                    new List<ExperimentalCoveragePlanner.Run>
+                    {
+                        InteriorFragment,
+                        LongRun,
+                    },
+                    LoadedInbound,
+                    null,
+                    4.0,
+                    4.0,
+                    0.5,
+                    Grid,
+                    AvoidLoadedRunOverlap: true);
+
+            Assert.True(Result.Success, Result.FailureReason);
+            Assert.Equal((5, 10), Result.Runs[0].Run.Cells[0].Cell);
+            Assert.True(Result.Runs[0].Run.StartXy.X
+                > Result.Runs[0].Run.EndXy.X);
+            Assert.InRange(Result.Runs[0].Run.HeadingDeg, 269.999, 270.001);
+        }
+
+        /// <summary>
         /// Verifies a boundary-facing work run ends early enough to begin a real in-field turn.
         /// </summary>
         [Fact]

@@ -12,6 +12,8 @@ namespace HaulBuilder
         private const Double LINEUP_SHORTFALL_WEIGHT = 4.0;
         private const Double TURN_CLEARANCE_ANGLE_RAD = 0.5 * Math.PI;
         private const Double MANUAL_ASSIST_COST_M = 100000.0;
+        private const Double LOADED_RUN_OVERLAP_COST_M = 100000.0;
+        private const Double LOADED_RUN_ALIGNMENT_TOLERANCE_DEG = 20.0;
         private const Int32 EXACT_RUN_LIMIT = 5;
         private const Int32 FALLBACK_EXACT_RUN_LIMIT = 7;
 
@@ -135,6 +137,7 @@ namespace HaulBuilder
         /// <param name="MinimumRadiusM">Minimum connector turning radius.</param>
         /// <param name="SampleSpacingM">Maximum validation sample spacing.</param>
         /// <param name="Field">Raw field mask.</param>
+        /// <param name="AvoidLoadedRunOverlap">Whether blade-up travel across unfilled work receives a prohibitive cost.</param>
         /// <returns>Complete strict sequence or explicit failure.</returns>
         static public Result Optimize
             (
@@ -144,7 +147,8 @@ namespace HaulBuilder
             Double PreferredLineupM,
             Double MinimumRadiusM,
             Double SampleSpacingM,
-            Grid Field
+            Grid Field,
+            Boolean AvoidLoadedRunOverlap = false
             )
         {
             if (Runs == null) throw new ArgumentNullException(nameof(Runs));
@@ -171,7 +175,8 @@ namespace HaulBuilder
                     PreferredLineupM,
                     MinimumRadiusM,
                     SampleSpacingM,
-                    Field);
+                    Field,
+                    AvoidLoadedRunOverlap);
                 if (Greedy.Success || (Runs.Count > FALLBACK_EXACT_RUN_LIMIT))
                 {
                     return Greedy;
@@ -183,17 +188,41 @@ namespace HaulBuilder
             Int32[,,] PreviousIndices = new Int32[StateCount, Runs.Count, 2];
             Int32[,,] PreviousOrientations = new Int32[StateCount, Runs.Count, 2];
             InitializeTables(Costs, PreviousIndices, PreviousOrientations);
+            Boolean HasDirectLoadedEntry = AvoidLoadedRunOverlap
+                && Start.HasValue
+                && HasAnyDirectLoadedEntry(
+                    Options,
+                    Start.Value,
+                    PreferredLineupM,
+                    Field.GridSizeM);
 
             for (Int32 RunIndex = 0; RunIndex < Runs.Count; RunIndex += 1)
             {
                 for (Int32 Orientation = 0; Orientation < 2; Orientation += 1)
                 {
                     SequencedRun Option = Options[RunIndex, Orientation];
+                    Boolean DirectLoadedEntry = HasDirectLoadedEntry
+                        && CanUseDirectLoadedEntry(
+                            Start!.Value,
+                            Option,
+                            PreferredLineupM,
+                            Field.GridSizeM);
+                    if (HasDirectLoadedEntry && !DirectLoadedEntry) continue;
+                    SequencedRun InitialOption = DirectLoadedEntry
+                        ? WithDirectEntry(Option)
+                        : Option;
                     Double Cost = LineupPenalty(Option, PreferredLineupM);
                     if (Start.HasValue)
                     {
                         Cost += ConnectorCost(
-                            Start.Value, Option.EntryPose, MinimumRadiusM, SampleSpacingM, Field);
+                            Start.Value,
+                            InitialOption.EntryPose,
+                            MinimumRadiusM,
+                            SampleSpacingM,
+                            Field,
+                            AvoidLoadedRunOverlap ? Options : null,
+                            0,
+                            InitialOption);
                     }
                     Costs[1 << RunIndex, RunIndex, Orientation] = Cost;
                 }
@@ -202,7 +231,8 @@ namespace HaulBuilder
             for (Int32 Mask = 1; Mask < StateCount; Mask += 1)
             {
                 ExpandState(Mask, Runs.Count, Options, Costs, PreviousIndices,
-                    PreviousOrientations, PreferredLineupM, MinimumRadiusM, SampleSpacingM, Field);
+                    PreviousOrientations, PreferredLineupM, MinimumRadiusM, SampleSpacingM, Field,
+                    AvoidLoadedRunOverlap);
             }
 
             (Int32 Index, Int32 Orientation) Best = FindBestEnd(
@@ -215,6 +245,15 @@ namespace HaulBuilder
             List<SequencedRun> Ordered = Reconstruct(
                 StateCount - 1, Best.Index, Best.Orientation, Options,
                 PreviousIndices, PreviousOrientations);
+            if (HasDirectLoadedEntry
+                && CanUseDirectLoadedEntry(
+                    Start!.Value,
+                    Ordered[0],
+                    PreferredLineupM,
+                    Field.GridSizeM))
+            {
+                Ordered[0] = WithDirectEntry(Ordered[0]);
+            }
             return BuildResult(Ordered, MinimumRadiusM, SampleSpacingM, Field);
         }
 
@@ -229,13 +268,14 @@ namespace HaulBuilder
             Double PreferredLineupM,
             Double MinimumRadiusM,
             Double SampleSpacingM,
-            Grid Field
+            Grid Field,
+            Boolean AvoidLoadedRunOverlap
             )
         {
             Int32 RunCount = Options.GetLength(0);
             if (TryGreedyOrder(
                 Options, Start, End, PreferredLineupM, MinimumRadiusM,
-                SampleSpacingM, Field, -1, -1,
+                SampleSpacingM, Field, AvoidLoadedRunOverlap, -1, -1,
                 out List<SequencedRun> Ordered, out Double IgnoredCost))
             {
                 return BuildResult(Ordered, MinimumRadiusM, SampleSpacingM, Field);
@@ -249,7 +289,8 @@ namespace HaulBuilder
                 {
                     if (!TryGreedyOrder(
                         Options, Start, End, PreferredLineupM, MinimumRadiusM,
-                        SampleSpacingM, Field, FirstIndex, FirstOrientation,
+                        SampleSpacingM, Field, AvoidLoadedRunOverlap,
+                        FirstIndex, FirstOrientation,
                         out List<SequencedRun> Candidate, out Double CandidateCost))
                     {
                         continue;
@@ -276,6 +317,7 @@ namespace HaulBuilder
             Double MinimumRadiusM,
             Double SampleSpacingM,
             Grid Field,
+            Boolean AvoidLoadedRunOverlap,
             Int32 ForcedFirstIndex,
             Int32 ForcedFirstOrientation,
             out List<SequencedRun> Ordered,
@@ -286,6 +328,13 @@ namespace HaulBuilder
             Boolean[] Used = new Boolean[RunCount];
             Ordered = new List<SequencedRun>();
             TotalCost = 0.0;
+            Boolean HasDirectLoadedEntry = AvoidLoadedRunOverlap
+                && Start.HasValue
+                && HasAnyDirectLoadedEntry(
+                    Options,
+                    Start.Value,
+                    PreferredLineupM,
+                    Field.GridSizeM);
             for (Int32 Position = 0; Position < RunCount; Position += 1)
             {
                 Double BestCost = Double.PositiveInfinity;
@@ -303,6 +352,22 @@ namespace HaulBuilder
                             continue;
                         }
                         SequencedRun Candidate = Options[RunIndex, Orientation];
+                        Boolean DirectLoadedEntry = (Position == 0)
+                            && HasDirectLoadedEntry
+                            && CanUseDirectLoadedEntry(
+                                Start!.Value,
+                                Candidate,
+                                PreferredLineupM,
+                                Field.GridSizeM);
+                        if ((Position == 0)
+                            && HasDirectLoadedEntry
+                            && !DirectLoadedEntry)
+                        {
+                            continue;
+                        }
+                        SequencedRun EntryCandidate = DirectLoadedEntry
+                            ? WithDirectEntry(Candidate)
+                            : Candidate;
                         Double Cost = LineupPenalty(Candidate, PreferredLineupM);
                         if (Ordered.Count > 0)
                         {
@@ -311,16 +376,22 @@ namespace HaulBuilder
                                 Candidate.EntryPose,
                                 MinimumRadiusM,
                                 SampleSpacingM,
-                                Field);
+                                Field,
+                                AvoidLoadedRunOverlap ? Options : null,
+                                UsedMask(Used),
+                                Candidate);
                         }
                         else if (Start.HasValue)
                         {
                             Cost += ConnectorCost(
                                 Start.Value,
-                                Candidate.EntryPose,
+                                EntryCandidate.EntryPose,
                                 MinimumRadiusM,
                                 SampleSpacingM,
-                                Field);
+                                Field,
+                                AvoidLoadedRunOverlap ? Options : null,
+                                UsedMask(Used),
+                                EntryCandidate);
                         }
                         if ((Position == RunCount - 1) && End.HasValue
                             && Double.IsFinite(Cost))
@@ -347,7 +418,18 @@ namespace HaulBuilder
                     return false;
                 }
                 Used[BestIndex] = true;
-                Ordered.Add(Options[BestIndex, BestOrientation]);
+                SequencedRun Selected = Options[BestIndex, BestOrientation];
+                if ((Position == 0)
+                    && HasDirectLoadedEntry
+                    && CanUseDirectLoadedEntry(
+                        Start!.Value,
+                        Selected,
+                        PreferredLineupM,
+                        Field.GridSizeM))
+                {
+                    Selected = WithDirectEntry(Selected);
+                }
+                Ordered.Add(Selected);
                 TotalCost += BestCost;
             }
             return true;
@@ -575,7 +657,8 @@ namespace HaulBuilder
             Double PreferredLineupM,
             Double MinimumRadiusM,
             Double SampleSpacingM,
-            Grid Field
+            Grid Field,
+            Boolean AvoidLoadedRunOverlap
             )
         {
             for (Int32 LastIndex = 0; LastIndex < RunCount; LastIndex += 1)
@@ -595,7 +678,10 @@ namespace HaulBuilder
                                 Next.EntryPose,
                                 MinimumRadiusM,
                                 SampleSpacingM,
-                                Field);
+                                Field,
+                                AvoidLoadedRunOverlap ? Options : null,
+                                Mask,
+                                Next);
                             if (!Double.IsFinite(TransitionM)) continue;
                             Int32 NextMask = Mask | (1 << NextIndex);
                             Double CandidateCost = CurrentCost + TransitionM
@@ -757,15 +843,219 @@ namespace HaulBuilder
             ExperimentalConnectorPlanner.Pose End,
             Double MinimumRadiusM,
             Double SampleSpacingM,
-            Grid Field
+            Grid Field,
+            SequencedRun[,]? UnfilledOptions = null,
+            Int32 CompletedMask = 0,
+            SequencedRun? FollowingRun = null
             )
         {
             ExperimentalTransitPlanner.Result Connector = ExperimentalTransitPlanner.Connect(
                 Start, End, MinimumRadiusM, SampleSpacingM, Field);
             if (!Connector.Success) return Double.PositiveInfinity;
-            return Connector.LengthM
+            Double CostM = Connector.LengthM
                 + (Connector.OperatorAlignmentRequired ? MANUAL_ASSIST_COST_M : 0.0);
+            if (UnfilledOptions != null)
+            {
+                List<(Double X, Double Y)> LoadedBladeUpPoints =
+                    new List<(Double X, Double Y)>(Connector.Points);
+                if ((FollowingRun != null)
+                    && (Distance(
+                        LoadedBladeUpPoints[LoadedBladeUpPoints.Count - 1],
+                        FollowingRun.Run.StartXy) > COST_TOLERANCE))
+                {
+                    LoadedBladeUpPoints.Add(FollowingRun.Run.StartXy);
+                }
+                Double OverlapM = AlignedUnfilledOverlapM(
+                    LoadedBladeUpPoints,
+                    UnfilledOptions,
+                    CompletedMask,
+                    Field.GridSizeM);
+                if (OverlapM >= 0.5 * Field.GridSizeM)
+                {
+                    CostM += LOADED_RUN_OVERLAP_COST_M + OverlapM;
+                }
+            }
+            return CostM;
         }
+
+        /// <summary>Converts greedy used-state flags into the exact-search bit mask.</summary>
+        private static Int32 UsedMask
+            (
+            Boolean[] Used
+            )
+        {
+            Int32 Mask = 0;
+            for (Int32 Index = 0; Index < Used.Length; Index += 1)
+            {
+                if (Used[Index]) Mask |= 1 << Index;
+            }
+            return Mask;
+        }
+
+        /// <summary>Returns true when any oriented run can begin directly from the loaded approach.</summary>
+        private static Boolean HasAnyDirectLoadedEntry
+            (
+            SequencedRun[,] Options,
+            ExperimentalConnectorPlanner.Pose Inbound,
+            Double PreferredLineupM,
+            Double CorridorWidthM
+            )
+        {
+            for (Int32 RunIndex = 0; RunIndex < Options.GetLength(0); RunIndex += 1)
+            {
+                for (Int32 Orientation = 0;
+                    Orientation < Options.GetLength(1);
+                    Orientation += 1)
+                {
+                    if (CanUseDirectLoadedEntry(
+                        Inbound,
+                        Options[RunIndex, Orientation],
+                        PreferredLineupM,
+                        CorridorWidthM))
+                    {
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// Returns true when an oriented work start is directly ahead of an aligned
+        /// loaded tractor and close enough to use the inbound path as its lineup.
+        /// </summary>
+        private static Boolean CanUseDirectLoadedEntry
+            (
+            ExperimentalConnectorPlanner.Pose Inbound,
+            SequencedRun Run,
+            Double PreferredLineupM,
+            Double CorridorWidthM
+            )
+        {
+            if (HeadingDifferenceDeg(
+                Inbound.HeadingDeg,
+                Run.Run.HeadingDeg) > LOADED_RUN_ALIGNMENT_TOLERANCE_DEG)
+            {
+                return false;
+            }
+            Double HeadingRad = Inbound.HeadingDeg * Math.PI / 180.0;
+            Double UnitX = Math.Sin(HeadingRad);
+            Double UnitY = Math.Cos(HeadingRad);
+            Double Dx = Run.Run.StartXy.X - Inbound.X;
+            Double Dy = Run.Run.StartXy.Y - Inbound.Y;
+            Double ForwardM = (Dx * UnitX) + (Dy * UnitY);
+            Double LateralM = Math.Abs((-Dx * UnitY) + (Dy * UnitX));
+            return (ForwardM >= -0.25 * CorridorWidthM)
+                && (ForwardM <= PreferredLineupM + CorridorWidthM)
+                && (LateralM <= CorridorWidthM);
+        }
+
+        /// <summary>
+        /// Uses the already aligned inbound path as the first run's shortened lineup.
+        /// </summary>
+        private static SequencedRun WithDirectEntry
+            (
+            SequencedRun Run
+            ) => new SequencedRun(
+                Run.Run,
+                new ExperimentalConnectorPlanner.Pose(
+                    Run.Run.StartXy.X,
+                    Run.Run.StartXy.Y,
+                    Run.Run.HeadingDeg),
+                Run.ExitPose,
+                0.0,
+                Run.ExitLineupM,
+                Run.StartCoverageShortfallM,
+                Run.EndCoverageShortfallM);
+
+        /// <summary>
+        /// Measures blade-up connector travel along work that has not yet been filled.
+        /// Only orientation zero is inspected because both options own the same work line.
+        /// </summary>
+        private static Double AlignedUnfilledOverlapM
+            (
+            List<(Double X, Double Y)> ConnectorPoints,
+            SequencedRun[,] Options,
+            Int32 CompletedMask,
+            Double CorridorWidthM
+            )
+        {
+            Double OverlapM = 0.0;
+            for (Int32 PointIndex = 1;
+                PointIndex < ConnectorPoints.Count;
+                PointIndex += 1)
+            {
+                (Double X, Double Y) Start = ConnectorPoints[PointIndex - 1];
+                (Double X, Double Y) End = ConnectorPoints[PointIndex];
+                Double SegmentLengthM = Distance(Start, End);
+                if (SegmentLengthM <= COST_TOLERANCE) continue;
+                Double SegmentHeadingDeg = BearingDeg(Start, End);
+                (Double X, Double Y) Midpoint = (
+                    0.5 * (Start.X + End.X),
+                    0.5 * (Start.Y + End.Y));
+                for (Int32 RunIndex = 0;
+                    RunIndex < Options.GetLength(0);
+                    RunIndex += 1)
+                {
+                    if ((CompletedMask & (1 << RunIndex)) != 0) continue;
+                    ExperimentalCoveragePlanner.Run Run = Options[RunIndex, 0].Run;
+                    Double AlignmentDeg = HeadingDifferenceDeg(
+                        SegmentHeadingDeg, Run.HeadingDeg);
+                    AlignmentDeg = Math.Min(AlignmentDeg, 180.0 - AlignmentDeg);
+                    if (AlignmentDeg > LOADED_RUN_ALIGNMENT_TOLERANCE_DEG) continue;
+                    if (PointToSegmentDistanceM(
+                            Midpoint,
+                            Run.StartXy,
+                            Run.EndXy)
+                        <= CorridorWidthM)
+                    {
+                        OverlapM += SegmentLengthM;
+                        break;
+                    }
+                }
+            }
+            return OverlapM;
+        }
+
+        /// <summary>Returns the shortest point-to-segment distance.</summary>
+        private static Double PointToSegmentDistanceM
+            (
+            (Double X, Double Y) Point,
+            (Double X, Double Y) Start,
+            (Double X, Double Y) End
+            )
+        {
+            Double Dx = End.X - Start.X;
+            Double Dy = End.Y - Start.Y;
+            Double LengthSquaredM = (Dx * Dx) + (Dy * Dy);
+            if (LengthSquaredM <= 1e-12) return Distance(Point, Start);
+            Double Fraction = ((Point.X - Start.X) * Dx
+                + (Point.Y - Start.Y) * Dy) / LengthSquaredM;
+            Fraction = Math.Max(0.0, Math.Min(1.0, Fraction));
+            return Distance(Point, (
+                Start.X + (Fraction * Dx),
+                Start.Y + (Fraction * Dy)));
+        }
+
+        /// <summary>Returns the navigation bearing used by work-run headings.</summary>
+        private static Double BearingDeg
+            (
+            (Double X, Double Y) Start,
+            (Double X, Double Y) End
+            )
+        {
+            Double Bearing = Math.Atan2(
+                End.X - Start.X,
+                End.Y - Start.Y) * 180.0 / Math.PI;
+            return (Bearing + 360.0) % 360.0;
+        }
+
+        /// <summary>Returns the unsigned shortest heading difference.</summary>
+        private static Double HeadingDifferenceDeg
+            (
+            Double First,
+            Double Second
+            ) => Math.Abs(((First - Second + 540.0) % 360.0) - 180.0);
 
         /// <summary>Computes planar distance between two work points.</summary>
         private static Double Distance

@@ -6,6 +6,9 @@ using System.Linq;
 using System.Threading.Tasks;
 
 using HaulBuilder;
+using SixLabors.ImageSharp;
+using SixLabors.ImageSharp.Formats.Gif;
+using SixLabors.ImageSharp.PixelFormats;
 
 /// <summary>
 /// Compares restored baseline cell ordering with isolated straight-run coverage plans.
@@ -229,24 +232,28 @@ internal static class CompareExperimentalCoverage
     /// <summary>
     /// Writes one cut/fill map showing the complete connected lifecycle for routes one to three.
     /// </summary>
-    /// <param name="Args">Optional output PNG path and AGD path.</param>
+    /// <param name="Args">Optional --gif flag, output PNG path, and AGD path.</param>
     /// <returns>Zero when the selected lifecycle is complete.</returns>
     static public Int32 ExportFirstThree
         (
         String[] Args
         )
     {
+        Boolean WriteGif = Args.Any(Argument => String.Equals(
+            Argument, "--gif", StringComparison.OrdinalIgnoreCase));
+        List<String> PositionalArgs = Args.Where(Argument => !String.Equals(
+            Argument, "--gif", StringComparison.OrdinalIgnoreCase)).ToList();
         String RepoRoot = Path.GetFullPath(Path.Combine(
             AppContext.BaseDirectory, "..", "..", "..", "..", ".."));
-        String OutputPath = (Args.Length > 0)
-            ? Path.GetFullPath(Args[0])
+        String OutputPath = (PositionalArgs.Count > 0)
+            ? Path.GetFullPath(PositionalArgs[0])
             : Path.Combine(
                 RepoRoot,
                 "assets",
                 "theshop2_experimental_coverage",
                 "routes_01_03_connected.png");
-        String AgdPath = (Args.Length > 1)
-            ? Path.GetFullPath(Args[1])
+        String AgdPath = (PositionalArgs.Count > 1)
+            ? Path.GetFullPath(PositionalArgs[1])
             : Path.Combine(RepoRoot, "DotNET", "TheShop2_2ft.agd");
         String? OutputDirectory = Path.GetDirectoryName(OutputPath);
         if (!String.IsNullOrWhiteSpace(OutputDirectory))
@@ -291,6 +298,29 @@ internal static class CompareExperimentalCoverage
             .SelectMany(Segment => Segment.Points)
             .ToList();
         ReportLifecycleGeometry(Lifecycle, Plan.Grid, BladeM);
+        for (Int32 SegmentIndex = 0; SegmentIndex < Lifecycle.Segments.Count; SegmentIndex += 1)
+        {
+            ExperimentalLifecyclePlanner.Segment Segment = Lifecycle.Segments[SegmentIndex];
+            Double SegmentDistanceM = PolylineDistance(Segment.Points);
+            if ((Segment.Phase != ExperimentalLifecyclePlanner.Phase.Fill)
+                && (Segment.Phase != ExperimentalLifecyclePlanner.Phase.Grade))
+            {
+                continue;
+            }
+            Console.WriteLine(String.Format(
+                CultureInfo.InvariantCulture,
+                "work_segment={0} phase={1} start=({2:F1},{3:F1}) end=({4:F1},{5:F1}) heading_deg={6:F1} length_m={7:F1}",
+                SegmentIndex,
+                Segment.Phase,
+                Segment.Points[0].X,
+                Segment.Points[0].Y,
+                Segment.Points[Segment.Points.Count - 1].X,
+                Segment.Points[Segment.Points.Count - 1].Y,
+                BearingDeg(
+                    Segment.Points[0],
+                    Segment.Points[Segment.Points.Count - 1]),
+                SegmentDistanceM));
+        }
         List<IReadOnlyList<(Double X, Double Y)>> ManualAssistRuns = Lifecycle.Segments
             .Where(Segment => Segment.Phase == ExperimentalLifecyclePlanner.Phase.ManualAssist)
             .Select(Segment => (IReadOnlyList<(Double X, Double Y)>)Segment.Points)
@@ -371,6 +401,26 @@ internal static class CompareExperimentalCoverage
             drawDirectionArrows: true,
             directionArrowSpacingM: 6.0 * Plan.Grid.GridSizeM);
         File.WriteAllBytes(OutputPath, Png);
+        if (WriteGif)
+        {
+            String GifPath = Path.ChangeExtension(OutputPath, ".gif");
+            try
+            {
+                WriteLifecycleGif(
+                    GifPath,
+                    Lifecycle,
+                    Plan.Grid,
+                    CutRuns,
+                    FillRuns,
+                    BladeM,
+                    RouteMarkers);
+            }
+            catch (Exception Exception)
+            {
+                Console.Error.WriteLine("GIF export failed: " + Exception.Message);
+                return 1;
+            }
+        }
         Console.WriteLine(String.Format(
             CultureInfo.InvariantCulture,
             "edge_patch_omission eligible_components={0} omitted_components={1} removed_passes={2} cut_cells={3} fill_cells={4} cut_bcy={5:F2} fill_bcy={6:F2} cap_bcy={7:F2}",
@@ -397,6 +447,150 @@ internal static class CompareExperimentalCoverage
         return 0;
     }
 
+    /// <summary>Writes a progressive animated GIF of one connected experimental lifecycle.</summary>
+    private static void WriteLifecycleGif
+        (
+        String GifPath,
+        ExperimentalLifecyclePlanner.Result Lifecycle,
+        Grid Grid,
+        List<IReadOnlyList<(Double X, Double Y)>> CutRuns,
+        List<IReadOnlyList<(Double X, Double Y)>> FillRuns,
+        Double BladeM,
+        List<((Double X, Double Y) Point, String Label)> RouteMarkers
+        )
+    {
+        const Int32 FRAME_COUNT = 96;
+        const Int32 FRAME_DELAY_MS = 100;
+        List<Byte[]> Frames = new List<Byte[]>(FRAME_COUNT);
+        List<(Double X, Double Y)> FixedBounds = Lifecycle.Segments
+            .SelectMany(Segment => Segment.Points)
+            .ToList();
+        for (Int32 FrameIndex = 0; FrameIndex < FRAME_COUNT; FrameIndex += 1)
+        {
+            Double TargetM = Lifecycle.DistanceM * FrameIndex / (FRAME_COUNT - 1);
+            (List<(Double X, Double Y)> Route,
+                List<IReadOnlyList<(Double X, Double Y)>> ManualRuns) =
+                BuildLifecyclePrefix(Lifecycle, TargetM);
+            List<((Double X, Double Y) Point, String Label)> Markers =
+                new List<((Double X, Double Y) Point, String Label)>(RouteMarkers);
+            if (Route.Count > 0)
+            {
+                Markers.Add((Route[Route.Count - 1], String.Empty));
+            }
+            Frames.Add(Render.RenderCoverageRunsPng(
+                Grid,
+                CutRuns,
+                FillRuns,
+                Route,
+                BladeM,
+                pixelsPerBin: 20,
+                padCells: 8,
+                manualAssistRuns: ManualRuns,
+                routeMarkers: Markers,
+                drawDirectionArrows: true,
+                directionArrowSpacingM: 6.0 * Grid.GridSizeM,
+                boundsPoints: FixedBounds));
+        }
+
+        using Image<Rgba32> Gif = Image.Load<Rgba32>(Frames[0]);
+        SetGifDelay(Gif.Frames.RootFrame, FRAME_DELAY_MS);
+        for (Int32 FrameIndex = 1; FrameIndex < Frames.Count; FrameIndex += 1)
+        {
+            using Image<Rgba32> Frame = Image.Load<Rgba32>(Frames[FrameIndex]);
+            ImageFrame<Rgba32> Added = Gif.Frames.AddFrame(Frame.Frames.RootFrame);
+            SetGifDelay(
+                Added,
+                FrameIndex == Frames.Count - 1 ? 2500 : FRAME_DELAY_MS);
+        }
+        Gif.Metadata.GetGifMetadata().RepeatCount = 0;
+        Gif.Save(GifPath, new GifEncoder());
+        Console.WriteLine(String.Format(
+            CultureInfo.InvariantCulture,
+            "wrote {0} frames -> {1}",
+            Frames.Count,
+            GifPath));
+    }
+
+    /// <summary>Builds the driven and manual portions completed by a target distance.</summary>
+    private static (List<(Double X, Double Y)> Route,
+        List<IReadOnlyList<(Double X, Double Y)>> ManualRuns) BuildLifecyclePrefix
+        (
+        ExperimentalLifecyclePlanner.Result Lifecycle,
+        Double TargetM
+        )
+    {
+        List<(Double X, Double Y)> Route = new List<(Double X, Double Y)>();
+        List<IReadOnlyList<(Double X, Double Y)>> ManualRuns =
+            new List<IReadOnlyList<(Double X, Double Y)>>();
+        Double RemainingM = Math.Max(0.0, TargetM);
+        foreach (ExperimentalLifecyclePlanner.Segment Segment in Lifecycle.Segments)
+        {
+            if (Segment.Points.Count == 0) continue;
+            List<(Double X, Double Y)>? Manual = Segment.Phase
+                == ExperimentalLifecyclePlanner.Phase.ManualAssist
+                    ? new List<(Double X, Double Y)>()
+                    : null;
+            AppendDistinct(Route, Segment.Points[0]);
+            if (Manual != null) AppendDistinct(Manual, Segment.Points[0]);
+            for (Int32 PointIndex = 1;
+                PointIndex < Segment.Points.Count;
+                PointIndex += 1)
+            {
+                (Double X, Double Y) Start = Segment.Points[PointIndex - 1];
+                (Double X, Double Y) End = Segment.Points[PointIndex];
+                Double LegM = Distance(Start, End);
+                if (LegM <= RemainingM + 1e-9)
+                {
+                    AppendDistinct(Route, End);
+                    if (Manual != null) AppendDistinct(Manual, End);
+                    RemainingM = Math.Max(0.0, RemainingM - LegM);
+                    continue;
+                }
+
+                if (LegM > 1e-12)
+                {
+                    Double Fraction = RemainingM / LegM;
+                    (Double X, Double Y) Partial = (
+                        Start.X + ((End.X - Start.X) * Fraction),
+                        Start.Y + ((End.Y - Start.Y) * Fraction));
+                    AppendDistinct(Route, Partial);
+                    if (Manual != null) AppendDistinct(Manual, Partial);
+                }
+                if ((Manual != null) && (Manual.Count >= 2)) ManualRuns.Add(Manual);
+                return (Route, ManualRuns);
+            }
+            if ((Manual != null) && (Manual.Count >= 2)) ManualRuns.Add(Manual);
+            if (RemainingM <= 1e-9) return (Route, ManualRuns);
+        }
+        return (Route, ManualRuns);
+    }
+
+    /// <summary>Adds a point unless it duplicates the current polyline endpoint.</summary>
+    private static void AppendDistinct
+        (
+        List<(Double X, Double Y)> Points,
+        (Double X, Double Y) Point
+        )
+    {
+        if ((Points.Count == 0)
+            || (Distance(Points[Points.Count - 1], Point) > 1e-9))
+        {
+            Points.Add(Point);
+        }
+    }
+
+    /// <summary>Sets one GIF frame delay from milliseconds.</summary>
+    private static void SetGifDelay
+        (
+        ImageFrame<Rgba32> Frame,
+        Int32 DelayMs
+        )
+    {
+        Frame.Metadata.GetGifMetadata().FrameDelay = Math.Max(
+            1,
+            (Int32)Math.Round(DelayMs / 10.0, MidpointRounding.AwayFromZero));
+    }
+
     /// <summary>
     /// Reports whether the rendered lifecycle is continuous and wholly contained by the field mask.
     /// </summary>
@@ -414,6 +608,7 @@ internal static class CompareExperimentalCoverage
         Int32 ReportedOutsideLegs = 0;
         Double MaximumBoundaryGapM = 0.0;
         Int32 MaximumBoundaryGapAfterSegment = -1;
+        List<(Double X, Double Y)> DrivenPoints = new List<(Double X, Double Y)>();
         Double CheckSpacingM = Math.Min(0.10, Grid.GridSizeM / 4.0);
         ExperimentalFieldEdgePolicy EdgePolicy =
             new ExperimentalFieldEdgePolicy(Grid, EdgeAllowanceM);
@@ -421,6 +616,14 @@ internal static class CompareExperimentalCoverage
         for (Int32 SegmentIndex = 0; SegmentIndex < Lifecycle.Segments.Count; SegmentIndex += 1)
         {
             ExperimentalLifecyclePlanner.Segment Segment = Lifecycle.Segments[SegmentIndex];
+            foreach ((Double X, Double Y) Point in Segment.Points)
+            {
+                if ((DrivenPoints.Count == 0)
+                    || (Distance(DrivenPoints[DrivenPoints.Count - 1], Point) > 1e-6))
+                {
+                    DrivenPoints.Add(Point);
+                }
+            }
             OutsideSampleCount += Segment.Points.Count(Point =>
                 !Grid.ContainsWorldXy(Point.X, Point.Y));
             BeyondAllowanceSampleCount += Segment.Points.Count(Point =>
@@ -498,15 +701,26 @@ internal static class CompareExperimentalCoverage
             .LastOrDefault(Segment => Segment.Phase == ExperimentalLifecyclePlanner.Phase.End);
         (Double X, Double Y)? StartPoint = Start?.Points.FirstOrDefault();
         (Double X, Double Y)? EndPoint = End?.Points.LastOrDefault();
+        Double MaximumHeadingChangeDeg = 0.0;
+        Int32 CuspCount = 0;
+        for (Int32 Index = 1; Index + 1 < DrivenPoints.Count; Index += 1)
+        {
+            Double ChangeDeg = HeadingChangeDeg(
+                DrivenPoints[Index - 1], DrivenPoints[Index], DrivenPoints[Index + 1]);
+            MaximumHeadingChangeDeg = Math.Max(MaximumHeadingChangeDeg, ChangeDeg);
+            if (ChangeDeg >= 90.0) CuspCount += 1;
+        }
         Console.WriteLine(String.Format(
             CultureInfo.InvariantCulture,
-            "geometry outside_field_samples={0} outside_field_interpolated={1} beyond_allowance_samples={2} beyond_allowance_interpolated={3} max_segment_gap_m={4:F3} gap_after_segment={5}",
+            "geometry outside_field_samples={0} outside_field_interpolated={1} beyond_allowance_samples={2} beyond_allowance_interpolated={3} max_segment_gap_m={4:F3} gap_after_segment={5} max_heading_change_deg={6:F1} cusps={7}",
             OutsideSampleCount,
             OutsideInterpolatedCount,
             BeyondAllowanceSampleCount,
             BeyondAllowanceInterpolatedCount,
             MaximumBoundaryGapM,
-            MaximumBoundaryGapAfterSegment));
+            MaximumBoundaryGapAfterSegment,
+            MaximumHeadingChangeDeg,
+            CuspCount));
         if (StartPoint.HasValue)
         {
             Console.WriteLine(String.Format(
@@ -1224,7 +1438,7 @@ internal static class CompareExperimentalCoverage
         ExperimentalConnectorPlanner.Pose Start,
         ExperimentalRunSequencer.Result Sequence,
         Grid Grid,
-        Boolean AllowKeyholeHybrid = false
+        Boolean AllowForwardDetour = false
         )
     {
         if (!Sequence.Success) return false;
@@ -1235,7 +1449,7 @@ internal static class CompareExperimentalCoverage
             Constants.DEFAULT_TURNING_CIRCLE_FT * 0.5 * Constants.FEET_TO_METERS,
             Math.Min(0.5, Grid.GridSizeM),
             Grid,
-            AllowKeyholeHybrid: AllowKeyholeHybrid);
+            AllowForwardDetour: AllowForwardDetour);
         return Connector.Success;
     }
 

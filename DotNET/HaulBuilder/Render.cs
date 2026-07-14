@@ -595,6 +595,7 @@ namespace HaulBuilder
         /// <param name="routeMarkers">Optional numbered route marker locations.</param>
         /// <param name="drawDirectionArrows">Whether to draw arrowheads along the complete route.</param>
         /// <param name="directionArrowSpacingM">Distance between route arrowheads in metres.</param>
+        /// <param name="boundsPoints">Optional non-drawn points used to keep animation crops stable.</param>
         /// <returns>Cropped PNG bytes.</returns>
         static public Byte[] RenderCoverageRunsPng
             (
@@ -608,7 +609,8 @@ namespace HaulBuilder
             IReadOnlyList<IReadOnlyList<(Double X, Double Y)>>? manualAssistRuns = null,
             IReadOnlyList<((Double X, Double Y) Point, String Label)>? routeMarkers = null,
             Boolean drawDirectionArrows = false,
-            Double directionArrowSpacingM = 0.0
+            Double directionArrowSpacingM = 0.0,
+            IReadOnlyList<(Double X, Double Y)>? boundsPoints = null
             )
         {
             // Draw each work run independently so blade-up repositioning never becomes a thick work overlay.
@@ -701,6 +703,10 @@ namespace HaulBuilder
             if (routeMarkers != null)
             {
                 Bounds.AddRange(routeMarkers.Select(Marker => Marker.Point));
+            }
+            if (boundsPoints != null)
+            {
+                Bounds.AddRange(boundsPoints);
             }
             if (Bounds.Count == 0) return ToPng(Base);
 
