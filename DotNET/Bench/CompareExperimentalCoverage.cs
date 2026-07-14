@@ -239,6 +239,47 @@ internal static class CompareExperimentalCoverage
         String[] Args
         )
     {
+        return ExportRouteRange(Args, 1, 3);
+    }
+
+    /// <summary>Writes one connected lifecycle map for routes three through five.</summary>
+    static public Int32 ExportRoutesThreeToFive
+        (
+        String[] Args
+        )
+    {
+        return ExportRouteRange(Args, 3, 5);
+    }
+
+    /// <summary>Writes one connected lifecycle map for an arbitrary ordered route range.</summary>
+    static public Int32 ExportRouteRange
+        (
+        String[] Args
+        )
+    {
+        if ((Args.Length < 2)
+            || !Int32.TryParse(Args[0], NumberStyles.Integer, CultureInfo.InvariantCulture, out Int32 FirstRouteNumber)
+            || !Int32.TryParse(Args[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out Int32 LastRouteNumber)
+            || (FirstRouteNumber < 1)
+            || (LastRouteNumber < FirstRouteNumber))
+        {
+            Console.Error.WriteLine(
+                "usage: --export-route-range <first> <last> [--gif] [outputPng] [agdPath]");
+            return 2;
+        }
+
+        return ExportRouteRange(
+            Args.Skip(2).ToArray(), FirstRouteNumber, LastRouteNumber);
+    }
+
+    /// <summary>Writes one cut/fill map for an inclusive ordered route range.</summary>
+    private static Int32 ExportRouteRange
+        (
+        String[] Args,
+        Int32 FirstRouteNumber,
+        Int32 LastRouteNumber
+        )
+    {
         Boolean WriteGif = Args.Any(Argument => String.Equals(
             Argument, "--gif", StringComparison.OrdinalIgnoreCase));
         List<String> PositionalArgs = Args.Where(Argument => !String.Equals(
@@ -251,7 +292,11 @@ internal static class CompareExperimentalCoverage
                 RepoRoot,
                 "assets",
                 "theshop2_experimental_coverage",
-                "routes_01_03_connected.png");
+                String.Format(
+                    CultureInfo.InvariantCulture,
+                    "routes_{0:D2}_{1:D2}_connected.png",
+                    FirstRouteNumber,
+                    LastRouteNumber));
         String AgdPath = (PositionalArgs.Count > 1)
             ? Path.GetFullPath(PositionalArgs[1])
             : Path.Combine(RepoRoot, "DotNET", "TheShop2_2ft.agd");
@@ -264,8 +309,22 @@ internal static class CompareExperimentalCoverage
         (AgdField Field, Grid Grid, Route Route, Double HeadingDeg, EdgePatchOmissionResult EdgeOmission) Plan = BuildRoute(AgdPath);
         Double BladeM = Constants.DEFAULT_BLADE_WIDTH_MM / 1000.0;
         List<ExperimentalLifecyclePlanner.PassPlan> AllPasses =
-            BuildWholePlanPasses(Plan.Route, Plan.Grid, BladeM, true, 3);
-        List<ExperimentalLifecyclePlanner.PassPlan> Passes = AllPasses.Take(3).ToList();
+            BuildWholePlanPasses(
+                Plan.Route, Plan.Grid, BladeM, true, LastRouteNumber);
+        List<ExperimentalLifecyclePlanner.PassPlan> Passes = AllPasses
+            .Skip(FirstRouteNumber - 1)
+            .Take(LastRouteNumber - FirstRouteNumber + 1)
+            .ToList();
+        if (Passes.Count != LastRouteNumber - FirstRouteNumber + 1)
+        {
+            Console.Error.WriteLine(String.Format(
+                CultureInfo.InvariantCulture,
+                "requested routes {0}-{1}, but only {2} ordered routes exist",
+                FirstRouteNumber,
+                LastRouteNumber,
+                AllPasses.Count));
+            return 1;
+        }
         ExperimentalLifecyclePlanner.Result Lifecycle = ExperimentalLifecyclePlanner.Build(
             Passes,
             true,
@@ -275,24 +334,34 @@ internal static class CompareExperimentalCoverage
             Plan.Grid);
         if (!Lifecycle.Success)
         {
-            Console.Error.WriteLine("routes 1-3 lifecycle failed: " + Lifecycle.FailureReason);
+            Int32 FailedPassOffset = Passes.FindIndex(Pass =>
+                !Pass.Cut.Success || !Pass.Fill.Success);
+            Int32 FailedRouteNumber = FailedPassOffset >= 0
+                ? FirstRouteNumber + FailedPassOffset
+                : FirstRouteNumber;
+            WriteFailedRouteDiagnostic(
+                Plan.Route.OrderedPasses[FailedRouteNumber - 1],
+                Plan.Grid,
+                BladeM,
+                FailedRouteNumber,
+                OutputPath);
+            Console.Error.WriteLine(String.Format(
+                CultureInfo.InvariantCulture,
+                "routes {0}-{1} lifecycle failed: {2}; wrote route {3} failure diagnostic to {4}",
+                FirstRouteNumber,
+                LastRouteNumber,
+                Lifecycle.FailureReason,
+                FailedRouteNumber,
+                OutputPath));
             return 1;
         }
-        List<IReadOnlyList<(Double X, Double Y)>> CutRuns = Passes
-            .SelectMany(Pass => Pass.Cut.Runs)
-            .Select(Run => (IReadOnlyList<(Double X, Double Y)>)new List<(Double X, Double Y)>
-            {
-                Run.Run.StartXy,
-                Run.Run.EndXy,
-            })
+        List<IReadOnlyList<(Double X, Double Y)>> CutRuns = Lifecycle.Segments
+            .Where(Segment => Segment.Phase == ExperimentalLifecyclePlanner.Phase.Cut)
+            .Select(Segment => (IReadOnlyList<(Double X, Double Y)>)Segment.Points)
             .ToList();
-        List<IReadOnlyList<(Double X, Double Y)>> FillRuns = Passes
-            .SelectMany(Pass => Pass.Fill.Runs)
-            .Select(Run => (IReadOnlyList<(Double X, Double Y)>)new List<(Double X, Double Y)>
-            {
-                Run.Run.StartXy,
-                Run.Run.EndXy,
-            })
+        List<IReadOnlyList<(Double X, Double Y)>> FillRuns = Lifecycle.Segments
+            .Where(Segment => Segment.Phase == ExperimentalLifecyclePlanner.Phase.Fill)
+            .Select(Segment => (IReadOnlyList<(Double X, Double Y)>)Segment.Points)
             .ToList();
         List<(Double X, Double Y)> RoutePoints = Lifecycle.Segments
             .SelectMany(Segment => Segment.Points)
@@ -384,7 +453,7 @@ internal static class CompareExperimentalCoverage
                     (
                         0.5 * (First.Run.StartXy.X + First.Run.EndXy.X),
                         0.5 * (First.Run.StartXy.Y + First.Run.EndXy.Y)),
-                    (Index + 1).ToString(CultureInfo.InvariantCulture));
+                    (FirstRouteNumber + Index).ToString(CultureInfo.InvariantCulture));
             })
             .ToList();
 
@@ -434,8 +503,10 @@ internal static class CompareExperimentalCoverage
             Plan.EdgeOmission.EffectiveProjectCapBcy));
         Console.WriteLine(String.Format(
             CultureInfo.InvariantCulture,
-            "wrote {0} routes=3 segments={1} manual_zones={2} distance_m={3:F1} coverage_shortfall_m={4:F1} guidance_omitted_cells={5} guidance_omitted_area_m2={6:F2} edge_omitted_cut_cells={7} edge_omitted_cut_bcy={8:F2}",
+            "wrote {0} routes={1}-{2} segments={3} manual_zones={4} distance_m={5:F1} coverage_shortfall_m={6:F1} guidance_omitted_cells={7} guidance_omitted_area_m2={8:F2} edge_omitted_cut_cells={9} edge_omitted_cut_bcy={10:F2}",
             OutputPath,
+            FirstRouteNumber,
+            LastRouteNumber,
             Lifecycle.Segments.Count,
             Lifecycle.ManualAssistCount,
             Lifecycle.DistanceM,
@@ -445,6 +516,77 @@ internal static class CompareExperimentalCoverage
             Plan.EdgeOmission.OmittedCutCells.Count,
             Plan.EdgeOmission.OmittedCutBcy));
         return 0;
+    }
+
+    /// <summary>Writes raw work runs and attempted connectors when lifecycle sequencing fails.</summary>
+    private static void WriteFailedRouteDiagnostic
+        (
+        Pass Pass,
+        Grid Grid,
+        Double BladeM,
+        Int32 RouteNumber,
+        String OutputPath
+        )
+    {
+        ExperimentalCoveragePlanner.PlanResult CutPlan =
+            ExperimentalCoveragePlanner.Plan(
+                Pass.CutCells, Grid, BladeM, null, Pass.FillStartXy);
+        (Double X, Double Y)? FillStart = CutPlan.Runs.Count == 0
+            ? null
+            : CutPlan.Runs[CutPlan.Runs.Count - 1].EndXy;
+        ExperimentalCoveragePlanner.PlanResult FillPlan =
+            ExperimentalCoveragePlanner.Plan(
+                Pass.FillCells, Grid, BladeM, FillStart, null);
+        (CutPlan, FillPlan) = OptimizeCutAndFillSequence(
+            CutPlan, FillPlan, Grid);
+        DisplayTrajectory Trajectory = BuildDisplayGuidance(
+            CutPlan, FillPlan, Grid);
+        List<IReadOnlyList<(Double X, Double Y)>> CutRuns = CutPlan.Runs
+            .Select(Run => (IReadOnlyList<(Double X, Double Y)>)
+                new List<(Double X, Double Y)>
+                {
+                    Run.StartXy,
+                    Run.EndXy,
+                })
+            .ToList();
+        List<IReadOnlyList<(Double X, Double Y)>> FillRuns = FillPlan.Runs
+            .Select(Run => (IReadOnlyList<(Double X, Double Y)>)
+                new List<(Double X, Double Y)>
+                {
+                    Run.StartXy,
+                    Run.EndXy,
+                })
+            .ToList();
+        List<(Double X, Double Y)> RoutePoints = Trajectory.Points
+            .Select(Point => (Point.X, Point.Y))
+            .ToList();
+        List<IReadOnlyList<(Double X, Double Y)>> ManualAssistRuns =
+            ExtractActionRuns(Trajectory.Points, "MANUAL_ASSIST");
+        List<((Double X, Double Y) Point, String Label)> RouteMarkers =
+            new List<((Double X, Double Y) Point, String Label)>();
+        if (CutPlan.Runs.Count > 0)
+        {
+            ExperimentalCoveragePlanner.Run First = CutPlan.Runs[0];
+            RouteMarkers.Add((
+                (
+                    0.5 * (First.StartXy.X + First.EndXy.X),
+                    0.5 * (First.StartXy.Y + First.EndXy.Y)),
+                RouteNumber.ToString(CultureInfo.InvariantCulture)));
+        }
+
+        Byte[] Png = Render.RenderCoverageRunsPng(
+            Grid,
+            CutRuns,
+            FillRuns,
+            RoutePoints,
+            BladeM,
+            pixelsPerBin: 40,
+            padCells: 8,
+            manualAssistRuns: ManualAssistRuns,
+            routeMarkers: RouteMarkers,
+            drawDirectionArrows: true,
+            directionArrowSpacingM: 6.0 * Grid.GridSizeM);
+        File.WriteAllBytes(OutputPath, Png);
     }
 
     /// <summary>Writes a progressive animated GIF of one connected experimental lifecycle.</summary>
@@ -608,6 +750,8 @@ internal static class CompareExperimentalCoverage
         Int32 ReportedOutsideLegs = 0;
         Double MaximumBoundaryGapM = 0.0;
         Int32 MaximumBoundaryGapAfterSegment = -1;
+        (Double X, Double Y) MaximumGapStart = (0.0, 0.0);
+        (Double X, Double Y) MaximumGapEnd = (0.0, 0.0);
         List<(Double X, Double Y)> DrivenPoints = new List<(Double X, Double Y)>();
         Double CheckSpacingM = Math.Min(0.10, Grid.GridSizeM / 4.0);
         ExperimentalFieldEdgePolicy EdgePolicy =
@@ -674,6 +818,8 @@ internal static class CompareExperimentalCoverage
             {
                 MaximumBoundaryGapM = GapM;
                 MaximumBoundaryGapAfterSegment = SegmentIndex;
+                MaximumGapStart = A;
+                MaximumGapEnd = B;
             }
             Int32 OutsideAcrossBoundary = CountOutsideAlongLine(A, B, CheckSpacingM, Grid);
             OutsideInterpolatedCount += OutsideAcrossBoundary;
@@ -721,6 +867,17 @@ internal static class CompareExperimentalCoverage
             MaximumBoundaryGapAfterSegment,
             MaximumHeadingChangeDeg,
             CuspCount));
+        if (MaximumBoundaryGapM > 1e-6)
+        {
+            Console.WriteLine(String.Format(
+                CultureInfo.InvariantCulture,
+                "geometry_gap after_segment={0} from=({1:F2},{2:F2}) to=({3:F2},{4:F2})",
+                MaximumBoundaryGapAfterSegment,
+                MaximumGapStart.X,
+                MaximumGapStart.Y,
+                MaximumGapEnd.X,
+                MaximumGapEnd.Y));
+        }
         if (StartPoint.HasValue)
         {
             Console.WriteLine(String.Format(
@@ -1193,6 +1350,49 @@ internal static class CompareExperimentalCoverage
                     Math.Min(0.5, Grid.GridSizeM),
                     Grid);
             }
+            if (!CutSequence.Success)
+            {
+                CutSequence = BuildFlexibleSequence(
+                    Cut.Runs,
+                    Grid,
+                    CutSearchStart,
+                    FillSequence.Success && (FillSequence.Runs.Count > 0)
+                        ? FillSequence.Runs[0].EntryPose
+                        : FillEntry);
+            }
+            if (!CutSequence.Success)
+            {
+                ExperimentalRunSequencer.Result UnanchoredCut =
+                    BuildFlexibleSequence(Cut.Runs, Grid);
+                if (UnanchoredCut.Success && (UnanchoredCut.Runs.Count > 0))
+                {
+                    ExperimentalRunSequencer.Result ConnectedFill =
+                        BuildFlexibleSequence(
+                            Fill.Runs,
+                            Grid,
+                            UnanchoredCut.Runs[
+                                UnanchoredCut.Runs.Count - 1].ExitPose,
+                            null);
+                    if (ConnectedFill.Success
+                        && SequencesConnect(UnanchoredCut, ConnectedFill, Grid))
+                    {
+                        CutSequence = UnanchoredCut;
+                        FillSequence = ConnectedFill;
+                    }
+                }
+            }
+            if (CutSequence.Success
+                && (CutSequence.Runs.Count > 0)
+                && (!FillSequence.Success
+                    || (FillSequence.Runs.Count == 0)
+                    || !SequencesConnect(CutSequence, FillSequence, Grid)))
+            {
+                FillSequence = BuildFlexibleSequence(
+                    Fill.Runs,
+                    Grid,
+                    CutSequence.Runs[CutSequence.Runs.Count - 1].ExitPose,
+                    null);
+            }
             Boolean PreviousToFillConnected = !Current.HasValue
                 || (CutSequence.Runs.Count > 0)
                 || (FillSequence.Runs.Count == 0)
@@ -1404,6 +1604,25 @@ internal static class CompareExperimentalCoverage
         )
     {
         return ExperimentalRunSequencer.Optimize(
+            Runs,
+            Start,
+            End,
+            Constants.DEFAULT_EQUIPMENT_LENGTH_FT * Constants.FEET_TO_METERS,
+            Constants.DEFAULT_TURNING_CIRCLE_FT * 0.5 * Constants.FEET_TO_METERS,
+            Math.Min(0.5, Grid.GridSizeM),
+            Grid);
+    }
+
+    /// <summary>Builds a bounded flexible-endpoint sequence after strict ordering fails.</summary>
+    private static ExperimentalRunSequencer.Result BuildFlexibleSequence
+        (
+        List<ExperimentalCoveragePlanner.Run> Runs,
+        Grid Grid,
+        ExperimentalConnectorPlanner.Pose? Start = null,
+        ExperimentalConnectorPlanner.Pose? End = null
+        )
+    {
+        return ExperimentalRunSequencer.OptimizeFlexibleEndpoints(
             Runs,
             Start,
             End,

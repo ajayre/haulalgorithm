@@ -281,7 +281,7 @@ namespace HaulBuilder
                                     FailureReason));
                         }
                     }
-                    Boolean GradeRunsAppended = UsesCorridorBridges(LifecycleFill)
+                    Boolean GradeRunsAppended = CanRetraceFillConnectors(LifecycleFill)
                         ? AppendPreparedRunsWithReversedConnectors(
                             Segments,
                             GradeRuns,
@@ -343,7 +343,9 @@ namespace HaulBuilder
                         ref ManualAssistCount,
                         Connector,
                         TransitPhase,
-                        WorkPhase);
+                        WorkPhase,
+                        Sequence.Runs[Index - 1].EndCoverageShortfallM,
+                        Sequence.Runs[Index].StartCoverageShortfallM);
                 }
                 AppendPreparedRun(Output, Sequence.Runs[Index], LineupPhase, WorkPhase, ExitPhase);
             }
@@ -1550,6 +1552,28 @@ namespace HaulBuilder
         }
 
         /// <summary>
+        /// Returns true when grading can safely retrace every accepted fill connector.
+        /// Reversing a sampled forward-only automatic curve preserves its radius while
+        /// avoiding a second, unrelated connector plan between the same work runs.
+        /// </summary>
+        private static Boolean CanRetraceFillConnectors
+            (
+            ExperimentalRunSequencer.Result Sequence
+            )
+        {
+            if ((Sequence.Runs.Count <= 1)
+                || (Sequence.Connectors.Count != Sequence.Runs.Count - 1))
+            {
+                return false;
+            }
+            foreach (ExperimentalTransitPlanner.Result Connector in Sequence.Connectors)
+            {
+                if (!Connector.Success || Connector.OperatorAlignmentRequired) return false;
+            }
+            return true;
+        }
+
+        /// <summary>
         /// Appends reverse-order grading while retracing each accepted fill bridge.
         /// This preserves one continuous grade phase without replanning short gaps as turns.
         /// </summary>
@@ -1576,7 +1600,9 @@ namespace HaulBuilder
                         ref ManualAssistCount,
                         Connector,
                         Phase.Transit,
-                        WorkPhase);
+                        WorkPhase,
+                        Runs[Index - 1].EndCoverageShortfallM,
+                        Runs[Index].StartCoverageShortfallM);
                 }
                 AppendPreparedRun(Output, Runs[Index], LineupPhase, WorkPhase, ExitPhase);
             }
@@ -1656,37 +1682,7 @@ namespace HaulBuilder
                 new List<ExperimentalRunSequencer.SequencedRun>();
             for (Int32 Index = FillRuns.Count - 1; Index >= 0; Index -= 1)
             {
-                ExperimentalCoveragePlanner.Run Fill = FillRuns[Index].Run;
-                List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Cells =
-                    new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>(Fill.Cells);
-                Cells.Reverse();
-                ExperimentalCoveragePlanner.Run Grade = new ExperimentalCoveragePlanner.Run(
-                    Cells,
-                    Fill.EndXy,
-                    Fill.StartXy,
-                    (Fill.HeadingDeg + 180.0) % 360.0,
-                    Fill.MaximumLateralErrorM);
-                ExperimentalRunSequencer.SequencedRun Prepared =
-                    ExperimentalRunSequencer.Prepare(
-                    Grade,
-                    PreferredLineupM,
-                    MinimumRadiusM,
-                    SampleSpacingM,
-                    Field);
-                Output.Add(new ExperimentalRunSequencer.SequencedRun(
-                    Prepared.Run,
-                    new ExperimentalConnectorPlanner.Pose(
-                        Prepared.Run.StartXy.X,
-                        Prepared.Run.StartXy.Y,
-                        Prepared.Run.HeadingDeg),
-                    new ExperimentalConnectorPlanner.Pose(
-                        Prepared.Run.EndXy.X,
-                        Prepared.Run.EndXy.Y,
-                        Prepared.Run.HeadingDeg),
-                    0.0,
-                    0.0,
-                    Prepared.StartCoverageShortfallM,
-                    Prepared.EndCoverageShortfallM));
+                Output.Add(ReverseSequencedRun(FillRuns[Index]));
             }
             return Output;
         }
@@ -1747,29 +1743,159 @@ namespace HaulBuilder
             ref Int32 ManualAssistCount,
             ExperimentalTransitPlanner.Result Connector,
             Phase TransitPhase,
-            Phase WorkPhase
+            Phase WorkPhase,
+            Double PreviousEndWorkM = 0.0,
+            Double NextStartWorkM = 0.0
             )
         {
-            if (!Connector.Mode.Contains(
+            if (Connector.Mode.Contains(
                 "WORK_CORRIDOR_BRIDGE",
                 StringComparison.Ordinal))
+            {
+                foreach (ExperimentalTransitPlanner.Leg Leg in Connector.Legs)
+                {
+                    if (Leg.OperatorAlignmentRequired)
+                    {
+                        ManualAssistCount += 1;
+                        Output.Add(new Segment(Phase.ManualAssist, false, Leg.Points));
+                    }
+                    else
+                    {
+                        Output.Add(new Segment(WorkPhase, true, Leg.Points));
+                    }
+                }
+                return;
+            }
+
+            if (Connector.OperatorAlignmentRequired
+                || ((PreviousEndWorkM <= 1e-9) && (NextStartWorkM <= 1e-9)))
             {
                 AppendTransitResult(
                     Output, ref ManualAssistCount, Connector, TransitPhase);
                 return;
             }
-            foreach (ExperimentalTransitPlanner.Leg Leg in Connector.Legs)
+
+            Double LengthM = PolylineLength(Connector.Points);
+            if (LengthM <= 1e-9)
             {
-                if (Leg.OperatorAlignmentRequired)
-                {
-                    ManualAssistCount += 1;
-                    Output.Add(new Segment(Phase.ManualAssist, false, Leg.Points));
-                }
-                else
-                {
-                    Output.Add(new Segment(WorkPhase, true, Leg.Points));
-                }
+                AppendTransitResult(
+                    Output, ref ManualAssistCount, Connector, TransitPhase);
+                return;
             }
+            Double RequestedWorkM = Math.Max(0.0, PreviousEndWorkM)
+                + Math.Max(0.0, NextStartWorkM);
+            Double Scale = RequestedWorkM > LengthM
+                ? LengthM / RequestedWorkM
+                : 1.0;
+            Double PrefixWorkM = Math.Max(0.0, PreviousEndWorkM) * Scale;
+            Double SuffixWorkM = Math.Max(0.0, NextStartWorkM) * Scale;
+            Double TransitStartM = PrefixWorkM;
+            Double TransitEndM = LengthM - SuffixWorkM;
+            AppendPolylineSlice(Output, Connector.Points, 0.0, TransitStartM,
+                WorkPhase, true);
+            AppendPolylineSlice(Output, Connector.Points, TransitStartM, TransitEndM,
+                TransitPhase, false);
+            AppendPolylineSlice(Output, Connector.Points, TransitEndM, LengthM,
+                WorkPhase, true);
+        }
+
+        /// <summary>Appends a non-empty arc-length slice of a sampled connector.</summary>
+        private static void AppendPolylineSlice
+            (
+            List<Segment> Output,
+            List<(Double X, Double Y)> Points,
+            Double StartM,
+            Double EndM,
+            Phase SelectedPhase,
+            Boolean BladeDown
+            )
+        {
+            List<(Double X, Double Y)> Slice = PolylineSlice(Points, StartM, EndM);
+            if ((Slice.Count >= 2) && (PolylineLength(Slice) > 1e-9))
+            {
+                Output.Add(new Segment(SelectedPhase, BladeDown, Slice));
+            }
+        }
+
+        /// <summary>Returns an interpolated arc-length slice of a polyline.</summary>
+        private static List<(Double X, Double Y)> PolylineSlice
+            (
+            List<(Double X, Double Y)> Points,
+            Double StartM,
+            Double EndM
+            )
+        {
+            List<(Double X, Double Y)> Output = new List<(Double X, Double Y)>();
+            if (Points.Count == 0) return Output;
+            Double TotalM = PolylineLength(Points);
+            Double ClampedStartM = Math.Max(0.0, Math.Min(StartM, TotalM));
+            Double ClampedEndM = Math.Max(ClampedStartM, Math.Min(EndM, TotalM));
+            Double TravelM = 0.0;
+            for (Int32 Index = 1; Index < Points.Count; Index += 1)
+            {
+                (Double X, Double Y) A = Points[Index - 1];
+                (Double X, Double Y) B = Points[Index];
+                Double Dx = B.X - A.X;
+                Double Dy = B.Y - A.Y;
+                Double SegmentM = Math.Sqrt((Dx * Dx) + (Dy * Dy));
+                if (SegmentM <= 1e-12) continue;
+                Double SegmentStartM = TravelM;
+                Double SegmentEndM = TravelM + SegmentM;
+                if ((SegmentEndM + 1e-9 >= ClampedStartM)
+                    && (SegmentStartM - 1e-9 <= ClampedEndM))
+                {
+                    Double LocalStartM = Math.Max(ClampedStartM, SegmentStartM);
+                    Double LocalEndM = Math.Min(ClampedEndM, SegmentEndM);
+                    if (LocalEndM + 1e-9 >= LocalStartM)
+                    {
+                        (Double X, Double Y) SliceStart = InterpolatePoint(
+                            A, B, (LocalStartM - SegmentStartM) / SegmentM);
+                        (Double X, Double Y) SliceEnd = InterpolatePoint(
+                            A, B, (LocalEndM - SegmentStartM) / SegmentM);
+                        if ((Output.Count == 0)
+                            || (Distance(Output[Output.Count - 1], SliceStart) > 1e-9))
+                        {
+                            Output.Add(SliceStart);
+                        }
+                        if ((Output.Count == 0)
+                            || (Distance(Output[Output.Count - 1], SliceEnd) > 1e-9))
+                        {
+                            Output.Add(SliceEnd);
+                        }
+                    }
+                }
+                TravelM = SegmentEndM;
+                if (TravelM > ClampedEndM + 1e-9) break;
+            }
+            return Output;
+        }
+
+        /// <summary>Returns the point at a clamped fraction along one segment.</summary>
+        private static (Double X, Double Y) InterpolatePoint
+            (
+            (Double X, Double Y) Start,
+            (Double X, Double Y) End,
+            Double Fraction
+            )
+        {
+            Double Clamped = Math.Max(0.0, Math.Min(1.0, Fraction));
+            return (
+                Start.X + ((End.X - Start.X) * Clamped),
+                Start.Y + ((End.Y - Start.Y) * Clamped));
+        }
+
+        /// <summary>Computes sampled polyline length.</summary>
+        private static Double PolylineLength
+            (
+            List<(Double X, Double Y)> Points
+            )
+        {
+            Double LengthM = 0.0;
+            for (Int32 Index = 1; Index < Points.Count; Index += 1)
+            {
+                LengthM += Distance(Points[Index - 1], Points[Index]);
+            }
+            return LengthM;
         }
 
         /// <summary>Computes total segment distance without counting shared endpoints twice.</summary>

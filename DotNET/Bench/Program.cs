@@ -79,6 +79,20 @@ internal static class Program
             return;
         }
 
+        if ((args.Length > 0) && (args[0] == "--export-routes-3-5"))
+        {
+            Environment.Exit(CompareExperimentalCoverage.ExportRoutesThreeToFive(
+                args.Skip(1).ToArray()));
+            return;
+        }
+
+        if ((args.Length > 0) && (args[0] == "--export-route-range"))
+        {
+            Environment.Exit(CompareExperimentalCoverage.ExportRouteRange(
+                args.Skip(1).ToArray()));
+            return;
+        }
+
         if ((args.Length > 0) && (args[0] == "--route2-png"))
         {
             String OutPath = (args.Length > 1)

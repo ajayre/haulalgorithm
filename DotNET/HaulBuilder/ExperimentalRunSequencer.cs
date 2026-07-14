@@ -14,6 +14,7 @@ namespace HaulBuilder
         private const Double MANUAL_ASSIST_COST_M = 100000.0;
         private const Double LOADED_RUN_OVERLAP_COST_M = 100000.0;
         private const Double LOADED_RUN_ALIGNMENT_TOLERANCE_DEG = 20.0;
+        private const Double COVERAGE_SHORTFALL_WEIGHT = 8.0;
         private const Int32 EXACT_RUN_LIMIT = 5;
         private const Int32 FALLBACK_EXACT_RUN_LIMIT = 7;
 
@@ -256,6 +257,284 @@ namespace HaulBuilder
             }
             return BuildResult(Ordered, MinimumRadiusM, SampleSpacingM, Field);
         }
+
+        /// <summary>
+        /// Retries an otherwise infeasible exact sequence with bounded work-end retreats.
+        /// A retreated endpoint starts or finishes its connector directly at the work
+        /// point, allowing the turn to begin before a field edge while recording the
+        /// resulting nominal coverage shortfall.
+        /// </summary>
+        static public Result OptimizeFlexibleEndpoints
+            (
+            List<ExperimentalCoveragePlanner.Run> Runs,
+            ExperimentalConnectorPlanner.Pose? Start,
+            ExperimentalConnectorPlanner.Pose? End,
+            Double PreferredLineupM,
+            Double MinimumRadiusM,
+            Double SampleSpacingM,
+            Grid Field
+            )
+        {
+            List<List<SequencedRun>> Options = new List<List<SequencedRun>>(Runs.Count);
+            Int32 MaximumOptionCount = 0;
+            for (Int32 RunIndex = 0; RunIndex < Runs.Count; RunIndex += 1)
+            {
+                List<SequencedRun> RunOptions = new List<SequencedRun>();
+                AppendFlexibleOptions(
+                    RunOptions,
+                    Prepare(
+                        Runs[RunIndex], PreferredLineupM,
+                        MinimumRadiusM, SampleSpacingM, Field),
+                    MinimumRadiusM,
+                    Field);
+                AppendFlexibleOptions(
+                    RunOptions,
+                    Prepare(
+                        Reverse(Runs[RunIndex]), PreferredLineupM,
+                        MinimumRadiusM, SampleSpacingM, Field),
+                    MinimumRadiusM,
+                    Field);
+                Options.Add(RunOptions);
+                MaximumOptionCount = Math.Max(MaximumOptionCount, RunOptions.Count);
+            }
+
+            Int32 StateCount = 1 << Runs.Count;
+            Double[,,] Costs = new Double[StateCount, Runs.Count, MaximumOptionCount];
+            Int32[,,] PreviousIndices = new Int32[StateCount, Runs.Count, MaximumOptionCount];
+            Int32[,,] PreviousOptions = new Int32[StateCount, Runs.Count, MaximumOptionCount];
+            for (Int32 Mask = 0; Mask < StateCount; Mask += 1)
+            {
+                for (Int32 RunIndex = 0; RunIndex < Runs.Count; RunIndex += 1)
+                {
+                    for (Int32 OptionIndex = 0; OptionIndex < MaximumOptionCount; OptionIndex += 1)
+                    {
+                        Costs[Mask, RunIndex, OptionIndex] = Double.PositiveInfinity;
+                        PreviousIndices[Mask, RunIndex, OptionIndex] = -1;
+                        PreviousOptions[Mask, RunIndex, OptionIndex] = -1;
+                    }
+                }
+            }
+
+            for (Int32 RunIndex = 0; RunIndex < Runs.Count; RunIndex += 1)
+            {
+                for (Int32 OptionIndex = 0; OptionIndex < Options[RunIndex].Count; OptionIndex += 1)
+                {
+                    SequencedRun Option = Options[RunIndex][OptionIndex];
+                    Double Cost = FlexibleOptionPenalty(Option, PreferredLineupM);
+                    if (Start.HasValue)
+                    {
+                        Cost += ConnectorCost(
+                            Start.Value,
+                            Option.EntryPose,
+                            MinimumRadiusM,
+                            SampleSpacingM,
+                            Field);
+                    }
+                    Costs[1 << RunIndex, RunIndex, OptionIndex] = Cost;
+                }
+            }
+
+            for (Int32 Mask = 1; Mask < StateCount; Mask += 1)
+            {
+                for (Int32 LastIndex = 0; LastIndex < Runs.Count; LastIndex += 1)
+                {
+                    for (Int32 LastOption = 0;
+                        LastOption < Options[LastIndex].Count;
+                        LastOption += 1)
+                    {
+                        Double CurrentCost = Costs[Mask, LastIndex, LastOption];
+                        if (!Double.IsFinite(CurrentCost)) continue;
+                        for (Int32 NextIndex = 0; NextIndex < Runs.Count; NextIndex += 1)
+                        {
+                            if ((Mask & (1 << NextIndex)) != 0) continue;
+                            for (Int32 NextOption = 0;
+                                NextOption < Options[NextIndex].Count;
+                                NextOption += 1)
+                            {
+                                SequencedRun Next = Options[NextIndex][NextOption];
+                                Double TransitionM = ConnectorCost(
+                                    Options[LastIndex][LastOption].ExitPose,
+                                    Next.EntryPose,
+                                    MinimumRadiusM,
+                                    SampleSpacingM,
+                                    Field);
+                                if (!Double.IsFinite(TransitionM)) continue;
+                                Int32 NextMask = Mask | (1 << NextIndex);
+                                Double CandidateCost = CurrentCost
+                                    + TransitionM
+                                    + FlexibleOptionPenalty(Next, PreferredLineupM);
+                                if (CandidateCost + COST_TOLERANCE
+                                    >= Costs[NextMask, NextIndex, NextOption])
+                                {
+                                    continue;
+                                }
+                                Costs[NextMask, NextIndex, NextOption] = CandidateCost;
+                                PreviousIndices[NextMask, NextIndex, NextOption] = LastIndex;
+                                PreviousOptions[NextMask, NextIndex, NextOption] = LastOption;
+                            }
+                        }
+                    }
+                }
+            }
+
+            Int32 FullMask = StateCount - 1;
+            Double BestCost = Double.PositiveInfinity;
+            Int32 BestIndex = -1;
+            Int32 BestOption = -1;
+            for (Int32 RunIndex = 0; RunIndex < Runs.Count; RunIndex += 1)
+            {
+                for (Int32 OptionIndex = 0; OptionIndex < Options[RunIndex].Count; OptionIndex += 1)
+                {
+                    Double CandidateCost = Costs[FullMask, RunIndex, OptionIndex];
+                    if (End.HasValue && Double.IsFinite(CandidateCost))
+                    {
+                        CandidateCost += ConnectorCost(
+                            Options[RunIndex][OptionIndex].ExitPose,
+                            End.Value,
+                            MinimumRadiusM,
+                            SampleSpacingM,
+                            Field);
+                    }
+                    if (CandidateCost + COST_TOLERANCE >= BestCost) continue;
+                    BestCost = CandidateCost;
+                    BestIndex = RunIndex;
+                    BestOption = OptionIndex;
+                }
+            }
+            if (BestIndex < 0)
+            {
+                return Failure("No flexible-endpoint ordering satisfies the radius and field constraints.");
+            }
+
+            List<SequencedRun> ReverseOrder = new List<SequencedRun>();
+            Int32 ReconstructMask = FullMask;
+            while (BestIndex >= 0)
+            {
+                ReverseOrder.Add(Options[BestIndex][BestOption]);
+                Int32 PreviousIndex = PreviousIndices[
+                    ReconstructMask, BestIndex, BestOption];
+                Int32 PreviousOption = PreviousOptions[
+                    ReconstructMask, BestIndex, BestOption];
+                ReconstructMask &= ~(1 << BestIndex);
+                BestIndex = PreviousIndex;
+                BestOption = PreviousOption;
+            }
+            ReverseOrder.Reverse();
+            return BuildResult(
+                ReverseOrder, MinimumRadiusM, SampleSpacingM, Field);
+        }
+
+        /// <summary>Appends deterministic start/end retreat combinations for one orientation.</summary>
+        private static void AppendFlexibleOptions
+            (
+            List<SequencedRun> Output,
+            SequencedRun Base,
+            Double MinimumRadiusM,
+            Grid Field
+            )
+        {
+            Double MinimumWorkM = 0.5 * Field.GridSizeM;
+            Double MaximumTotalRetreatM = Math.Max(
+                0.0, Base.Run.LengthM - MinimumWorkM);
+            List<Double> Levels = RetreatLevels(
+                MaximumTotalRetreatM, MinimumRadiusM, Field.GridSizeM);
+            Double HeadingRad = Base.Run.HeadingDeg * Math.PI / 180.0;
+            Double UnitX = Math.Sin(HeadingRad);
+            Double UnitY = Math.Cos(HeadingRad);
+            List<(Double StartM, Double EndM)> RetreatPairs =
+                new List<(Double StartM, Double EndM)> { (0.0, 0.0) };
+            for (Int32 LevelIndex = 1; LevelIndex < Levels.Count; LevelIndex += 1)
+            {
+                Double LevelM = Levels[LevelIndex];
+                RetreatPairs.Add((LevelM, 0.0));
+                RetreatPairs.Add((0.0, LevelM));
+                if ((2.0 * LevelM) <= MaximumTotalRetreatM + COST_TOLERANCE)
+                {
+                    RetreatPairs.Add((LevelM, LevelM));
+                }
+            }
+            foreach ((Double StartM, Double EndM) Retreat in RetreatPairs)
+            {
+                Double StartRetreatM = Retreat.StartM;
+                Double EndRetreatM = Retreat.EndM;
+                if ((StartRetreatM <= COST_TOLERANCE)
+                    && (EndRetreatM <= COST_TOLERANCE))
+                {
+                    Output.Add(Base);
+                    continue;
+                }
+                    ExperimentalCoveragePlanner.Run AdjustedRun =
+                        new ExperimentalCoveragePlanner.Run(
+                            Base.Run.Cells,
+                            (
+                                Base.Run.StartXy.X + (UnitX * StartRetreatM),
+                                Base.Run.StartXy.Y + (UnitY * StartRetreatM)),
+                            (
+                                Base.Run.EndXy.X - (UnitX * EndRetreatM),
+                                Base.Run.EndXy.Y - (UnitY * EndRetreatM)),
+                            Base.Run.HeadingDeg,
+                            Base.Run.MaximumLateralErrorM);
+                    Output.Add(new SequencedRun(
+                        AdjustedRun,
+                        StartRetreatM > COST_TOLERANCE
+                            ? new ExperimentalConnectorPlanner.Pose(
+                                AdjustedRun.StartXy.X,
+                                AdjustedRun.StartXy.Y,
+                                AdjustedRun.HeadingDeg)
+                            : Base.EntryPose,
+                        EndRetreatM > COST_TOLERANCE
+                            ? new ExperimentalConnectorPlanner.Pose(
+                                AdjustedRun.EndXy.X,
+                                AdjustedRun.EndXy.Y,
+                                AdjustedRun.HeadingDeg)
+                            : Base.ExitPose,
+                        StartRetreatM > COST_TOLERANCE ? 0.0 : Base.EntryLineupM,
+                        EndRetreatM > COST_TOLERANCE ? 0.0 : Base.ExitLineupM,
+                        Base.StartCoverageShortfallM + StartRetreatM,
+                        Base.EndCoverageShortfallM + EndRetreatM));
+            }
+        }
+
+        /// <summary>Returns a small deterministic retreat lattice, including radius-scale options.</summary>
+        private static List<Double> RetreatLevels
+            (
+            Double MaximumM,
+            Double MinimumRadiusM,
+            Double GridSizeM
+            )
+        {
+            List<Double> Candidates = new List<Double>
+            {
+                0.0,
+                0.5 * GridSizeM,
+                GridSizeM,
+                2.0 * GridSizeM,
+                MinimumRadiusM,
+                2.0 * MinimumRadiusM,
+                MaximumM,
+            };
+            Candidates.Sort();
+            List<Double> Output = new List<Double>();
+            foreach (Double Candidate in Candidates)
+            {
+                Double Clamped = Math.Max(0.0, Math.Min(Candidate, MaximumM));
+                if ((Output.Count == 0)
+                    || (Math.Abs(Output[Output.Count - 1] - Clamped) > COST_TOLERANCE))
+                {
+                    Output.Add(Clamped);
+                }
+            }
+            return Output;
+        }
+
+        /// <summary>Scores lineups and explicitly recorded unworked endpoint distance.</summary>
+        private static Double FlexibleOptionPenalty
+            (
+            SequencedRun Run,
+            Double PreferredLineupM
+            ) => LineupPenalty(Run, PreferredLineupM)
+                + (COVERAGE_SHORTFALL_WEIGHT
+                    * (Run.StartCoverageShortfallM + Run.EndCoverageShortfallM));
 
         /// <summary>
         /// Builds a deterministic validated sequence when exact subset search would be excessive.
@@ -793,7 +1072,8 @@ namespace HaulBuilder
                     Runs[Index].EntryPose,
                     MinimumRadiusM,
                     SampleSpacingM,
-                    Field);
+                    Field,
+                    EdgeAllowanceM: Field.GridSizeM);
                 if (!Connector.Success)
                 {
                     return Failure("Selected sequence failed strict connector reconstruction.");
@@ -850,7 +1130,8 @@ namespace HaulBuilder
             )
         {
             ExperimentalTransitPlanner.Result Connector = ExperimentalTransitPlanner.Connect(
-                Start, End, MinimumRadiusM, SampleSpacingM, Field);
+                Start, End, MinimumRadiusM, SampleSpacingM, Field,
+                EdgeAllowanceM: Field.GridSizeM);
             if (!Connector.Success) return Double.PositiveInfinity;
             Double CostM = Connector.LengthM
                 + (Connector.OperatorAlignmentRequired ? MANUAL_ASSIST_COST_M : 0.0);

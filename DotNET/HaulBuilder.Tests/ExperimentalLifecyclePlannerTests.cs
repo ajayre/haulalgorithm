@@ -72,6 +72,114 @@ namespace HaulBuilder.Tests
             Assert.Equal(Fill.Points[Fill.Points.Count - 1], Grade.Points[0]);
             Assert.All(Result.Segments.Where(Segment => Segment.Phase ==
                 ExperimentalLifecyclePlanner.Phase.Grade), Segment => Assert.True(Segment.BladeDown));
+            for (Int32 Index = 1; Index < Result.Segments.Count; Index += 1)
+            {
+                ExperimentalLifecyclePlanner.Segment Previous = Result.Segments[Index - 1];
+                ExperimentalLifecyclePlanner.Segment Current = Result.Segments[Index];
+                Assert.Equal(
+                    Previous.Points[Previous.Points.Count - 1],
+                    Current.Points[0]);
+            }
+        }
+
+        /// <summary>
+        /// Verifies endpoint distance borrowed from straight work is performed along
+        /// the adjacent automatic curve instead of becoming blade-up deadheading.
+        /// </summary>
+        [Fact]
+        public void Build_FlexibleFillEndpoints_KeepBladeDownOnConnectorTails
+            (
+            )
+        {
+            Grid Grid = MakeGrid();
+            ExperimentalCoveragePlanner.Run FirstRun = MakeRun(4.0, 8.0, 10.0, 90.0);
+            ExperimentalCoveragePlanner.Run SecondRun = MakeRun(16.0, 20.0, 12.0, 90.0);
+            ExperimentalRunSequencer.SequencedRun First =
+                new ExperimentalRunSequencer.SequencedRun(
+                    FirstRun,
+                    new ExperimentalConnectorPlanner.Pose(4.0, 10.0, 90.0),
+                    new ExperimentalConnectorPlanner.Pose(8.0, 10.0, 90.0),
+                    0.0,
+                    0.0,
+                    0.0,
+                    2.0);
+            ExperimentalRunSequencer.SequencedRun Second =
+                new ExperimentalRunSequencer.SequencedRun(
+                    SecondRun,
+                    new ExperimentalConnectorPlanner.Pose(16.0, 12.0, 90.0),
+                    new ExperimentalConnectorPlanner.Pose(20.0, 12.0, 90.0),
+                    0.0,
+                    0.0,
+                    3.0,
+                    0.0);
+            List<(Double X, Double Y)> ConnectorPoints =
+                new List<(Double X, Double Y)>
+                {
+                    (8.0, 10.0),
+                    (10.0, 10.0),
+                    (12.0, 11.0),
+                    (14.0, 12.0),
+                    (16.0, 12.0),
+                };
+            Double ConnectorLengthM = 0.0;
+            for (Int32 Index = 1; Index < ConnectorPoints.Count; Index += 1)
+            {
+                Double Dx = ConnectorPoints[Index].X - ConnectorPoints[Index - 1].X;
+                Double Dy = ConnectorPoints[Index].Y - ConnectorPoints[Index - 1].Y;
+                ConnectorLengthM += Math.Sqrt((Dx * Dx) + (Dy * Dy));
+            }
+            ExperimentalTransitPlanner.Result Connector =
+                new ExperimentalTransitPlanner.Result(
+                    true,
+                    false,
+                    ConnectorPoints,
+                    ConnectorLengthM,
+                    new List<ExperimentalTransitPlanner.Leg>
+                    {
+                        new ExperimentalTransitPlanner.Leg(false, ConnectorPoints),
+                    },
+                    0.0,
+                    "AUTO_CURVE",
+                    String.Empty);
+            ExperimentalRunSequencer.Result Fill = new ExperimentalRunSequencer.Result(
+                true,
+                new List<ExperimentalRunSequencer.SequencedRun> { First, Second },
+                new List<ExperimentalTransitPlanner.Result> { Connector },
+                ConnectorLengthM,
+                0.0,
+                String.Empty);
+            ExperimentalRunSequencer.Result Empty = new ExperimentalRunSequencer.Result(
+                true,
+                new List<ExperimentalRunSequencer.SequencedRun>(),
+                new List<ExperimentalTransitPlanner.Result>(),
+                0.0,
+                0.0,
+                String.Empty);
+
+            ExperimentalLifecyclePlanner.Result Result = ExperimentalLifecyclePlanner.Build(
+                new List<ExperimentalLifecyclePlanner.PassPlan>
+                {
+                    new ExperimentalLifecyclePlanner.PassPlan(Empty, Fill),
+                },
+                false,
+                LINEUP_M,
+                RADIUS_M,
+                SAMPLE_M,
+                Grid);
+
+            Assert.True(Result.Success, Result.FailureReason);
+            List<ExperimentalLifecyclePlanner.Segment> FillSegments = Result.Segments
+                .Where(Segment => Segment.Phase == ExperimentalLifecyclePlanner.Phase.Fill)
+                .ToList();
+            Assert.Equal(4, FillSegments.Count);
+            Assert.All(FillSegments, Segment => Assert.True(Segment.BladeDown));
+            Assert.Equal(13.0, FillSegments.Sum(SegmentLength), 6);
+            Assert.Equal(
+                ConnectorLengthM - 5.0,
+                Result.Segments
+                    .Where(Segment => Segment.Phase == ExperimentalLifecyclePlanner.Phase.Transit)
+                    .Sum(SegmentLength),
+                6);
         }
 
         /// <summary>
