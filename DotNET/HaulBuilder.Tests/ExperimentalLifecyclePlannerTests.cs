@@ -68,8 +68,16 @@ namespace HaulBuilder.Tests
             Assert.True(SecondCut > FirstGrade);
             ExperimentalLifecyclePlanner.Segment Fill = Result.Segments[FirstFill];
             ExperimentalLifecyclePlanner.Segment Grade = Result.Segments[FirstGrade];
+            ExperimentalLifecyclePlanner.Segment FirstCut = Result.Segments[Result.Segments
+                .FindIndex(Segment => Segment.Phase == ExperimentalLifecyclePlanner.Phase.Cut)];
             Assert.Equal(Fill.Points[0], Grade.Points[Grade.Points.Count - 1]);
             Assert.Equal(Fill.Points[Fill.Points.Count - 1], Grade.Points[0]);
+            Assert.False(FirstCut.Loaded);
+            Assert.True(Fill.Loaded);
+            Assert.False(Grade.Loaded);
+            Assert.All(Result.Segments.Where(Segment => Segment.Phase ==
+                ExperimentalLifecyclePlanner.Phase.TransitToNextCut),
+                Segment => Assert.False(Segment.Loaded));
             Assert.All(Result.Segments.Where(Segment => Segment.Phase ==
                 ExperimentalLifecyclePlanner.Phase.Grade), Segment => Assert.True(Segment.BladeDown));
             for (Int32 Index = 1; Index < Result.Segments.Count; Index += 1)

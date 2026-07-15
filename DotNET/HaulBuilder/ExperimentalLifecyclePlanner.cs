@@ -68,14 +68,18 @@ namespace HaulBuilder
                 (
                 ExperimentalRunSequencer.Result Cut,
                 ExperimentalRunSequencer.Result Fill,
-                Int32 CutOmittedCellCount = 0,
-                Int32 FillOmittedCellCount = 0
+                IReadOnlyList<((Int32 Bx, Int32 By) Cell, Double DepthM)>?
+                    CutOmittedCells = null,
+                IReadOnlyList<((Int32 Bx, Int32 By) Cell, Double DepthM)>?
+                    FillOmittedCells = null
                 )
             {
                 this.Cut = Cut;
                 this.Fill = Fill;
-                this.CutOmittedCellCount = CutOmittedCellCount;
-                this.FillOmittedCellCount = FillOmittedCellCount;
+                this.CutOmittedCells = CutOmittedCells
+                    ?? Array.Empty<((Int32 Bx, Int32 By) Cell, Double DepthM)>();
+                this.FillOmittedCells = FillOmittedCells
+                    ?? Array.Empty<((Int32 Bx, Int32 By) Cell, Double DepthM)>();
             }
 
             /// <summary>Gets sequenced cut work.</summary>
@@ -84,11 +88,19 @@ namespace HaulBuilder
             /// <summary>Gets sequenced fill work.</summary>
             public ExperimentalRunSequencer.Result Fill { get; }
 
-            /// <summary>Gets edge/corner cut cells explicitly omitted from guidance.</summary>
-            public Int32 CutOmittedCellCount { get; }
+            /// <summary>Gets cut allocations explicitly omitted from guidance.</summary>
+            public IReadOnlyList<((Int32 Bx, Int32 By) Cell, Double DepthM)>
+                CutOmittedCells { get; }
 
-            /// <summary>Gets edge/corner fill cells explicitly omitted from guidance.</summary>
-            public Int32 FillOmittedCellCount { get; }
+            /// <summary>Gets fill allocations explicitly omitted from guidance.</summary>
+            public IReadOnlyList<((Int32 Bx, Int32 By) Cell, Double DepthM)>
+                FillOmittedCells { get; }
+
+            /// <summary>Gets the number of omitted cut allocations.</summary>
+            public Int32 CutOmittedCellCount => CutOmittedCells.Count;
+
+            /// <summary>Gets the number of omitted fill allocations.</summary>
+            public Int32 FillOmittedCellCount => FillOmittedCells.Count;
         }
 
         /// <summary>
@@ -102,11 +114,23 @@ namespace HaulBuilder
                 Phase Phase,
                 Boolean BladeDown,
                 List<(Double X, Double Y)> Points
+                ) : this(Phase, BladeDown, Points, false)
+            {
+            }
+
+            /// <summary>Initializes one lifecycle segment with explicit payload state.</summary>
+            public Segment
+                (
+                Phase Phase,
+                Boolean BladeDown,
+                List<(Double X, Double Y)> Points,
+                Boolean Loaded
                 )
             {
                 this.Phase = Phase;
                 this.BladeDown = BladeDown;
                 this.Points = Points;
+                this.Loaded = Loaded;
             }
 
             /// <summary>Gets the strongly typed phase.</summary>
@@ -117,6 +141,12 @@ namespace HaulBuilder
 
             /// <summary>Gets ordered centerline points.</summary>
             public List<(Double X, Double Y)> Points { get; }
+
+            /// <summary>Gets the one-based haul route that owns this segment.</summary>
+            public Int32 RouteNumber { get; internal set; }
+
+            /// <summary>Gets whether the tractor-scraper is carrying material.</summary>
+            public Boolean Loaded { get; internal set; }
         }
 
         /// <summary>
@@ -180,6 +210,7 @@ namespace HaulBuilder
 
             for (Int32 PassIndex = 0; PassIndex < Passes.Count; PassIndex += 1)
             {
+                Int32 RouteSegmentStartIndex = Segments.Count;
                 PassPlan Pass = Passes[PassIndex];
                 if (!Pass.Cut.Success || !Pass.Fill.Success)
                 {
@@ -314,13 +345,48 @@ namespace HaulBuilder
                     Current = GradeRuns[GradeRuns.Count - 1].ExitPose;
                 }
 
+                // Assign ownership only after every segment for this pass is known;
+                // this includes inbound next-cut transit constructed at pass start.
+                Boolean Loaded = false;
+                for (Int32 SegmentIndex = RouteSegmentStartIndex;
+                    SegmentIndex < Segments.Count;
+                    SegmentIndex += 1)
+                {
+                    Segment Segment = Segments[SegmentIndex];
+                    Segment.RouteNumber = PassIndex + 1;
+                    // Every haul route arrives at its first cut empty. Cutting
+                    // changes the payload to loaded; it stays loaded through all
+                    // fill runs, then grading or the next-cut transit is empty.
+                    if ((Segment.Phase == Phase.TransitToNextCut)
+                        || (Segment.Phase == Phase.TurnToGrade)
+                        || (Segment.Phase == Phase.LineupGrade)
+                        || (Segment.Phase == Phase.Grade)
+                        || (Segment.Phase == Phase.ExitGrade))
+                    {
+                        Loaded = false;
+                    }
+                    else if ((Segment.Phase == Phase.LineupFill)
+                        || (Segment.Phase == Phase.Fill)
+                        || (Segment.Phase == Phase.ExitFill))
+                    {
+                        Loaded = true;
+                    }
+                    Segment.Loaded = Loaded;
+                    if (Segment.Phase == Phase.Cut)
+                    {
+                        Loaded = true;
+                    }
+                }
+
                 Progress?.Invoke(PassIndex + 1, Passes.Count);
             }
 
             if (Current.HasValue)
             {
-                Segments.Add(new Segment(Phase.End, false,
-                    new List<(Double X, Double Y)> { (Current.Value.X, Current.Value.Y) }));
+                Segment End = new Segment(Phase.End, false,
+                    new List<(Double X, Double Y)> { (Current.Value.X, Current.Value.Y) });
+                End.RouteNumber = Passes.Count;
+                Segments.Add(End);
             }
             return new Result(true, Segments, ManualAssistCount,
                 TotalDistance(Segments), String.Empty);

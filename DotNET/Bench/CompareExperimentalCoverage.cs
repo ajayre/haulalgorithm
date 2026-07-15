@@ -25,6 +25,16 @@ internal static class CompareExperimentalCoverage
     private const Int32 MAX_PAIRED_CANDIDATE_ATTEMPTS = 72 * 72;
     private const Int32 MAX_BACKTRACK_CANDIDATE_ATTEMPTS = 250000;
     private const Int32 MAX_INITIAL_CUT_CANDIDATE_ATTEMPTS = 6;
+    private const Double FAST_OPERATING_SPEED_SCALE = 1.1;
+    private const Double FAST_ACCELERATION_SCALE = 2.0;
+    private const Double HIGH_OPERATIONAL_AVAILABILITY = 0.9;
+    private const Double LOW_OPERATIONAL_AVAILABILITY = 0.7;
+    private const Double MEDIAN_PERCENTILE = 0.5;
+    private const Double PERCENTILE_90 = 0.9;
+    private const Double PERCENTILE_99 = 0.99;
+    private const Double SECONDS_PER_HOUR = 3600.0;
+    private const Double SLOW_OPERATING_SPEED_SCALE = 0.9;
+    private const Double SLOW_ACCELERATION_SCALE = 0.5;
 
     private sealed class DisplayPoint
     {
@@ -138,8 +148,8 @@ internal static class CompareExperimentalCoverage
             LifecyclePasses.Add(new ExperimentalLifecyclePlanner.PassPlan(
                 CutSequence,
                 FillSequence,
-                CutPlan.OmittedCells.Count,
-                FillPlan.OmittedCells.Count));
+                CutPlan.OmittedCells,
+                FillPlan.OmittedCells));
 
             Boolean CutConserved = ExperimentalCoveragePlanner.ConservesAllocation(
                 Pass.CutCells, CutPlan.AccountedCells);
@@ -385,12 +395,35 @@ internal static class CompareExperimentalCoverage
             Console.SetOut(OriginalOutput);
         }
 
-        ExperimentalGuidanceTiming.Result Timing = ExperimentalGuidanceTiming.Estimate(
-            Lifecycle,
+        ExperimentalGuidanceTiming.Options TimingOptions =
             new ExperimentalGuidanceTiming.Options
             {
                 FieldEfficiency = Constants.DEFAULT_FIELD_EFFICIENCY,
-            });
+            };
+        ExperimentalGuidanceTiming.Result Timing =
+            ExperimentalGuidanceTiming.Estimate(Lifecycle, TimingOptions);
+        // Run every sensitivity against identical final geometry so only the
+        // named physical or operational assumption can move the result.
+        ExperimentalGuidanceTiming.Result SlowerTiming =
+            ExperimentalGuidanceTiming.Estimate(
+                Lifecycle, ScaleTimingOptions(
+                    TimingOptions,
+                    SLOW_OPERATING_SPEED_SCALE,
+                    SLOW_OPERATING_SPEED_SCALE));
+        ExperimentalGuidanceTiming.Result FasterTiming =
+            ExperimentalGuidanceTiming.Estimate(
+                Lifecycle, ScaleTimingOptions(
+                    TimingOptions,
+                    FAST_OPERATING_SPEED_SCALE,
+                    FAST_OPERATING_SPEED_SCALE));
+        ExperimentalGuidanceTiming.Result SlowerAccelerationTiming =
+            ExperimentalGuidanceTiming.Estimate(
+                Lifecycle, ScaleTimingOptions(
+                    TimingOptions, 1.0, SLOW_ACCELERATION_SCALE));
+        ExperimentalGuidanceTiming.Result FasterAccelerationTiming =
+            ExperimentalGuidanceTiming.Estimate(
+                Lifecycle, ScaleTimingOptions(
+                    TimingOptions, 1.0, FAST_ACCELERATION_SCALE));
         ExperimentalFieldEdgePolicy EdgePolicy =
             new ExperimentalFieldEdgePolicy(Plan.Grid, Plan.Grid.GridSizeM);
         List<(Int32 SegmentIndex, ExperimentalLifecyclePlanner.Segment Segment,
@@ -448,8 +481,35 @@ internal static class CompareExperimentalCoverage
         Int32 BeyondAllowanceSegments = Lifecycle.Segments.Count(Segment =>
             Segment.Points.Any(Point =>
                 !EdgePolicy.ContainsWithExteriorAllowance(Point.X, Point.Y)));
-        Int32 OmittedCells = Passes.Sum(Pass =>
+        Int32 OmittedAllocations = Passes.Sum(Pass =>
             Pass.CutOmittedCellCount + Pass.FillOmittedCellCount);
+        HashSet<(Int32 Bx, Int32 By)> GuidanceOmittedCells = Passes
+            .SelectMany(Pass => Pass.CutOmittedCells.Concat(Pass.FillOmittedCells))
+            .Select(Entry => Entry.Cell)
+            .ToHashSet();
+        HashSet<(Int32 Bx, Int32 By)> EdgePatchAffectedCells = Plan.EdgeOmission
+            .OmittedCutCells.Concat(Plan.EdgeOmission.OmittedFillCells)
+            .Select(Entry => Entry.Cell)
+            .ToHashSet();
+        HashSet<(Int32 Bx, Int32 By)> AllAffectedCells =
+            new HashSet<(Int32 Bx, Int32 By)>(GuidanceOmittedCells);
+        AllAffectedCells.UnionWith(EdgePatchAffectedCells);
+        Int32 ValidFieldCells = 0;
+        Int32 ActiveWorkCells = 0;
+        Double[,] Delta = Plan.Grid.Delta();
+        Double WorkToleranceM = Constants.DEFAULT_TOLERANCE_MM / 1000.0;
+        for (Int32 By = 0; By < Plan.Grid.Height; By += 1)
+        {
+            for (Int32 Bx = 0; Bx < Plan.Grid.Width; Bx += 1)
+            {
+                if (!Plan.Grid.Valid[By, Bx]) continue;
+                ValidFieldCells += 1;
+                if (Math.Abs(Delta[By, Bx]) > WorkToleranceM)
+                {
+                    ActiveWorkCells += 1;
+                }
+            }
+        }
         Double StraightCoverageShortfallM = Passes
             .SelectMany(Pass => Pass.Cut.Runs.Concat(Pass.Fill.Runs))
             .Sum(Run => Run.StartCoverageShortfallM + Run.EndCoverageShortfallM);
@@ -494,20 +554,206 @@ internal static class CompareExperimentalCoverage
             Percentile(ManualDistancesM, 1.0)));
         Report.AppendLine(String.Format(
             CultureInfo.InvariantCulture,
-            "total_segments={0} total_distance_m={1:F1} total_distance_mi={2:F2} modeled_hours={3:F2}",
+            "total_segments={0} total_distance_m={1:F1} total_distance_mi={2:F2} deterministic_drive_hours={3:F3} scheduled_hours_at_80_percent_operational_availability={4:F3}",
             Lifecycle.Segments.Count,
             Lifecycle.DistanceM,
             Lifecycle.DistanceM / 1609.344,
-            Timing.TotalSeconds / 3600.0));
+            (Timing.MotionSeconds + Timing.EventSeconds) / SECONDS_PER_HOUR,
+            Timing.TotalSeconds / SECONDS_PER_HOUR));
+        Report.AppendLine(String.Format(
+            CultureInfo.InvariantCulture,
+            "timing_distance_m={0:F3} distance_reconciliation_m={1:F6} constant_limit_hours={2:F3} acceleration_and_speed_transition_overhead_hours={3:F3} explicit_event_hours={4:F3} operational_availability_allowance_hours={5:F3}",
+            Timing.DistanceM,
+            Timing.DistanceM - Lifecycle.DistanceM,
+            Timing.ConstantSpeedSeconds / SECONDS_PER_HOUR,
+            Timing.AccelerationConstraintSeconds / SECONDS_PER_HOUR,
+            Timing.EventSeconds / SECONDS_PER_HOUR,
+            Timing.FieldEfficiencyAllowanceSeconds / SECONDS_PER_HOUR));
+        Report.AppendLine(String.Format(
+            CultureInfo.InvariantCulture,
+            "timing_motion_blocks={0} curvature_vertices={1} curvature_limited_m={2:F1} curvature_limited_percent={3:F3} forced_geometry_stops={4} minimum_curve_radius_m={5:F3} operator_rounded_tight_vertices={6}",
+            Timing.MotionBlockCount,
+            Timing.CurvatureConstraintCount,
+            Timing.CurvatureLimitedDistanceM,
+            Timing.DistanceM > 0.0
+                ? 100.0 * Timing.CurvatureLimitedDistanceM / Timing.DistanceM
+                : 0.0,
+            Timing.ForcedStopCount,
+            Timing.MinimumObservedCurveRadiusM,
+            Timing.BelowMinimumRadiusVertexCount));
+        Report.AppendLine(String.Format(
+            CultureInfo.InvariantCulture,
+            "timing_assumptions_mph cut={0:F2} fill={1:F2} grade={2:F2} loaded_full={3:F2} unloaded_full={4:F2} maximum_steering={5:F2}",
+            TimingOptions.CutSpeedMph,
+            TimingOptions.FillSpeedMph,
+            TimingOptions.GradeSpeedMph,
+            TimingOptions.LoadedTravelSpeedMph,
+            TimingOptions.UnloadedTravelSpeedMph,
+            TimingOptions.TurnSpeedMph));
+        Report.AppendLine(String.Format(
+            CultureInfo.InvariantCulture,
+            "timing_dynamics acceleration_mps2={0:F6} deceleration_mps2={1:F6} turn_speed_rule=linear_heading_change minimum_turn_radius_m={2:F4} curvature_sample_spacing_m={3:F3} radius_tolerance_fraction={4:F3} schedule_operational_availability={5:F3}",
+            TimingOptions.AccelerationMps2,
+            TimingOptions.DecelerationMps2,
+            TimingOptions.MinimumTurningRadiusM,
+            TimingOptions.CurvatureEvaluationSpacingM,
+            TimingOptions.MinimumRadiusToleranceFraction,
+            TimingOptions.FieldEfficiency));
+        Report.AppendLine(String.Format(
+            CultureInfo.InvariantCulture,
+            "timing_by_payload loaded_distance_m={0:F1} loaded_hours={1:F3} unloaded_distance_m={2:F1} unloaded_hours={3:F3}",
+            Timing.LoadedDistanceM,
+            Timing.LoadedSeconds / SECONDS_PER_HOUR,
+            Timing.UnloadedDistanceM,
+            Timing.UnloadedSeconds / SECONDS_PER_HOUR));
+        Report.AppendLine("timing_sensitivity:");
+        Report.AppendLine(String.Format(
+            CultureInfo.InvariantCulture,
+            "  all_operating_speeds_minus_10_percent: drive_hours={0:F3} scheduled_hours_at_baseline_availability={1:F3}",
+            (SlowerTiming.MotionSeconds + SlowerTiming.EventSeconds) / SECONDS_PER_HOUR,
+            SlowerTiming.TotalSeconds / SECONDS_PER_HOUR));
+        Report.AppendLine(String.Format(
+            CultureInfo.InvariantCulture,
+            "  all_operating_speeds_plus_10_percent: drive_hours={0:F3} scheduled_hours_at_baseline_availability={1:F3}",
+            (FasterTiming.MotionSeconds + FasterTiming.EventSeconds) / SECONDS_PER_HOUR,
+            FasterTiming.TotalSeconds / SECONDS_PER_HOUR));
+        Report.AppendLine(String.Format(
+            CultureInfo.InvariantCulture,
+            "  longitudinal_acceleration_half: drive_hours={0:F3} delta_hours={1:F3}",
+            (SlowerAccelerationTiming.MotionSeconds
+                + SlowerAccelerationTiming.EventSeconds) / SECONDS_PER_HOUR,
+            (SlowerAccelerationTiming.TotalSeconds - Timing.TotalSeconds)
+                / SECONDS_PER_HOUR));
+        Report.AppendLine(String.Format(
+            CultureInfo.InvariantCulture,
+            "  longitudinal_acceleration_double: drive_hours={0:F3} delta_hours={1:F3}",
+            (FasterAccelerationTiming.MotionSeconds
+                + FasterAccelerationTiming.EventSeconds) / SECONDS_PER_HOUR,
+            (FasterAccelerationTiming.TotalSeconds - Timing.TotalSeconds)
+                / SECONDS_PER_HOUR));
+        Report.AppendLine(String.Format(
+            CultureInfo.InvariantCulture,
+            "  schedule_operational_availability_70_percent_hours={0:F3} schedule_operational_availability_80_percent_hours={1:F3} schedule_operational_availability_90_percent_hours={2:F3}",
+            (Timing.MotionSeconds + Timing.EventSeconds)
+                / (SECONDS_PER_HOUR * LOW_OPERATIONAL_AVAILABILITY),
+            (Timing.MotionSeconds + Timing.EventSeconds)
+                / (SECONDS_PER_HOUR * TimingOptions.FieldEfficiency),
+            (Timing.MotionSeconds + Timing.EventSeconds)
+                / (SECONDS_PER_HOUR * HIGH_OPERATIONAL_AVAILABILITY)));
+        Report.AppendLine("timing_by_phase:");
+        foreach (ExperimentalLifecyclePlanner.Phase Phase in
+            Timing.PhaseDistanceM.Keys.Union(Timing.PhaseSeconds.Keys).OrderBy(Phase => Phase))
+        {
+            Timing.PhaseDistanceM.TryGetValue(Phase, out Double PhaseDistanceM);
+            Timing.PhaseSeconds.TryGetValue(Phase, out Double PhaseSeconds);
+            Report.AppendLine(String.Format(
+                CultureInfo.InvariantCulture,
+                "  {0}: distance_m={1:F1} distance_mi={2:F3} hours={3:F4} average_mph={4:F3}",
+                Phase,
+                PhaseDistanceM,
+                PhaseDistanceM / 1609.344,
+                PhaseSeconds / SECONDS_PER_HOUR,
+                PhaseSeconds > 0.0
+                    ? PhaseDistanceM / PhaseSeconds / Constants.MPH_TO_MPS
+                    : 0.0));
+        }
+        Report.AppendLine("timing_by_route:");
+        // Retain the full route ledger and a compact distribution so expensive
+        // outliers remain visible without being hidden inside the field total.
+        List<Double> RouteDriveHours = Timing.RouteSeconds
+            .Where(Item => Item.Key > 0)
+            .Select(Item => Item.Value / SECONDS_PER_HOUR)
+            .OrderBy(Hours => Hours)
+            .ToList();
+        Report.AppendLine(String.Format(
+            CultureInfo.InvariantCulture,
+            "  summary: min_hours={0:F4} median_hours={1:F4} p90_hours={2:F4} p99_hours={3:F4} max_hours={4:F4}",
+            Percentile(RouteDriveHours, 0.0),
+            Percentile(RouteDriveHours, MEDIAN_PERCENTILE),
+            Percentile(RouteDriveHours, PERCENTILE_90),
+            Percentile(RouteDriveHours, PERCENTILE_99),
+            Percentile(RouteDriveHours, 1.0)));
+        foreach (Int32 RouteNumber in
+            Timing.RouteDistanceM.Keys.Union(Timing.RouteSeconds.Keys).OrderBy(Value => Value))
+        {
+            Timing.RouteDistanceM.TryGetValue(RouteNumber, out Double RouteDistanceM);
+            Timing.RouteSeconds.TryGetValue(RouteNumber, out Double RouteSeconds);
+            Report.AppendLine(String.Format(
+                CultureInfo.InvariantCulture,
+                "  route={0} distance_m={1:F1} distance_mi={2:F3} drive_hours={3:F4} average_mph={4:F3}",
+                RouteNumber,
+                RouteDistanceM,
+                RouteDistanceM / 1609.344,
+                RouteSeconds / SECONDS_PER_HOUR,
+                RouteSeconds > 0.0
+                    ? RouteDistanceM / RouteSeconds / Constants.MPH_TO_MPS
+                    : 0.0));
+        }
+        Report.AppendLine("longest_routes_by_drive_time:");
+        foreach (KeyValuePair<Int32, Double> RouteTime in Timing.RouteSeconds
+            .Where(Item => Item.Key > 0)
+            .OrderByDescending(Item => Item.Value)
+            .Take(20))
+        {
+            Timing.RouteDistanceM.TryGetValue(
+                RouteTime.Key, out Double RouteDistanceM);
+            Report.AppendLine(String.Format(
+                CultureInfo.InvariantCulture,
+                "  route={0} drive_hours={1:F4} distance_m={2:F1} average_mph={3:F3} rounded_tight_vertices={4}",
+                RouteTime.Key,
+                RouteTime.Value / SECONDS_PER_HOUR,
+                RouteDistanceM,
+                RouteTime.Value > 0.0
+                    ? RouteDistanceM / RouteTime.Value / Constants.MPH_TO_MPS
+                    : 0.0,
+                Timing.CurveViolations.Count(Violation =>
+                    Violation.RouteNumber == RouteTime.Key)));
+        }
         Report.AppendLine(String.Format(
             CultureInfo.InvariantCulture,
             "max_segment_gap_m={0:F6} segments_beyond_one_cell_allowance={1}",
             MaximumGapM,
             BeyondAllowanceSegments));
+        Report.AppendLine("operator_rounded_tight_vertices:");
+        foreach (ExperimentalGuidanceTiming.CurveViolation Violation in
+            Timing.CurveViolations.OrderBy(Violation => Violation.RadiusM).Take(50))
+        {
+            Report.AppendLine(String.Format(
+                CultureInfo.InvariantCulture,
+                "  route={0} {1}->{2} radius_m={3:F3} radius_ft={4:F2} previous=({5:F2},{6:F2}) point=({7:F2},{8:F2}) next=({9:F2},{10:F2})",
+                Violation.RouteNumber,
+                Violation.PreviousPhase,
+                Violation.NextPhase,
+                Violation.RadiusM,
+                Violation.RadiusM / Constants.FEET_TO_METERS,
+                Violation.PreviousPoint.X,
+                Violation.PreviousPoint.Y,
+                Violation.X,
+                Violation.Y,
+                Violation.NextPoint.X,
+                Violation.NextPoint.Y));
+        }
         Report.AppendLine(String.Format(
             CultureInfo.InvariantCulture,
-            "guidance_omitted_cells={0} nominal_straight_coverage_shortfall_m={1:F1}",
-            OmittedCells,
+            "guidance_omitted_allocations={0} guidance_omitted_unique_cells={1} guidance_affected_area_m2={2:F1} guidance_percent_field={3:F3} guidance_percent_active_work={4:F3}",
+            OmittedAllocations,
+            GuidanceOmittedCells.Count,
+            GuidanceOmittedCells.Count * Plan.Grid.AreaM2,
+            ValidFieldCells > 0
+                ? 100.0 * GuidanceOmittedCells.Count / ValidFieldCells
+                : 0.0,
+            ActiveWorkCells > 0
+                ? 100.0 * GuidanceOmittedCells.Count / ActiveWorkCells
+                : 0.0));
+        Report.AppendLine(String.Format(
+            CultureInfo.InvariantCulture,
+            "valid_field_cells={0} active_work_cells={1} all_omission_affected_unique_cells={2} all_omission_percent_field={3:F3} nominal_straight_coverage_shortfall_m={4:F1}",
+            ValidFieldCells,
+            ActiveWorkCells,
+            AllAffectedCells.Count,
+            ValidFieldCells > 0
+                ? 100.0 * AllAffectedCells.Count / ValidFieldCells
+                : 0.0,
             StraightCoverageShortfallM));
         Report.AppendLine(String.Format(
             CultureInfo.InvariantCulture,
@@ -1912,8 +2158,8 @@ internal static class CompareExperimentalCoverage
                             new ExperimentalLifecyclePlanner.PassPlan(
                                 PreviousPass.Cut,
                                 BacktrackedPreviousSequence,
-                                PreviousPass.CutOmittedCellCount,
-                                BacktrackedPreviousFill.OmittedCells.Count);
+                                PreviousPass.CutOmittedCells,
+                                BacktrackedPreviousFill.OmittedCells);
                         FillPlans[PassIndex - 1] = BacktrackedPreviousFill;
                         FillPlans[PassIndex] = BacktrackedCurrentFill;
                         PreselectedFillSequences[PassIndex] = BacktrackedCurrentSequence;
@@ -1952,8 +2198,8 @@ internal static class CompareExperimentalCoverage
                             new ExperimentalLifecyclePlanner.PassPlan(
                                 PreviousPass.Cut,
                                 TriplePreviousSequence,
-                                PreviousPass.CutOmittedCellCount,
-                                TriplePreviousFill.OmittedCells.Count);
+                                PreviousPass.CutOmittedCells,
+                                TriplePreviousFill.OmittedCells);
                         FillPlans[PassIndex - 1] = TriplePreviousFill;
                         CutPlans[PassIndex] = TripleCut;
                         FillPlans[PassIndex] = TripleFill;
@@ -2374,8 +2620,8 @@ internal static class CompareExperimentalCoverage
                         new ExperimentalLifecyclePlanner.PassPlan(
                             PreviousPass.Cut,
                             BacktrackedPreviousSequence,
-                            PreviousPass.CutOmittedCellCount,
-                            BacktrackedPreviousFill.OmittedCells.Count);
+                            PreviousPass.CutOmittedCells,
+                            BacktrackedPreviousFill.OmittedCells);
                     FillPlans[PassIndex - 1] = BacktrackedPreviousFill;
                     CutPlans[PassIndex] = BacktrackedCut;
                     FillPlans[PassIndex] = BacktrackedFill;
@@ -2441,8 +2687,8 @@ internal static class CompareExperimentalCoverage
                         new ExperimentalLifecyclePlanner.PassPlan(
                             DeeperPreviousCut,
                             DeeperPreviousFillSequence,
-                            PreviousPass.CutOmittedCellCount,
-                            DeeperPreviousFill.OmittedCells.Count);
+                            PreviousPass.CutOmittedCells,
+                            DeeperPreviousFill.OmittedCells);
                     FillPlans[PassIndex - 1] = DeeperPreviousFill;
                     CutPlans[PassIndex] = DeeperCut;
                     FillPlans[PassIndex] = DeeperFill;
@@ -2527,8 +2773,8 @@ internal static class CompareExperimentalCoverage
             Output.Add(new ExperimentalLifecyclePlanner.PassPlan(
                 CutSequence,
                 FillSequence,
-                Cut.OmittedCells.Count,
-                Fill.OmittedCells.Count));
+                Cut.OmittedCells,
+                Fill.OmittedCells));
             Progress?.Invoke("sequencing", PassIndex + 1, PassCount);
             if ((PassTimer.Elapsed >= TimeSpan.FromSeconds(1.0))
                 || (Failures[PassIndex] != null))
@@ -4572,6 +4818,34 @@ internal static class CompareExperimentalCoverage
             Timing.MotionSeconds + Timing.EventSeconds,
             Timing.TotalSeconds,
             Lifecycle.FailureReason));
+    }
+
+    /// <summary>Copies timing options while applying explicit sensitivity scales.</summary>
+    private static ExperimentalGuidanceTiming.Options ScaleTimingOptions
+        (
+        ExperimentalGuidanceTiming.Options Source,
+        Double SpeedScale,
+        Double AccelerationScale
+        )
+    {
+        return new ExperimentalGuidanceTiming.Options
+        {
+            CutSpeedMph = Source.CutSpeedMph * SpeedScale,
+            FillSpeedMph = Source.FillSpeedMph * SpeedScale,
+            GradeSpeedMph = Source.GradeSpeedMph * SpeedScale,
+            LoadedTravelSpeedMph = Source.LoadedTravelSpeedMph * SpeedScale,
+            UnloadedTravelSpeedMph = Source.UnloadedTravelSpeedMph * SpeedScale,
+            TurnSpeedMph = Source.TurnSpeedMph * SpeedScale,
+            MinimumTurningRadiusM = Source.MinimumTurningRadiusM,
+            CurvatureEvaluationSpacingM = Source.CurvatureEvaluationSpacingM,
+            MinimumRadiusToleranceFraction = Source.MinimumRadiusToleranceFraction,
+            AccelerationMps2 = Source.AccelerationMps2 * AccelerationScale,
+            DecelerationMps2 = Source.DecelerationMps2 * AccelerationScale,
+            ManualAssistOverheadS = Source.ManualAssistOverheadS,
+            BladeLowerS = Source.BladeLowerS,
+            BladeRaiseS = Source.BladeRaiseS,
+            FieldEfficiency = Source.FieldEfficiency,
+        };
     }
 
     /// <summary>
