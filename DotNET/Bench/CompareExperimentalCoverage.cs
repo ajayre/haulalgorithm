@@ -1,8 +1,11 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 
 using HaulBuilder;
@@ -19,6 +22,9 @@ internal static class CompareExperimentalCoverage
     private const Int32 LAST_ROUTE_INDEX = 9;
     private const Double SHARP_TURN_DEG = 45.0;
     private const Double REVERSAL_DEG = 100.0;
+    private const Int32 MAX_PAIRED_CANDIDATE_ATTEMPTS = 72 * 72;
+    private const Int32 MAX_BACKTRACK_CANDIDATE_ATTEMPTS = 250000;
+    private const Int32 MAX_INITIAL_CUT_CANDIDATE_ATTEMPTS = 6;
 
     private sealed class DisplayPoint
     {
@@ -227,6 +233,547 @@ internal static class CompareExperimentalCoverage
         ReportLifecycle("whole_plan", WholePlanGradeOn, true, Plan.Grid);
 
         return Conserved ? 0 : 1;
+    }
+
+    /// <summary>
+    /// Plans the complete grade-enabled field lifecycle once and writes a concise
+    /// manual-intervention and geometry report.
+    /// </summary>
+    /// <param name="Args">Optional AGD path, report path, and pass limit.</param>
+    /// <returns>Zero when the complete lifecycle succeeds and stays within allowance.</returns>
+    static public Int32 ReportWholeField
+        (
+        String[] Args
+        )
+    {
+        String RepoRoot = Path.GetFullPath(Path.Combine(
+            AppContext.BaseDirectory, "..", "..", "..", "..", ".."));
+        String AgdPath = (Args.Length > 0)
+            ? Path.GetFullPath(Args[0])
+            : Path.Combine(RepoRoot, "DotNET", "TheShop2_2ft.agd");
+        String ReportPath = (Args.Length > 1)
+            ? Path.GetFullPath(Args[1])
+            : Path.Combine(
+                RepoRoot,
+                "assets",
+                "theshop2_experimental_coverage",
+                "whole_field_guidance_stats.txt");
+        Int32? PassLimit = null;
+        if ((Args.Length > 2)
+            && Int32.TryParse(
+                Args[2],
+                NumberStyles.Integer,
+                CultureInfo.InvariantCulture,
+                out Int32 ParsedPassLimit))
+        {
+            PassLimit = Math.Max(0, ParsedPassLimit);
+        }
+        String? ReportDirectory = Path.GetDirectoryName(ReportPath);
+        if (!String.IsNullOrWhiteSpace(ReportDirectory))
+        {
+            Directory.CreateDirectory(ReportDirectory);
+        }
+
+        ExperimentalTransitPlanner.ResetCache();
+        Stopwatch RunTimer = Stopwatch.StartNew();
+        (AgdField Field, Grid Grid, Route Route, Double HeadingDeg,
+            EdgePatchOmissionResult EdgeOmission) Plan = default;
+        List<ExperimentalLifecyclePlanner.PassPlan> Passes;
+        ExperimentalLifecyclePlanner.Result Lifecycle;
+        List<String> PlanningDiagnostics = new List<String>();
+        TextWriter OriginalOutput = Console.Out;
+        String ProgressPath = ReportPath + ".progress.txt";
+        Object ProgressLock = new Object();
+        String ProgressStage = String.Empty;
+        Stopwatch StageTimer = Stopwatch.StartNew();
+        Stopwatch ProgressWriteTimer = Stopwatch.StartNew();
+        void WriteProgress(String Stage, Int32 Completed, Int32 Total)
+        {
+            lock (ProgressLock)
+            {
+                String StageKey = Stage.Split(' ', 2)[0];
+                if (!String.Equals(ProgressStage, StageKey, StringComparison.Ordinal))
+                {
+                    ProgressStage = StageKey;
+                    StageTimer.Restart();
+                    ProgressWriteTimer.Restart();
+                }
+                Boolean Complete = (Total == 0) || (Completed >= Total);
+                Boolean PassStart = Stage.Contains(" pass=", StringComparison.Ordinal);
+                if (!Complete && !PassStart && (Completed > 0)
+                    && (ProgressWriteTimer.Elapsed < TimeSpan.FromSeconds(5.0)))
+                {
+                    return;
+                }
+                Double StageSeconds = Math.Max(StageTimer.Elapsed.TotalSeconds, 0.001);
+                Double Rate = Completed / StageSeconds;
+                Double EtaSeconds = (Rate > 0.0)
+                    ? Math.Max(0, Total - Completed) / Rate
+                    : Double.PositiveInfinity;
+                String Eta = Double.IsFinite(EtaSeconds)
+                    ? TimeSpan.FromSeconds(EtaSeconds).ToString("c", CultureInfo.InvariantCulture)
+                    : "unknown";
+                String ProgressText = String.Format(
+                    CultureInfo.InvariantCulture,
+                    "stage={0}{1}completed={2}{1}total={3}{1}percent={4:F2}{1}rate_per_second={5:F4}{1}stage_elapsed={6}{1}stage_eta={7}{1}total_elapsed={8}{1}",
+                    Stage,
+                    Environment.NewLine,
+                    Completed,
+                    Total,
+                    Total > 0 ? 100.0 * Completed / Total : 100.0,
+                    Rate,
+                    StageTimer.Elapsed.ToString("c", CultureInfo.InvariantCulture),
+                    Eta,
+                    RunTimer.Elapsed.ToString("c", CultureInfo.InvariantCulture));
+                File.WriteAllText(ProgressPath, ProgressText);
+                OriginalOutput.WriteLine(ProgressText.Replace(Environment.NewLine, " ").Trim());
+                OriginalOutput.Flush();
+                ProgressWriteTimer.Restart();
+            }
+        }
+        try
+        {
+            Console.SetOut(TextWriter.Null);
+            Plan = BuildRoute(AgdPath);
+            Double BladeM = Constants.DEFAULT_BLADE_WIDTH_MM / 1000.0;
+            Passes = BuildWholePlanPasses(
+                Plan.Route, Plan.Grid, BladeM, true,
+                PassLimit,
+                Progress: WriteProgress,
+                Diagnostic: Message =>
+                {
+                    PlanningDiagnostics.Add(Message);
+                    OriginalOutput.WriteLine(Message);
+                    OriginalOutput.Flush();
+                },
+                StopOnFailure: true);
+            Lifecycle = ExperimentalLifecyclePlanner.Build(
+                Passes,
+                true,
+                Constants.DEFAULT_EQUIPMENT_LENGTH_FT * Constants.FEET_TO_METERS,
+                Constants.DEFAULT_TURNING_CIRCLE_FT * 0.5 * Constants.FEET_TO_METERS,
+                Math.Min(0.5, Plan.Grid.GridSizeM),
+                Plan.Grid,
+                (Completed, Total) => WriteProgress(
+                    "lifecycle", Completed, Total),
+                FillSequencesPrepared: true);
+        }
+        catch (Exception Error)
+        {
+            String FailureText = String.Format(
+                CultureInfo.InvariantCulture,
+                "WHOLE FIELD GUIDANCE REPORT{0}agd={1}{0}lifecycle_success=False{0}elapsed_minutes={2:F2}{0}failure=unhandled_exception{0}exception={3}{0}",
+                Environment.NewLine,
+                AgdPath,
+                RunTimer.Elapsed.TotalMinutes,
+                Error);
+            File.WriteAllText(ReportPath, FailureText);
+            File.WriteAllText(
+                ProgressPath,
+                String.Format(
+                    CultureInfo.InvariantCulture,
+                    "stage=failed{0}total_elapsed={1}{0}failure=unhandled_exception{0}",
+                    Environment.NewLine,
+                    RunTimer.Elapsed.ToString("c", CultureInfo.InvariantCulture)));
+            OriginalOutput.WriteLine(FailureText);
+            OriginalOutput.WriteLine("report_path={0}", ReportPath);
+            OriginalOutput.Flush();
+            return 1;
+        }
+        finally
+        {
+            Console.SetOut(OriginalOutput);
+        }
+
+        ExperimentalGuidanceTiming.Result Timing = ExperimentalGuidanceTiming.Estimate(
+            Lifecycle,
+            new ExperimentalGuidanceTiming.Options
+            {
+                FieldEfficiency = Constants.DEFAULT_FIELD_EFFICIENCY,
+            });
+        ExperimentalFieldEdgePolicy EdgePolicy =
+            new ExperimentalFieldEdgePolicy(Plan.Grid, Plan.Grid.GridSizeM);
+        List<(Int32 SegmentIndex, ExperimentalLifecyclePlanner.Segment Segment,
+            Double DistanceM, Boolean Exterior, Boolean BeyondAllowance,
+            ExperimentalLifecyclePlanner.Phase Previous,
+            ExperimentalLifecyclePlanner.Phase Next)> Manual =
+                new List<(Int32, ExperimentalLifecyclePlanner.Segment, Double,
+                    Boolean, Boolean, ExperimentalLifecyclePlanner.Phase,
+                    ExperimentalLifecyclePlanner.Phase)>();
+        for (Int32 SegmentIndex = 0;
+            SegmentIndex < Lifecycle.Segments.Count;
+            SegmentIndex += 1)
+        {
+            ExperimentalLifecyclePlanner.Segment Segment =
+                Lifecycle.Segments[SegmentIndex];
+            if (Segment.Phase != ExperimentalLifecyclePlanner.Phase.ManualAssist) continue;
+            ExperimentalLifecyclePlanner.Phase Previous = SegmentIndex > 0
+                ? Lifecycle.Segments[SegmentIndex - 1].Phase
+                : ExperimentalLifecyclePlanner.Phase.Start;
+            ExperimentalLifecyclePlanner.Phase Next =
+                SegmentIndex + 1 < Lifecycle.Segments.Count
+                    ? Lifecycle.Segments[SegmentIndex + 1].Phase
+                    : ExperimentalLifecyclePlanner.Phase.End;
+            Manual.Add((
+                SegmentIndex,
+                Segment,
+                PolylineDistance(Segment.Points),
+                Segment.Points.Any(Point =>
+                    !Plan.Grid.ContainsWorldXy(Point.X, Point.Y)),
+                Segment.Points.Any(Point =>
+                    !EdgePolicy.ContainsWithExteriorAllowance(Point.X, Point.Y)),
+                Previous,
+                Next));
+        }
+
+        List<Double> ManualDistancesM = Manual
+            .Select(Item => Item.DistanceM)
+            .OrderBy(DistanceM => DistanceM)
+            .ToList();
+        Double ManualDistanceM = ManualDistancesM.Sum();
+        Double MaximumGapM = 0.0;
+        for (Int32 SegmentIndex = 1;
+            SegmentIndex < Lifecycle.Segments.Count;
+            SegmentIndex += 1)
+        {
+            List<(Double X, Double Y)> Previous =
+                Lifecycle.Segments[SegmentIndex - 1].Points;
+            List<(Double X, Double Y)> Current =
+                Lifecycle.Segments[SegmentIndex].Points;
+            if ((Previous.Count == 0) || (Current.Count == 0)) continue;
+            MaximumGapM = Math.Max(
+                MaximumGapM,
+                Distance(Previous[Previous.Count - 1], Current[0]));
+        }
+        Int32 BeyondAllowanceSegments = Lifecycle.Segments.Count(Segment =>
+            Segment.Points.Any(Point =>
+                !EdgePolicy.ContainsWithExteriorAllowance(Point.X, Point.Y)));
+        Int32 OmittedCells = Passes.Sum(Pass =>
+            Pass.CutOmittedCellCount + Pass.FillOmittedCellCount);
+        Double StraightCoverageShortfallM = Passes
+            .SelectMany(Pass => Pass.Cut.Runs.Concat(Pass.Fill.Runs))
+            .Sum(Run => Run.StartCoverageShortfallM + Run.EndCoverageShortfallM);
+        (Int64 Hits, Int64 Misses, Int32 Entries,
+            Int32 RetainedEntries, Int64 Clears) TransitCache =
+            ExperimentalTransitPlanner.GetCacheStatistics();
+        (Int64 Calls, Int64 Successes, Int64 ExpansionLimitHits,
+            Int64 Expansions, Int64 MaximumSuccessExpansions,
+            Double ElapsedSeconds) ForwardDetours =
+            ExperimentalTransitPlanner.GetForwardDetourStatistics();
+
+        StringBuilder Report = new StringBuilder();
+        Report.AppendLine("WHOLE FIELD GUIDANCE REPORT");
+        Report.AppendLine(String.Format(
+            CultureInfo.InvariantCulture,
+            "agd={0}", AgdPath));
+        Report.AppendLine(String.Format(
+            CultureInfo.InvariantCulture,
+            "routes={0} grade_return=true lifecycle_success={1}",
+            Passes.Count,
+            Lifecycle.Success));
+        Report.AppendLine(String.Format(
+            CultureInfo.InvariantCulture,
+            "manual_interventions={0} manual_segments={1} manual_distance_m={2:F1} manual_distance_mi={3:F2} manual_percent_distance={4:F3}",
+            Lifecycle.ManualAssistCount,
+            Manual.Count,
+            ManualDistanceM,
+            ManualDistanceM / 1609.344,
+            Lifecycle.DistanceM > 0.0 ? 100.0 * ManualDistanceM / Lifecycle.DistanceM : 0.0));
+        Report.AppendLine(String.Format(
+            CultureInfo.InvariantCulture,
+            "manual_exterior={0} manual_in_field_alignment={1} manual_beyond_allowance={2}",
+            Manual.Count(Item => Item.Exterior),
+            Manual.Count(Item => !Item.Exterior),
+            Manual.Count(Item => Item.BeyondAllowance)));
+        Report.AppendLine(String.Format(
+            CultureInfo.InvariantCulture,
+            "manual_length_m_min={0:F1} median={1:F1} p90={2:F1} max={3:F1}",
+            Percentile(ManualDistancesM, 0.0),
+            Percentile(ManualDistancesM, 0.5),
+            Percentile(ManualDistancesM, 0.9),
+            Percentile(ManualDistancesM, 1.0)));
+        Report.AppendLine(String.Format(
+            CultureInfo.InvariantCulture,
+            "total_segments={0} total_distance_m={1:F1} total_distance_mi={2:F2} modeled_hours={3:F2}",
+            Lifecycle.Segments.Count,
+            Lifecycle.DistanceM,
+            Lifecycle.DistanceM / 1609.344,
+            Timing.TotalSeconds / 3600.0));
+        Report.AppendLine(String.Format(
+            CultureInfo.InvariantCulture,
+            "max_segment_gap_m={0:F6} segments_beyond_one_cell_allowance={1}",
+            MaximumGapM,
+            BeyondAllowanceSegments));
+        Report.AppendLine(String.Format(
+            CultureInfo.InvariantCulture,
+            "guidance_omitted_cells={0} nominal_straight_coverage_shortfall_m={1:F1}",
+            OmittedCells,
+            StraightCoverageShortfallM));
+        Report.AppendLine(String.Format(
+            CultureInfo.InvariantCulture,
+            "edge_patch_omitted_cut_cells={0} edge_patch_omitted_cut_bcy={1:F2}",
+            Plan.EdgeOmission.OmittedCutCells.Count,
+            Plan.EdgeOmission.OmittedCutBcy));
+        Report.AppendLine(String.Format(
+            CultureInfo.InvariantCulture,
+            "elapsed_minutes={0:F2} failure={1}",
+            RunTimer.Elapsed.TotalMinutes,
+            Lifecycle.FailureReason));
+        Report.AppendLine(String.Format(
+            CultureInfo.InvariantCulture,
+            "transit_cache_hits={0} transit_cache_misses={1} transit_cache_entries={2} retained_entries={3} clears={4} hit_percent={5:F1}",
+            TransitCache.Hits,
+            TransitCache.Misses,
+            TransitCache.Entries,
+            TransitCache.RetainedEntries,
+            TransitCache.Clears,
+            (TransitCache.Hits + TransitCache.Misses) > 0
+                ? 100.0 * TransitCache.Hits
+                    / (TransitCache.Hits + TransitCache.Misses)
+                : 0.0));
+        Report.AppendLine(String.Format(
+            CultureInfo.InvariantCulture,
+            "forward_detour_calls={0} successes={1} expansion_limit_hits={2} expansions={3} max_success_expansions={4} elapsed_seconds={5:F2} avg_expansions={6:F1}",
+            ForwardDetours.Calls,
+            ForwardDetours.Successes,
+            ForwardDetours.ExpansionLimitHits,
+            ForwardDetours.Expansions,
+            ForwardDetours.MaximumSuccessExpansions,
+            ForwardDetours.ElapsedSeconds,
+            ForwardDetours.Calls > 0
+                ? ForwardDetours.Expansions / (Double)ForwardDetours.Calls
+                : 0.0));
+        Report.AppendLine("planning_diagnostics:");
+        foreach (String Diagnostic in PlanningDiagnostics)
+        {
+            Report.AppendLine("  " + Diagnostic);
+        }
+        Report.AppendLine("manual_phase_pairs:");
+        foreach (IGrouping<(ExperimentalLifecyclePlanner.Phase Previous,
+            ExperimentalLifecyclePlanner.Phase Next),
+            (Int32 SegmentIndex, ExperimentalLifecyclePlanner.Segment Segment,
+                Double DistanceM, Boolean Exterior, Boolean BeyondAllowance,
+                ExperimentalLifecyclePlanner.Phase Previous,
+                ExperimentalLifecyclePlanner.Phase Next)> Group in Manual
+                    .GroupBy(Item => (Item.Previous, Item.Next))
+                    .OrderByDescending(Group => Group.Count()))
+        {
+            Report.AppendLine(String.Format(
+                CultureInfo.InvariantCulture,
+                "  {0}->{1}: count={2} distance_m={3:F1}",
+                Group.Key.Previous,
+                Group.Key.Next,
+                Group.Count(),
+                Group.Sum(Item => Item.DistanceM)));
+        }
+        Report.AppendLine("longest_manual_interventions:");
+        foreach ((Int32 SegmentIndex, ExperimentalLifecyclePlanner.Segment Segment,
+            Double DistanceM, Boolean Exterior, Boolean BeyondAllowance,
+            ExperimentalLifecyclePlanner.Phase Previous,
+            ExperimentalLifecyclePlanner.Phase Next) Item in Manual
+                .OrderByDescending(Item => Item.DistanceM)
+                .Take(20))
+        {
+            (Double X, Double Y) Start = Item.Segment.Points[0];
+            (Double X, Double Y) End =
+                Item.Segment.Points[Item.Segment.Points.Count - 1];
+            Report.AppendLine(String.Format(
+                CultureInfo.InvariantCulture,
+                "  segment={0} {1}->{2} length_m={3:F1} exterior={4} beyond_allowance={5} start=({6:F1},{7:F1}) end=({8:F1},{9:F1})",
+                Item.SegmentIndex,
+                Item.Previous,
+                Item.Next,
+                Item.DistanceM,
+                Item.Exterior,
+                Item.BeyondAllowance,
+                Start.X,
+                Start.Y,
+                End.X,
+                End.Y));
+        }
+
+        File.WriteAllText(ReportPath, Report.ToString());
+        Console.Write(Report.ToString());
+        Console.WriteLine("report_path=" + ReportPath);
+        return Lifecycle.Success && (BeyondAllowanceSegments == 0) ? 0 : 1;
+    }
+
+    /// <summary>
+    /// Builds only the parallel straight-coverage stage and records the work-run
+    /// counts that determine sequencing search complexity.
+    /// </summary>
+    /// <param name="Args">Optional AGD path followed by CSV path.</param>
+    /// <returns>Zero after the complete coverage inventory is written.</returns>
+    static public Int32 ProfileGuidanceCoverage
+        (
+        String[] Args
+        )
+    {
+        String RepoRoot = Path.GetFullPath(Path.Combine(
+            AppContext.BaseDirectory, "..", "..", "..", "..", ".."));
+        String AgdPath = (Args.Length > 0)
+            ? Path.GetFullPath(Args[0])
+            : Path.Combine(RepoRoot, "DotNET", "TheShop2_2ft.agd");
+        String CsvPath = (Args.Length > 1)
+            ? Path.GetFullPath(Args[1])
+            : Path.Combine(
+                RepoRoot,
+                "assets",
+                "theshop2_experimental_coverage",
+                "whole_field_coverage_profile.csv");
+        String? CsvDirectory = Path.GetDirectoryName(CsvPath);
+        if (!String.IsNullOrWhiteSpace(CsvDirectory))
+        {
+            Directory.CreateDirectory(CsvDirectory);
+        }
+
+        Stopwatch Timer = Stopwatch.StartNew();
+        (AgdField Field, Grid Grid, Route Route, Double HeadingDeg,
+            EdgePatchOmissionResult EdgeOmission) Plan = BuildRoute(AgdPath);
+        Double BladeM = Constants.DEFAULT_BLADE_WIDTH_MM / 1000.0;
+        Int32 PassCount = Plan.Route.OrderedPasses.Count;
+        ExperimentalCoveragePlanner.PlanResult?[] Cuts =
+            new ExperimentalCoveragePlanner.PlanResult?[PassCount];
+        ExperimentalCoveragePlanner.PlanResult?[] Fills =
+            new ExperimentalCoveragePlanner.PlanResult?[PassCount];
+        Parallel.For(0, PassCount, PassIndex =>
+        {
+            Pass Pass = Plan.Route.OrderedPasses[PassIndex];
+            ExperimentalCoveragePlanner.PlanResult Cut =
+                ExperimentalCoveragePlanner.Plan(
+                    Pass.CutCells, Plan.Grid, BladeM, null, Pass.FillStartXy);
+            (Double X, Double Y)? FillAnchor = Cut.Runs.Count == 0
+                ? null
+                : Cut.Runs[Cut.Runs.Count - 1].EndXy;
+            Cuts[PassIndex] = Cut;
+            Fills[PassIndex] = ExperimentalCoveragePlanner.Plan(
+                Pass.FillCells, Plan.Grid, BladeM, FillAnchor, null);
+        });
+
+        StringBuilder Csv = new StringBuilder();
+        Csv.AppendLine("pass,cut_cells,fill_cells,cut_runs,fill_runs,cut_omitted,fill_omitted,max_runs");
+        List<Int32> MaximumRunCounts = new List<Int32>(PassCount);
+        for (Int32 PassIndex = 0; PassIndex < PassCount; PassIndex += 1)
+        {
+            Pass Pass = Plan.Route.OrderedPasses[PassIndex];
+            ExperimentalCoveragePlanner.PlanResult Cut = Cuts[PassIndex]
+                ?? throw new InvalidOperationException("Coverage inventory omitted cut work.");
+            ExperimentalCoveragePlanner.PlanResult Fill = Fills[PassIndex]
+                ?? throw new InvalidOperationException("Coverage inventory omitted fill work.");
+            Int32 MaximumRuns = Math.Max(Cut.Runs.Count, Fill.Runs.Count);
+            MaximumRunCounts.Add(MaximumRuns);
+            Csv.AppendLine(String.Format(
+                CultureInfo.InvariantCulture,
+                "{0},{1},{2},{3},{4},{5},{6},{7}",
+                PassIndex + 1,
+                Pass.CutCells.Count,
+                Pass.FillCells.Count,
+                Cut.Runs.Count,
+                Fill.Runs.Count,
+                Cut.OmittedCells.Count,
+                Fill.OmittedCells.Count,
+                MaximumRuns));
+        }
+        File.WriteAllText(CsvPath, Csv.ToString());
+
+        Console.WriteLine(String.Format(
+            CultureInfo.InvariantCulture,
+            "coverage_profile passes={0} elapsed_s={1:F2} max_runs={2} passes_over_exact_5={3} passes_over_fallback_7={4} passes_over_10={5}",
+            PassCount,
+            Timer.Elapsed.TotalSeconds,
+            MaximumRunCounts.Max(),
+            MaximumRunCounts.Count(Count => Count > 5),
+            MaximumRunCounts.Count(Count => Count > 7),
+            MaximumRunCounts.Count(Count => Count > 10)));
+        Console.WriteLine("coverage_profile_path=" + CsvPath);
+        return 0;
+    }
+
+    /// <summary>Runs one exact field connector diagnostic without sequencing routes.</summary>
+    /// <param name="Args">AGD path and start/end X, Y, heading values.</param>
+    /// <returns>Zero when a forward connector succeeds.</returns>
+    static public Int32 DiagnoseGuidanceConnector
+        (
+        String[] Args
+        )
+    {
+        if (Args.Length < 7)
+        {
+            Console.Error.WriteLine(
+                "usage: --diagnose-guidance-connector agd start_x start_y start_heading end_x end_y end_heading");
+            return 2;
+        }
+        String AgdPath = Path.GetFullPath(Args[0]);
+        Double[] Values = Args.Skip(1).Take(6)
+            .Select(Value => Double.Parse(
+                Value, NumberStyles.Float, CultureInfo.InvariantCulture))
+            .ToArray();
+        (AgdField Field, Grid Grid, Route Route, Double HeadingDeg,
+            EdgePatchOmissionResult EdgeOmission) Plan = BuildRoute(AgdPath);
+        ExperimentalConnectorPlanner.Pose Start =
+            new ExperimentalConnectorPlanner.Pose(
+                Values[0], Values[1], Values[2]);
+        ExperimentalConnectorPlanner.Pose End =
+            new ExperimentalConnectorPlanner.Pose(
+                Values[3], Values[4], Values[5]);
+        Double RadiusM = Constants.DEFAULT_TURNING_CIRCLE_FT * 0.5
+            * Constants.FEET_TO_METERS;
+        Double SampleSpacingM = Math.Min(0.5, Plan.Grid.GridSizeM);
+        foreach (Boolean AllowForwardDetour in new[] { false, true })
+        {
+            Stopwatch Timer = Stopwatch.StartNew();
+            ExperimentalTransitPlanner.Result Result =
+                ExperimentalTransitPlanner.Connect(
+                    Start,
+                    End,
+                    RadiusM,
+                    SampleSpacingM,
+                    Plan.Grid,
+                    EdgeAllowanceM: Plan.Grid.GridSizeM,
+                    AllowForwardDetour: AllowForwardDetour);
+            Console.WriteLine(String.Format(
+                CultureInfo.InvariantCulture,
+                "connector detour={0} success={1} mode={2} length_m={3:F2} manual_m={4:F2} leaves_field={5} points={6} elapsed_s={7:F3} reason={8}",
+                AllowForwardDetour,
+                Result.Success,
+                Result.Mode,
+                Result.LengthM,
+                Result.ManualAssistDistanceM,
+                Result.LeavesField,
+                Result.Points.Count,
+                Timer.Elapsed.TotalSeconds,
+                Result.FailureReason));
+        }
+        foreach (Double HeadingDeg in new[] { 0.0, 90.0, 180.0, 270.0 })
+        {
+            Double HeadingRad = HeadingDeg * Math.PI / 180.0;
+            Double ClearanceM = 0.0;
+            for (Double DistanceM = SampleSpacingM;
+                DistanceM <= 100.0;
+                DistanceM += SampleSpacingM)
+            {
+                if (!Plan.Grid.ContainsWorldXy(
+                    Start.X + (Math.Sin(HeadingRad) * DistanceM),
+                    Start.Y + (Math.Cos(HeadingRad) * DistanceM)))
+                {
+                    break;
+                }
+                ClearanceM = DistanceM;
+            }
+            Console.WriteLine(String.Format(
+                CultureInfo.InvariantCulture,
+                "clearance heading={0:F0} distance_m={1:F1}",
+                HeadingDeg,
+                ClearanceM));
+        }
+        return ExperimentalTransitPlanner.Connect(
+            Start,
+            End,
+            RadiusM,
+            SampleSpacingM,
+            Plan.Grid,
+            EdgeAllowanceM: Plan.Grid.GridSizeM,
+            AllowForwardDetour: true).Success ? 0 : 1;
     }
 
     /// <summary>
@@ -955,7 +1502,10 @@ internal static class CompareExperimentalCoverage
         Grid Grid,
         Double BladeM,
         Boolean GradeReturn,
-        Int32? PassLimit = null
+        Int32? PassLimit = null,
+        Action<String, Int32, Int32>? Progress = null,
+        Action<String>? Diagnostic = null,
+        Boolean StopOnFailure = false
         )
     {
         Int32 PassCount = PassLimit.HasValue
@@ -972,6 +1522,8 @@ internal static class CompareExperimentalCoverage
         ExperimentalRunSequencer.Result?[] PreselectedFillSequences =
             new ExperimentalRunSequencer.Result?[PassCount];
         String?[] Failures = new String?[PassCount];
+        Int32 CoverageCompleted = 0;
+        Progress?.Invoke("coverage", 0, PassCount);
         Parallel.For(0, PassCount, PassIndex =>
         {
             Pass Pass = Route.OrderedPasses[PassIndex];
@@ -984,16 +1536,45 @@ internal static class CompareExperimentalCoverage
                 Pass.FillCells, Grid, BladeM, FillAnchor, null);
             CutPlans[PassIndex] = Cut;
             FillPlans[PassIndex] = Fill;
+            Progress?.Invoke(
+                "coverage",
+                Interlocked.Increment(ref CoverageCompleted),
+                PassCount);
         });
         List<ExperimentalLifecyclePlanner.PassPlan> Output =
             new List<ExperimentalLifecyclePlanner.PassPlan>(PassCount);
         ExperimentalConnectorPlanner.Pose? Current = null;
+        Progress?.Invoke("sequencing", 0, PassCount);
         for (Int32 PassIndex = 0; PassIndex < PassCount; PassIndex += 1)
         {
+            Stopwatch PassTimer = Stopwatch.StartNew();
+            Stopwatch StageTimer = Stopwatch.StartNew();
+            void ReportStage(String Stage)
+            {
+                if (StageTimer.Elapsed >= TimeSpan.FromSeconds(0.25))
+                {
+                    Diagnostic?.Invoke(String.Format(
+                        CultureInfo.InvariantCulture,
+                        "whole_plan pass_stage pass={0} stage={1} elapsed_s={2:F3}",
+                        PassIndex + 1,
+                        Stage,
+                        StageTimer.Elapsed.TotalSeconds));
+                }
+                StageTimer.Restart();
+            }
             ExperimentalCoveragePlanner.PlanResult Cut = CutPlans[PassIndex]
                 ?? throw new InvalidOperationException("Parallel coverage construction omitted cut work.");
             ExperimentalCoveragePlanner.PlanResult Fill = FillPlans[PassIndex]
                 ?? throw new InvalidOperationException("Parallel coverage construction omitted fill work.");
+            Progress?.Invoke(
+                String.Format(
+                    CultureInfo.InvariantCulture,
+                    "sequencing pass={0} cut_runs={1} fill_runs={2}",
+                    PassIndex + 1,
+                    Cut.Runs.Count,
+                    Fill.Runs.Count),
+                PassIndex,
+                PassCount);
             Console.WriteLine(String.Format(
                 CultureInfo.InvariantCulture,
                 "whole_plan pass={0} cut_runs={1} fill_runs={2} cut_omitted={3} fill_omitted={4}",
@@ -1025,12 +1606,14 @@ internal static class CompareExperimentalCoverage
                     break;
                 }
             }
+            ReportStage("initial_fill_and_grade_selection");
             ExperimentalConnectorPlanner.Pose? FillEntry = FillSequence.Runs.Count == 0
                 ? null
                 : FillSequence.Runs[0].EntryPose;
-            ExperimentalConnectorPlanner.Pose? CutSearchStart = GradeReturn
-                ? null
-                : Current;
+            // The next cut is part of the same continuous forward-only track.
+            // Anchor its ordering to the actual post-grade pose so final
+            // connectivity is selected, not merely checked after the fact.
+            ExperimentalConnectorPlanner.Pose? CutSearchStart = Current;
             ExperimentalRunSequencer.Result CutSequence = BuildSequence(
                 Cut.Runs, Grid, CutSearchStart, FillEntry);
             if (!CutSequence.Success || !SequencesConnect(CutSequence, FillSequence, Grid))
@@ -1041,7 +1624,8 @@ internal static class CompareExperimentalCoverage
                         Grid,
                         BladeM,
                         Current.HasValue ? (Current.Value.X, Current.Value.Y) : null,
-                        FillEntry.HasValue ? (FillEntry.Value.X, FillEntry.Value.Y) : null))
+                        FillEntry.HasValue ? (FillEntry.Value.X, FillEntry.Value.Y) : null)
+                    .Take(MAX_INITIAL_CUT_CANDIDATE_ATTEMPTS))
                 {
                     ExperimentalRunSequencer.Result CandidateSequence = BuildSequence(
                         Candidate.Runs, Grid, CutSearchStart, FillEntry);
@@ -1052,6 +1636,7 @@ internal static class CompareExperimentalCoverage
                     break;
                 }
             }
+            ReportStage("initial_cut_selection");
             if (!CutSequence.Success || !SequencesConnect(CutSequence, FillSequence, Grid))
             {
                 List<ExperimentalCoveragePlanner.PlanResult> FillCandidates =
@@ -1067,10 +1652,45 @@ internal static class CompareExperimentalCoverage
                         Current.HasValue ? (Current.Value.X, Current.Value.Y) : null,
                         null);
                 Boolean SelectedPair = false;
-                foreach (ExperimentalCoveragePlanner.PlanResult FillCandidate in FillCandidates)
+                Int32 SelectedFillIndex = -1;
+                Int32 SelectedCutIndex = -1;
+                Int32 PairAttempts = 0;
+                Diagnostic?.Invoke(String.Format(
+                    CultureInfo.InvariantCulture,
+                    "whole_plan pair_candidates pass={0} fills={1} cuts={2}",
+                    PassIndex + 1,
+                    FillCandidates.Count,
+                    CutCandidates.Count));
+                ExperimentalRunSequencer.Result?[] ProvisionalFillSequences =
+                    new ExperimentalRunSequencer.Result?[FillCandidates.Count];
+                List<(Int32 FillIndex, Int32 CutIndex)> CandidatePairs =
+                    Enumerable.Range(
+                        0,
+                        CutCandidates.Count + FillCandidates.Count - 1)
+                        .SelectMany(RankSum =>
+                            Enumerable.Range(
+                                Math.Max(0, RankSum - FillCandidates.Count + 1),
+                                Math.Min(CutCandidates.Count - 1, RankSum)
+                                    - Math.Max(
+                                        0,
+                                        RankSum - FillCandidates.Count + 1)
+                                    + 1)
+                                .Select(CutIndex =>
+                                    (FillIndex: RankSum - CutIndex, CutIndex)))
+                        .ToList();
+                foreach ((Int32 FillIndex, Int32 CutIndex) Pair in CandidatePairs)
                 {
+                    if (PairAttempts >= MAX_PAIRED_CANDIDATE_ATTEMPTS) break;
+                    PairAttempts += 1;
+                    ExperimentalCoveragePlanner.PlanResult FillCandidate =
+                        FillCandidates[Pair.FillIndex];
+                    ExperimentalCoveragePlanner.PlanResult CutCandidate =
+                        CutCandidates[Pair.CutIndex];
                     ExperimentalRunSequencer.Result ProvisionalFillSequence =
-                        BuildSequence(FillCandidate.Runs, Grid);
+                        ProvisionalFillSequences[Pair.FillIndex]
+                            ?? BuildSequence(FillCandidate.Runs, Grid);
+                    ProvisionalFillSequences[Pair.FillIndex] =
+                        ProvisionalFillSequence;
                     if (!ProvisionalFillSequence.Success
                         || (ProvisionalFillSequence.Runs.Count == 0))
                     {
@@ -1078,48 +1698,72 @@ internal static class CompareExperimentalCoverage
                     }
                     ExperimentalConnectorPlanner.Pose CandidateFillEntry =
                         ProvisionalFillSequence.Runs[0].EntryPose;
-                    foreach (ExperimentalCoveragePlanner.PlanResult CutCandidate in CutCandidates)
+                    ExperimentalRunSequencer.Result CandidateCutSequence =
+                        BuildSequence(
+                            CutCandidate.Runs,
+                            Grid,
+                            CutSearchStart,
+                            CandidateFillEntry);
+                    if (!CandidateCutSequence.Success
+                        || (CandidateCutSequence.Runs.Count == 0))
                     {
-                        ExperimentalRunSequencer.Result CandidateCutSequence =
-                            BuildSequence(
-                                CutCandidate.Runs,
-                                Grid,
-                                CutSearchStart,
-                                CandidateFillEntry);
-                        if (!CandidateCutSequence.Success
-                            || (CandidateCutSequence.Runs.Count == 0))
-                        {
-                            continue;
-                        }
-                        ExperimentalConnectorPlanner.Pose CandidateCutExit =
-                            CandidateCutSequence.Runs[
-                                CandidateCutSequence.Runs.Count - 1].ExitPose;
-                        ExperimentalRunSequencer.Result CandidateFillSequence =
-                            BuildSequence(
-                                FillCandidate.Runs,
-                                Grid,
-                                CandidateCutExit,
-                                null);
-                        if (!CandidateFillSequence.Success
-                            || (GradeReturn
-                                && !SupportsGradeReturn(CandidateFillSequence, Grid))
-                            || !SequencesConnect(
-                                CandidateCutSequence,
-                                CandidateFillSequence,
-                                Grid))
-                        {
-                            continue;
-                        }
-                        Cut = CutCandidate;
-                        Fill = FillCandidate;
-                        CutSequence = CandidateCutSequence;
-                        FillSequence = CandidateFillSequence;
-                        SelectedPair = true;
-                        break;
+                        continue;
                     }
-                    if (SelectedPair) break;
+                    ExperimentalConnectorPlanner.Pose CandidateCutExit =
+                        CandidateCutSequence.Runs[
+                            CandidateCutSequence.Runs.Count - 1].ExitPose;
+                    ExperimentalRunSequencer.Result CandidateFillSequence =
+                        BuildSequence(
+                            FillCandidate.Runs,
+                            Grid,
+                            CandidateCutExit,
+                            null);
+                    if (GradeReturn
+                        && CandidateFillSequence.Success
+                        && (CandidateFillSequence.Runs.Count > 1))
+                    {
+                        CandidateFillSequence =
+                            ExperimentalLifecyclePlanner.BuildContinuousFillSequence(
+                                CandidateFillSequence,
+                                CandidateCutExit,
+                                Constants.DEFAULT_TURNING_CIRCLE_FT * 0.5
+                                    * Constants.FEET_TO_METERS,
+                                Math.Min(0.5, Grid.GridSizeM),
+                                Grid);
+                    }
+                    if (!CandidateFillSequence.Success
+                        || (GradeReturn
+                            && !SupportsGradeReturn(
+                                CandidateFillSequence,
+                                Grid,
+                                FillSequencePrepared: true))
+                        || !SequencesConnect(
+                            CandidateCutSequence,
+                            CandidateFillSequence,
+                            Grid))
+                    {
+                        continue;
+                    }
+                    Cut = CutCandidate;
+                    Fill = FillCandidate;
+                    CutSequence = CandidateCutSequence;
+                    FillSequence = CandidateFillSequence;
+                    SelectedPair = true;
+                    SelectedFillIndex = Pair.FillIndex;
+                    SelectedCutIndex = Pair.CutIndex;
+                    break;
                 }
+                Diagnostic?.Invoke(String.Format(
+                    CultureInfo.InvariantCulture,
+                    "whole_plan pair_result pass={0} attempts={1} selected={2} fill_index={3} cut_index={4} truncated={5}",
+                    PassIndex + 1,
+                    PairAttempts,
+                    SelectedPair,
+                    SelectedFillIndex,
+                    SelectedCutIndex,
+                    !SelectedPair && (PairAttempts < CandidatePairs.Count)));
             }
+            ReportStage("paired_cut_fill_recovery");
             if (CutSequence.Success
                 && (CutSequence.Runs.Count > 0)
                 && (Fill.Runs.Count > 0))
@@ -1189,6 +1833,7 @@ internal static class CompareExperimentalCoverage
                     PreselectedFillSequences[PassIndex + 1] = SelectedNextFillSequence;
                 }
             }
+            ReportStage("connected_and_adjacent_fill_selection");
             if (CutSequence.Success
                 && (CutSequence.Runs.Count == 0)
                 && Current.HasValue
@@ -1336,6 +1981,7 @@ internal static class CompareExperimentalCoverage
                     FillSequence = TrimmedFillSequence;
                 }
             }
+            ReportStage("fill_backtracking_and_omission");
             if (GradeReturn && FillSequence.Success && (FillSequence.Runs.Count > 1))
             {
                 ExperimentalConnectorPlanner.Pose? FillInbound =
@@ -1350,6 +1996,7 @@ internal static class CompareExperimentalCoverage
                     Math.Min(0.5, Grid.GridSizeM),
                     Grid);
             }
+            ReportStage("continuous_fill_compaction");
             if (!CutSequence.Success)
             {
                 CutSequence = BuildFlexibleSequence(
@@ -1381,6 +2028,31 @@ internal static class CompareExperimentalCoverage
                     }
                 }
             }
+            if (FillSequence.Success
+                && (FillSequence.Runs.Count > 0)
+                && (!CutSequence.Success
+                    || (CutSequence.Runs.Count == 0)
+                    || !SequencesConnect(CutSequence, FillSequence, Grid))
+                && TrySelectFeasibleCutCoverageCandidate(
+                    Route.OrderedPasses[PassIndex].CutCells,
+                    Grid,
+                    BladeM,
+                    CutSearchStart,
+                    FillSequence,
+                    out ExperimentalCoveragePlanner.PlanResult AlternativeCut,
+                    out ExperimentalRunSequencer.Result AlternativeCutSequence))
+            {
+                Diagnostic?.Invoke(String.Format(
+                    CultureInfo.InvariantCulture,
+                    "whole_plan alternative_cut_coverage pass={0} heading={1:F1} runs={2} omitted_cells={3}",
+                    PassIndex + 1,
+                    AlternativeCut.HeadingDeg,
+                    AlternativeCutSequence.Runs.Count,
+                    AlternativeCut.OmittedCells.Count));
+                Cut = AlternativeCut;
+                CutSequence = AlternativeCutSequence;
+            }
+            ReportStage("alternative_cut_coverage_recovery");
             if (CutSequence.Success
                 && (CutSequence.Runs.Count > 0)
                 && (!FillSequence.Success
@@ -1393,15 +2065,421 @@ internal static class CompareExperimentalCoverage
                     CutSequence.Runs[CutSequence.Runs.Count - 1].ExitPose,
                     null);
             }
+            ReportStage("flexible_sequence_recovery");
+            if (CutSequence.Success
+                && (Fill.Runs.Count > 0)
+                && (!FillSequence.Success
+                    || (FillSequence.Runs.Count == 0)
+                    || !SequencesConnect(CutSequence, FillSequence, Grid)))
+            {
+                ExperimentalConnectorPlanner.Pose? AlternativeFillStart =
+                    CutSequence.Runs.Count > 0
+                        ? CutSequence.Runs[
+                            CutSequence.Runs.Count - 1].ExitPose
+                        : Current;
+                if (AlternativeFillStart.HasValue
+                    && TrySelectFeasibleFillCoverageCandidate(
+                        Route.OrderedPasses[PassIndex].FillCells,
+                        Grid,
+                        BladeM,
+                        AlternativeFillStart.Value,
+                        GradeReturn,
+                        out ExperimentalCoveragePlanner.PlanResult AlternativeFill,
+                        out ExperimentalRunSequencer.Result AlternativeFillSequence))
+                {
+                    Diagnostic?.Invoke(String.Format(
+                        CultureInfo.InvariantCulture,
+                        "whole_plan alternative_fill_coverage pass={0} heading={1:F1} runs={2} omitted_cells={3}",
+                        PassIndex + 1,
+                        AlternativeFill.HeadingDeg,
+                        AlternativeFillSequence.Runs.Count,
+                        AlternativeFill.OmittedCells.Count));
+                    Fill = AlternativeFill;
+                    FillSequence = AlternativeFillSequence;
+                }
+            }
+            ReportStage("alternative_fill_coverage_recovery");
+            if (GradeReturn && FillSequence.Success && (FillSequence.Runs.Count > 1))
+            {
+                ExperimentalConnectorPlanner.Pose? FillInbound =
+                    CutSequence.Success && (CutSequence.Runs.Count > 0)
+                        ? CutSequence.Runs[CutSequence.Runs.Count - 1].ExitPose
+                        : Current;
+                FillSequence = ExperimentalLifecyclePlanner.BuildContinuousFillSequence(
+                    FillSequence,
+                    FillInbound,
+                    Constants.DEFAULT_TURNING_CIRCLE_FT * 0.5
+                        * Constants.FEET_TO_METERS,
+                    Math.Min(0.5, Grid.GridSizeM),
+                    Grid);
+            }
+            ReportStage("post_flexible_fill_compaction");
+            if (GradeReturn
+                && FillSequence.Success
+                && (FillSequence.Runs.Count > 0)
+                && !SupportsGradeReturn(
+                    FillSequence,
+                    Grid,
+                    FillSequencePrepared: true))
+            {
+                ExperimentalConnectorPlanner.Pose? GradeRecoveryStart =
+                    CutSequence.Runs.Count > 0
+                        ? CutSequence.Runs[
+                            CutSequence.Runs.Count - 1].ExitPose
+                        : Current;
+                ExperimentalCoveragePlanner.PlanResult GradeFill = Fill;
+                ExperimentalRunSequencer.Result GradeFillSequence =
+                    FillSequence;
+                Boolean GradeRecovered = GradeRecoveryStart.HasValue
+                    && TrySelectFeasibleFillCoverageCandidate(
+                        Route.OrderedPasses[PassIndex].FillCells,
+                        Grid,
+                        BladeM,
+                        GradeRecoveryStart.Value,
+                        true,
+                        out GradeFill,
+                        out GradeFillSequence);
+                if (GradeRecovered)
+                {
+                    Diagnostic?.Invoke(String.Format(
+                        CultureInfo.InvariantCulture,
+                        "whole_plan alternative_grade_coverage pass={0} heading={1:F1} runs={2} omitted_cells={3}",
+                        PassIndex + 1,
+                        GradeFill.HeadingDeg,
+                        GradeFillSequence.Runs.Count,
+                        GradeFill.OmittedCells.Count));
+                    Fill = GradeFill;
+                    FillSequence = GradeFillSequence;
+                }
+                else
+                {
+                    ExperimentalRunSequencer.SequencedRun LastFill =
+                        FillSequence.Runs[FillSequence.Runs.Count - 1];
+                    ExperimentalConnectorPlanner.Pose GradeEntry =
+                        new ExperimentalConnectorPlanner.Pose(
+                            LastFill.Run.EndXy.X,
+                            LastFill.Run.EndXy.Y,
+                            LastFill.Run.HeadingDeg + 180.0);
+                    ExperimentalTransitPlanner.Result GradeTurn =
+                        ExperimentalTransitPlanner.Connect(
+                            LastFill.ExitPose,
+                            GradeEntry,
+                            Constants.DEFAULT_TURNING_CIRCLE_FT * 0.5
+                                * Constants.FEET_TO_METERS,
+                            Math.Min(0.5, Grid.GridSizeM),
+                            Grid,
+                            EdgeAllowanceM: Grid.GridSizeM,
+                            AllowForwardDetour: true);
+                    ExperimentalFieldEdgePolicy GradeEdgePolicy =
+                        new ExperimentalFieldEdgePolicy(
+                            Grid, Grid.GridSizeM);
+                    Diagnostic?.Invoke(String.Format(
+                        CultureInfo.InvariantCulture,
+                        "whole_plan grade_turn_failure pass={0} fill_runs={1} work_end=({2:F2},{3:F2}) exit=({4:F2},{5:F2},{6:F1}) grade_entry_heading={7:F1} near_edge={8} reason={9}",
+                        PassIndex + 1,
+                        FillSequence.Runs.Count,
+                        LastFill.Run.EndXy.X,
+                        LastFill.Run.EndXy.Y,
+                        LastFill.ExitPose.X,
+                        LastFill.ExitPose.Y,
+                        LastFill.ExitPose.HeadingDeg,
+                        GradeEntry.HeadingDeg,
+                        GradeEdgePolicy.IsFieldPointNearOuterEdge(
+                            LastFill.Run.EndXy.X,
+                            LastFill.Run.EndXy.Y),
+                        GradeTurn.FailureReason));
+                    FillSequence = new ExperimentalRunSequencer.Result(
+                        false,
+                        FillSequence.Runs,
+                        FillSequence.Connectors,
+                        FillSequence.ConnectorDistanceM,
+                        FillSequence.MinimumLineupM,
+                        "Final fill sequence cannot execute its required grade return.");
+                }
+            }
+            ReportStage("final_grade_validation");
+            List<IReadOnlyCollection<(Int32 Bx, Int32 By)>>
+                InfeasibleCutRunCellSets =
+                    new List<IReadOnlyCollection<(Int32, Int32)>>();
+            if (Current.HasValue
+                && FillSequence.Success
+                && (FillSequence.Runs.Count > 0)
+                && (!CutSequence.Success
+                    || (CutSequence.Runs.Count == 0)
+                    || !SequencesConnect(CutSequence, FillSequence, Grid)))
+            {
+                ExperimentalRunSequencer.Result DetourCutSequence =
+                    ExperimentalRunSequencer.OptimizeFlexibleEndpoints(
+                        Cut.Runs,
+                        Current.Value,
+                        FillSequence.Runs[0].EntryPose,
+                        Constants.DEFAULT_EQUIPMENT_LENGTH_FT
+                            * Constants.FEET_TO_METERS,
+                        Constants.DEFAULT_TURNING_CIRCLE_FT * 0.5
+                            * Constants.FEET_TO_METERS,
+                        Math.Min(0.5, Grid.GridSizeM),
+                        Grid,
+                        AllowForwardDetour: true);
+                if (DetourCutSequence.Success
+                    && PoseConnectsToSequence(
+                        Current.Value, DetourCutSequence, Grid)
+                    && SequencesConnect(
+                        DetourCutSequence, FillSequence, Grid))
+                {
+                    CutSequence = DetourCutSequence;
+                    Diagnostic?.Invoke(String.Format(
+                        CultureInfo.InvariantCulture,
+                        "whole_plan infeasible_cut_forward_detour pass={0} runs={1} shortfall_m={2:F2}",
+                        PassIndex + 1,
+                        DetourCutSequence.Runs.Count,
+                        DetourCutSequence.Runs.Sum(Run =>
+                            Run.StartCoverageShortfallM
+                                + Run.EndCoverageShortfallM)));
+                }
+                else
+                {
+                    foreach (Int32 RunIndex in
+                        DetourCutSequence.InfeasibleRunIndices)
+                    {
+                        if ((RunIndex < 0) || (RunIndex >= Cut.Runs.Count))
+                        {
+                            continue;
+                        }
+                        InfeasibleCutRunCellSets.Add(Cut.Runs[RunIndex].Cells
+                            .Select(Entry => Entry.Cell)
+                            .Distinct()
+                            .ToList());
+                    }
+                    Diagnostic?.Invoke(String.Format(
+                        CultureInfo.InvariantCulture,
+                        "whole_plan infeasible_cut_forward_detour_failed pass={0} success={1} runs={2} start_connected={3} fill_connected={4} reason={5}",
+                        PassIndex + 1,
+                        DetourCutSequence.Success,
+                        DetourCutSequence.Runs.Count,
+                        DetourCutSequence.Success
+                            && PoseConnectsToSequence(
+                                Current.Value, DetourCutSequence, Grid),
+                        DetourCutSequence.Success
+                            && SequencesConnect(
+                                DetourCutSequence, FillSequence, Grid),
+                        DetourCutSequence.FailureReason));
+                }
+            }
+            if (Current.HasValue
+                && FillSequence.Success
+                && (FillSequence.Runs.Count > 0)
+                && (!CutSequence.Success
+                    || (CutSequence.Runs.Count == 0)
+                    || !SequencesConnect(CutSequence, FillSequence, Grid))
+                && TryCutWithMinimalAdditionalEdgeOmission(
+                    Route.OrderedPasses[PassIndex].CutCells,
+                    Grid,
+                    BladeM,
+                    Current.Value,
+                    Route.OrderedPasses[PassIndex].FillCells,
+                    Fill,
+                    FillSequence,
+                    GradeReturn,
+                    InfeasibleCutRunCellSets,
+                    out ExperimentalCoveragePlanner.PlanResult RecoveredCut,
+                    out ExperimentalRunSequencer.Result RecoveredCutSequence,
+                    out ExperimentalCoveragePlanner.PlanResult RecoveredFill,
+                    out ExperimentalRunSequencer.Result RecoveredFillSequence,
+                    Diagnostic))
+            {
+                Cut = RecoveredCut;
+                CutSequence = RecoveredCutSequence;
+                CutPlans[PassIndex] = RecoveredCut;
+                Fill = RecoveredFill;
+                FillSequence = RecoveredFillSequence;
+                FillPlans[PassIndex] = RecoveredFill;
+                Diagnostic?.Invoke(String.Format(
+                    CultureInfo.InvariantCulture,
+                    "whole_plan infeasible_cut_edge_omission pass={0} heading={1:F1} runs={2} omitted_cells={3}",
+                    PassIndex + 1,
+                    RecoveredCut.HeadingDeg,
+                    RecoveredCutSequence.Runs.Count,
+                    RecoveredCut.OmittedCells.Count));
+            }
             Boolean PreviousToFillConnected = !Current.HasValue
                 || (CutSequence.Runs.Count > 0)
                 || (FillSequence.Runs.Count == 0)
                 || PoseConnectsToSequence(
-                    Current.Value, FillSequence, Grid, GradeReturn);
+                    Current.Value, FillSequence, Grid);
             Boolean PreviousToCutConnected = !Current.HasValue
                 || (CutSequence.Runs.Count == 0)
                 || PoseConnectsToSequence(
-                    Current.Value, CutSequence, Grid, GradeReturn);
+                    Current.Value, CutSequence, Grid);
+            if (!PreviousToCutConnected
+                && Current.HasValue
+                && FillSequence.Success
+                && (FillSequence.Runs.Count > 0)
+                && TryCutWithMinimalAdditionalEdgeOmission(
+                    Route.OrderedPasses[PassIndex].CutCells,
+                    Grid,
+                    BladeM,
+                    Current.Value,
+                    Route.OrderedPasses[PassIndex].FillCells,
+                    Fill,
+                    FillSequence,
+                    GradeReturn,
+                    Array.Empty<IReadOnlyCollection<(Int32 Bx, Int32 By)>>(),
+                    out ExperimentalCoveragePlanner.PlanResult TrimmedCut,
+                    out ExperimentalRunSequencer.Result TrimmedCutSequence,
+                    out ExperimentalCoveragePlanner.PlanResult RecoveredInboundFill,
+                    out ExperimentalRunSequencer.Result RecoveredInboundFillSequence,
+                    Diagnostic))
+            {
+                Cut = TrimmedCut;
+                CutSequence = TrimmedCutSequence;
+                CutPlans[PassIndex] = TrimmedCut;
+                Fill = RecoveredInboundFill;
+                FillSequence = RecoveredInboundFillSequence;
+                FillPlans[PassIndex] = RecoveredInboundFill;
+                PreviousToCutConnected = true;
+                PreviousToFillConnected = true;
+                Diagnostic?.Invoke(String.Format(
+                    CultureInfo.InvariantCulture,
+                    "whole_plan inbound_cut_edge_omission pass={0} heading={1:F1} runs={2} omitted_cells={3}",
+                    PassIndex + 1,
+                    TrimmedCut.HeadingDeg,
+                    TrimmedCutSequence.Runs.Count,
+                    TrimmedCut.OmittedCells.Count));
+            }
+            if (!PreviousToCutConnected
+                && (PassIndex > 0)
+                && (Output.Count == PassIndex))
+            {
+                ExperimentalLifecyclePlanner.PassPlan PreviousPass =
+                    Output[PassIndex - 1];
+                if ((PreviousPass.Cut.Runs.Count > 0)
+                    && TryBacktrackPreviousFillAndCurrentPass(
+                        Route.OrderedPasses[PassIndex - 1].FillCells,
+                        Route.OrderedPasses[PassIndex].CutCells,
+                        Route.OrderedPasses[PassIndex].FillCells,
+                        Grid,
+                        BladeM,
+                        PreviousPass.Cut.Runs[
+                            PreviousPass.Cut.Runs.Count - 1].ExitPose,
+                        GradeReturn,
+                        out ExperimentalCoveragePlanner.PlanResult BacktrackedPreviousFill,
+                        out ExperimentalRunSequencer.Result BacktrackedPreviousSequence,
+                        out ExperimentalCoveragePlanner.PlanResult BacktrackedCut,
+                        out ExperimentalRunSequencer.Result BacktrackedCutSequence,
+                        out ExperimentalCoveragePlanner.PlanResult BacktrackedFill,
+                        out ExperimentalRunSequencer.Result BacktrackedFillSequence,
+                        Diagnostic))
+                {
+                    Output[PassIndex - 1] =
+                        new ExperimentalLifecyclePlanner.PassPlan(
+                            PreviousPass.Cut,
+                            BacktrackedPreviousSequence,
+                            PreviousPass.CutOmittedCellCount,
+                            BacktrackedPreviousFill.OmittedCells.Count);
+                    FillPlans[PassIndex - 1] = BacktrackedPreviousFill;
+                    CutPlans[PassIndex] = BacktrackedCut;
+                    FillPlans[PassIndex] = BacktrackedFill;
+                    Cut = BacktrackedCut;
+                    CutSequence = BacktrackedCutSequence;
+                    Fill = BacktrackedFill;
+                    FillSequence = BacktrackedFillSequence;
+                    Current = GradeReturn
+                        ? ReversePose(
+                            BacktrackedPreviousSequence.Runs[0].EntryPose)
+                        : BacktrackedPreviousSequence.Runs[
+                            BacktrackedPreviousSequence.Runs.Count - 1].ExitPose;
+                    PreviousToCutConnected = PoseConnectsToSequence(
+                        Current.Value, CutSequence, Grid);
+                    PreviousToFillConnected = (CutSequence.Runs.Count > 0)
+                        || (FillSequence.Runs.Count == 0)
+                        || PoseConnectsToSequence(
+                            Current.Value, FillSequence, Grid);
+                    Diagnostic?.Invoke(String.Format(
+                        CultureInfo.InvariantCulture,
+                        "whole_plan inbound_cut_backtrack pass={0} previous_fill_heading={1:F1} cut_heading={2:F1} fill_heading={3:F1} omitted_cells={4}",
+                        PassIndex + 1,
+                        BacktrackedPreviousFill.HeadingDeg,
+                        BacktrackedCut.HeadingDeg,
+                        BacktrackedFill.HeadingDeg,
+                        BacktrackedPreviousFill.OmittedCells.Count
+                            + BacktrackedCut.OmittedCells.Count
+                            + BacktrackedFill.OmittedCells.Count));
+                }
+            }
+            if (!PreviousToCutConnected
+                && (PassIndex > 0)
+                && (Output.Count == PassIndex))
+            {
+                ExperimentalLifecyclePlanner.PassPlan PreviousPass =
+                    Output[PassIndex - 1];
+                ExperimentalConnectorPlanner.Pose? PreviousIncoming =
+                    (PassIndex > 1)
+                        ? PassOutgoingPose(Output[PassIndex - 2], GradeReturn)
+                        : null;
+                if ((PreviousPass.Cut.Runs.Count > 0)
+                    && TryBacktrackPreviousCutAndCurrentPass(
+                        PreviousPass.Cut,
+                        Route.OrderedPasses[PassIndex - 1].FillCells,
+                        Route.OrderedPasses[PassIndex].CutCells,
+                        Route.OrderedPasses[PassIndex].FillCells,
+                        Grid,
+                        BladeM,
+                        PreviousIncoming,
+                        PreviousPass.Cut.Runs[
+                            PreviousPass.Cut.Runs.Count - 1].ExitPose,
+                        GradeReturn,
+                        out ExperimentalRunSequencer.Result DeeperPreviousCut,
+                        out ExperimentalCoveragePlanner.PlanResult DeeperPreviousFill,
+                        out ExperimentalRunSequencer.Result DeeperPreviousFillSequence,
+                        out ExperimentalCoveragePlanner.PlanResult DeeperCut,
+                        out ExperimentalRunSequencer.Result DeeperCutSequence,
+                        out ExperimentalCoveragePlanner.PlanResult DeeperFill,
+                        out ExperimentalRunSequencer.Result DeeperFillSequence,
+                        Diagnostic))
+                {
+                    Output[PassIndex - 1] =
+                        new ExperimentalLifecyclePlanner.PassPlan(
+                            DeeperPreviousCut,
+                            DeeperPreviousFillSequence,
+                            PreviousPass.CutOmittedCellCount,
+                            DeeperPreviousFill.OmittedCells.Count);
+                    FillPlans[PassIndex - 1] = DeeperPreviousFill;
+                    CutPlans[PassIndex] = DeeperCut;
+                    FillPlans[PassIndex] = DeeperFill;
+                    Cut = DeeperCut;
+                    CutSequence = DeeperCutSequence;
+                    Fill = DeeperFill;
+                    FillSequence = DeeperFillSequence;
+                    Current = GradeReturn
+                        ? ReversePose(
+                            DeeperPreviousFillSequence.Runs[0].EntryPose)
+                        : DeeperPreviousFillSequence.Runs[
+                            DeeperPreviousFillSequence.Runs.Count - 1].ExitPose;
+                    PreviousToCutConnected = PoseConnectsToSequence(
+                        Current.Value, CutSequence, Grid);
+                    PreviousToFillConnected = (CutSequence.Runs.Count > 0)
+                        || (FillSequence.Runs.Count == 0)
+                        || PoseConnectsToSequence(
+                            Current.Value, FillSequence, Grid);
+                    RetainSelectedLifecycleConnections(
+                        PreviousIncoming,
+                        DeeperPreviousCut,
+                        DeeperPreviousFillSequence,
+                        GradeReturn,
+                        Grid);
+                    Diagnostic?.Invoke(String.Format(
+                        CultureInfo.InvariantCulture,
+                        "whole_plan inbound_cut_deep_backtrack pass={0} previous_cut_runs={1} previous_fill_heading={2:F1} cut_heading={3:F1} fill_heading={4:F1} omitted_cells={5}",
+                        PassIndex + 1,
+                        DeeperPreviousCut.Runs.Count,
+                        DeeperPreviousFill.HeadingDeg,
+                        DeeperCut.HeadingDeg,
+                        DeeperFill.HeadingDeg,
+                        DeeperPreviousFill.OmittedCells.Count
+                            + DeeperCut.OmittedCells.Count
+                            + DeeperFill.OmittedCells.Count));
+                }
+            }
             if (!CutSequence.Success
                 || !FillSequence.Success
                 || !SequencesConnect(CutSequence, FillSequence, Grid)
@@ -1434,11 +2512,120 @@ internal static class CompareExperimentalCoverage
                     PreviousToCutConnected,
                     PreviousToFillConnected);
             }
+            ReportStage("final_connectivity_validation");
+            if ((Failures[PassIndex] == null)
+                && CutSequence.Success
+                && FillSequence.Success)
+            {
+                RetainSelectedLifecycleConnections(
+                    Current,
+                    CutSequence,
+                    FillSequence,
+                    GradeReturn,
+                    Grid);
+            }
             Output.Add(new ExperimentalLifecyclePlanner.PassPlan(
                 CutSequence,
                 FillSequence,
                 Cut.OmittedCells.Count,
                 Fill.OmittedCells.Count));
+            Progress?.Invoke("sequencing", PassIndex + 1, PassCount);
+            if ((PassTimer.Elapsed >= TimeSpan.FromSeconds(1.0))
+                || (Failures[PassIndex] != null))
+            {
+                Diagnostic?.Invoke(String.Format(
+                    CultureInfo.InvariantCulture,
+                    "whole_plan pass_timing pass={0} elapsed_s={1:F3} cut_runs={2} fill_runs={3} success={4}",
+                    PassIndex + 1,
+                    PassTimer.Elapsed.TotalSeconds,
+                    Cut.Runs.Count,
+                    Fill.Runs.Count,
+                    Failures[PassIndex] == null));
+            }
+            if (Failures[PassIndex] != null)
+            {
+                ExperimentalFieldEdgePolicy FailedEdgePolicy =
+                    new ExperimentalFieldEdgePolicy(Grid, Grid.GridSizeM);
+                for (Int32 RunIndex = 0;
+                    RunIndex < Cut.Runs.Count;
+                    RunIndex += 1)
+                {
+                    ExperimentalCoveragePlanner.Run FailedRun = Cut.Runs[RunIndex];
+                    Diagnostic?.Invoke(String.Format(
+                        CultureInfo.InvariantCulture,
+                        "whole_plan failed_cut_run pass={0} run={1} cells={2} length_m={3:F2} heading={4:F1} start=({5:F2},{6:F2}) end=({7:F2},{8:F2})",
+                        PassIndex + 1,
+                        RunIndex,
+                        FailedRun.Cells.Count,
+                        FailedRun.LengthM,
+                        FailedRun.HeadingDeg,
+                        FailedRun.StartXy.X,
+                        FailedRun.StartXy.Y,
+                        FailedRun.EndXy.X,
+                        FailedRun.EndXy.Y));
+                    foreach (((Int32 Bx, Int32 By) Cell, Double DepthM) Entry
+                        in FailedRun.Cells)
+                    {
+                        Boolean HasEdgeHeading =
+                            FailedEdgePolicy.TryGetParallelHeadingDeg(
+                                Entry.Cell,
+                                out Double EdgeHeadingDeg);
+                        Diagnostic?.Invoke(String.Format(
+                            CultureInfo.InvariantCulture,
+                            "whole_plan failed_cut_cell pass={0} run={1} cell=({2},{3}) edge={4} edge_heading={5}",
+                            PassIndex + 1,
+                            RunIndex,
+                            Entry.Cell.Bx,
+                            Entry.Cell.By,
+                            FailedEdgePolicy.IsEdgeWorkCell(Entry.Cell),
+                            HasEdgeHeading
+                                ? EdgeHeadingDeg.ToString(
+                                    "F1", CultureInfo.InvariantCulture)
+                                : "none"));
+                    }
+                }
+                for (Int32 RunIndex = 0;
+                    RunIndex < Fill.Runs.Count;
+                    RunIndex += 1)
+                {
+                    ExperimentalCoveragePlanner.Run FailedRun =
+                        Fill.Runs[RunIndex];
+                    Diagnostic?.Invoke(String.Format(
+                        CultureInfo.InvariantCulture,
+                        "whole_plan failed_fill_run pass={0} run={1} cells={2} length_m={3:F2} heading={4:F1} start=({5:F2},{6:F2}) end=({7:F2},{8:F2})",
+                        PassIndex + 1,
+                        RunIndex,
+                        FailedRun.Cells.Count,
+                        FailedRun.LengthM,
+                        FailedRun.HeadingDeg,
+                        FailedRun.StartXy.X,
+                        FailedRun.StartXy.Y,
+                        FailedRun.EndXy.X,
+                        FailedRun.EndXy.Y));
+                    foreach (((Int32 Bx, Int32 By) Cell, Double DepthM) Entry
+                        in FailedRun.Cells)
+                    {
+                        Boolean HasEdgeHeading =
+                            FailedEdgePolicy.TryGetParallelHeadingDeg(
+                                Entry.Cell,
+                                out Double EdgeHeadingDeg);
+                        Diagnostic?.Invoke(String.Format(
+                            CultureInfo.InvariantCulture,
+                            "whole_plan failed_fill_cell pass={0} run={1} cell=({2},{3}) edge={4} edge_heading={5}",
+                            PassIndex + 1,
+                            RunIndex,
+                            Entry.Cell.Bx,
+                            Entry.Cell.By,
+                            FailedEdgePolicy.IsEdgeWorkCell(Entry.Cell),
+                            HasEdgeHeading
+                                ? EdgeHeadingDeg.ToString(
+                                    "F1", CultureInfo.InvariantCulture)
+                                : "none"));
+                    }
+                }
+                Diagnostic?.Invoke(Failures[PassIndex]!);
+                if (StopOnFailure) break;
+            }
             Console.WriteLine(String.Format(
                 CultureInfo.InvariantCulture,
                 "whole_plan finalized_pass={0} cut_runs={1} fill_runs={2} cut_success={3} fill_success={4}",
@@ -1514,27 +2701,81 @@ internal static class CompareExperimentalCoverage
     private static Boolean SupportsGradeReturn
         (
         ExperimentalRunSequencer.Result FillSequence,
+        Grid Grid,
+        Boolean FillSequencePrepared = false,
+        Boolean RetainResults = false
+        )
+    {
+        ExperimentalRunSequencer.Result Candidate = FillSequencePrepared
+            ? FillSequence
+            : ExperimentalLifecyclePlanner.BuildContinuousFillSequence(
+                FillSequence,
+                null,
+                Constants.DEFAULT_TURNING_CIRCLE_FT * 0.5 * Constants.FEET_TO_METERS,
+                Math.Min(0.5, Grid.GridSizeM),
+                Grid);
+        return ExperimentalLifecyclePlanner.SupportsPreparedGradeReturn(
+            Candidate,
+            Constants.DEFAULT_TURNING_CIRCLE_FT * 0.5 * Constants.FEET_TO_METERS,
+            Math.Min(0.5, Grid.GridSizeM),
+            Grid,
+            out _,
+            RetainResults);
+    }
+
+    /// <summary>
+    /// Protects only final selected pass connectors from speculative candidate-cache
+    /// churn so lifecycle generation reuses the exact validated guidance.
+    /// </summary>
+    private static void RetainSelectedLifecycleConnections
+        (
+        ExperimentalConnectorPlanner.Pose? Previous,
+        ExperimentalRunSequencer.Result Cut,
+        ExperimentalRunSequencer.Result Fill,
+        Boolean GradeReturn,
         Grid Grid
         )
     {
-        ExperimentalRunSequencer.Result EmptyCut = new ExperimentalRunSequencer.Result(
-            true,
-            new List<ExperimentalRunSequencer.SequencedRun>(),
-            new List<ExperimentalTransitPlanner.Result>(),
-            0.0,
-            0.0,
-            String.Empty);
-        ExperimentalLifecyclePlanner.Result Lifecycle = ExperimentalLifecyclePlanner.Build(
-            new List<ExperimentalLifecyclePlanner.PassPlan>
-            {
-                new ExperimentalLifecyclePlanner.PassPlan(EmptyCut, FillSequence),
-            },
-            true,
-            Constants.DEFAULT_EQUIPMENT_LENGTH_FT * Constants.FEET_TO_METERS,
-            Constants.DEFAULT_TURNING_CIRCLE_FT * 0.5 * Constants.FEET_TO_METERS,
-            Math.Min(0.5, Grid.GridSizeM),
-            Grid);
-        return Lifecycle.Success;
+        Double RadiusM = Constants.DEFAULT_TURNING_CIRCLE_FT
+            * 0.5 * Constants.FEET_TO_METERS;
+        Double SampleM = Math.Min(0.5, Grid.GridSizeM);
+        ExperimentalConnectorPlanner.Pose? First = Cut.Runs.Count > 0
+            ? Cut.Runs[0].EntryPose
+            : Fill.Runs.Count > 0
+                ? Fill.Runs[0].EntryPose
+                : null;
+        if (Previous.HasValue && First.HasValue)
+        {
+            ExperimentalTransitPlanner.Connect(
+                Previous.Value,
+                First.Value,
+                RadiusM,
+                SampleM,
+                Grid,
+                EdgeAllowanceM: Grid.GridSizeM,
+                AllowForwardDetour: true,
+                RetainResult: true);
+        }
+        if ((Cut.Runs.Count > 0) && (Fill.Runs.Count > 0))
+        {
+            ExperimentalTransitPlanner.Connect(
+                Cut.Runs[Cut.Runs.Count - 1].ExitPose,
+                Fill.Runs[0].EntryPose,
+                RadiusM,
+                SampleM,
+                Grid,
+                EdgeAllowanceM: Grid.GridSizeM,
+                AllowForwardDetour: true,
+                RetainResult: true);
+        }
+        if (GradeReturn && (Fill.Runs.Count > 0))
+        {
+            SupportsGradeReturn(
+                Fill,
+                Grid,
+                FillSequencePrepared: true,
+                RetainResults: true);
+        }
     }
 
     /// <summary>
@@ -1583,12 +2824,41 @@ internal static class CompareExperimentalCoverage
         )
     {
         List<ExperimentalCoveragePlanner.PlanResult> Candidates =
-            ExperimentalCoveragePlanner.CandidatePlans(
-                Cells, Grid, BladeM, Start, End);
+            OrderedCoverageCandidates(Cells, Grid, BladeM, Start, End);
         Int32 MinimumOmittedCells = Candidates.Min(
             Candidate => Candidate.OmittedCells.Count);
         return Candidates
             .Where(Candidate => Candidate.OmittedCells.Count == MinimumOmittedCells)
+            .ToList();
+    }
+
+    /// <summary>
+    /// Returns each distinct coverage geometry once, ordered first by omitted work
+    /// and then by the planner's deterministic travel score. Opposite packing
+    /// directions frequently produce the same unordered run set; the run sequencer
+    /// can orient and reorder that geometry, so evaluating it twice adds no choices.
+    /// </summary>
+    private static List<ExperimentalCoveragePlanner.PlanResult> OrderedCoverageCandidates
+        (
+        List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Cells,
+        Grid Grid,
+        Double BladeM,
+        (Double X, Double Y)? Start = null,
+        (Double X, Double Y)? End = null
+        )
+    {
+        return ExperimentalCoveragePlanner.CandidatePlans(
+                Cells, Grid, BladeM, Start, End)
+            .GroupBy(
+                Candidate => CoverageGeometrySignature(Candidate),
+                StringComparer.Ordinal)
+            .Select(Group => Group
+                .OrderBy(Candidate => Candidate.Score)
+                .ThenBy(Candidate => Candidate.HeadingDeg)
+                .First())
+            .OrderBy(Candidate => Candidate.OmittedCells.Count)
+            .ThenBy(Candidate => Candidate.Score)
+            .ThenBy(Candidate => Candidate.HeadingDeg)
             .ToList();
     }
 
@@ -1630,6 +2900,314 @@ internal static class CompareExperimentalCoverage
             Constants.DEFAULT_TURNING_CIRCLE_FT * 0.5 * Constants.FEET_TO_METERS,
             Math.Min(0.5, Grid.GridSizeM),
             Grid);
+    }
+
+    /// <summary>
+    /// Tries every bounded coverage heading in omission-count/score order after
+    /// the minimum-omission geometry proves impossible to sequence. This lets a
+    /// compact edge-parallel plan omit the smallest incompatible corner set
+    /// instead of retaining multiple short runs with no forward exit.
+    /// </summary>
+    private static Boolean TrySelectFeasibleFillCoverageCandidate
+        (
+        List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Cells,
+        Grid Grid,
+        Double BladeM,
+        ExperimentalConnectorPlanner.Pose Start,
+        Boolean GradeReturn,
+        out ExperimentalCoveragePlanner.PlanResult SelectedPlan,
+        out ExperimentalRunSequencer.Result SelectedSequence
+        )
+    {
+        List<ExperimentalCoveragePlanner.PlanResult> Candidates =
+            ExperimentalCoveragePlanner.CandidatePlans(
+                Cells,
+                Grid,
+                BladeM,
+                (Start.X, Start.Y),
+                null)
+            .GroupBy(
+                Candidate => CoverageGeometrySignature(Candidate),
+                StringComparer.Ordinal)
+            .Select(Group => Group
+                .OrderBy(Candidate => Candidate.Score)
+                .ThenBy(Candidate => Candidate.HeadingDeg)
+                .First())
+            .OrderBy(Candidate => Candidate.OmittedCells.Count)
+            .ThenBy(Candidate => Candidate.Score)
+            .ThenBy(Candidate => Candidate.HeadingDeg)
+            .ToList();
+        foreach (ExperimentalCoveragePlanner.PlanResult Candidate in Candidates)
+        {
+            if (TryBuildFeasibleFillCandidate(
+                Candidate,
+                Grid,
+                Start,
+                GradeReturn,
+                out ExperimentalRunSequencer.Result Sequence))
+            {
+                SelectedPlan = Candidate;
+                SelectedSequence = Sequence;
+                return true;
+            }
+        }
+        SelectedPlan = ExperimentalCoveragePlanner.Plan(
+            new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>(),
+            Grid,
+            BladeM);
+        SelectedSequence = BuildSequence(SelectedPlan.Runs, Grid);
+        return false;
+    }
+
+    /// <summary>
+    /// Tries alternate bounded cut headings when every minimum-omission cut layout
+    /// is individually feasible but cannot exit toward the selected fill.
+    /// </summary>
+    private static Boolean TrySelectFeasibleCutCoverageCandidate
+        (
+        List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Cells,
+        Grid Grid,
+        Double BladeM,
+        ExperimentalConnectorPlanner.Pose? Start,
+        ExperimentalRunSequencer.Result FillSequence,
+        out ExperimentalCoveragePlanner.PlanResult SelectedPlan,
+        out ExperimentalRunSequencer.Result SelectedSequence
+        )
+    {
+        ExperimentalConnectorPlanner.Pose FillEntry =
+            FillSequence.Runs[0].EntryPose;
+        List<ExperimentalCoveragePlanner.PlanResult> Candidates =
+            ExperimentalCoveragePlanner.CandidatePlans(
+                Cells,
+                Grid,
+                BladeM,
+                Start.HasValue ? (Start.Value.X, Start.Value.Y) : null,
+                (FillEntry.X, FillEntry.Y))
+            .GroupBy(
+                Candidate => CoverageGeometrySignature(Candidate),
+                StringComparer.Ordinal)
+            .Select(Group => Group
+                .OrderBy(Candidate => Candidate.Score)
+                .ThenBy(Candidate => Candidate.HeadingDeg)
+                .First())
+            .OrderBy(Candidate => Candidate.OmittedCells.Count)
+            .ThenBy(Candidate => Candidate.Score)
+            .ThenBy(Candidate => Candidate.HeadingDeg)
+            .ToList();
+        foreach (ExperimentalCoveragePlanner.PlanResult Candidate in Candidates)
+        {
+            if (Candidate.Runs.Count == 0) continue;
+            ExperimentalRunSequencer.Result Sequence = BuildSequence(
+                Candidate.Runs,
+                Grid,
+                Start,
+                FillEntry);
+            if (!Sequence.Success)
+            {
+                Sequence = BuildFlexibleSequence(
+                    Candidate.Runs,
+                    Grid,
+                    Start,
+                    FillEntry);
+            }
+            if (!Sequence.Success
+                || (Start.HasValue
+                    && !PoseConnectsToSequence(Start.Value, Sequence, Grid))
+                || !SequencesConnect(Sequence, FillSequence, Grid))
+            {
+                continue;
+            }
+            SelectedPlan = Candidate;
+            SelectedSequence = Sequence;
+            return true;
+        }
+        SelectedPlan = ExperimentalCoveragePlanner.Plan(
+            new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>(),
+            Grid,
+            BladeM);
+        SelectedSequence = BuildSequence(SelectedPlan.Runs, Grid);
+        return false;
+    }
+
+    /// <summary>
+    /// Jointly selects reduced cut coverage, its final orientation, and a
+    /// grade-capable fill entry. Entry-pose trials are bounded globally so a
+    /// difficult pair cannot multiply every coverage candidate indefinitely.
+    /// </summary>
+    private static Boolean TrySelectFeasibleCutFillPair
+        (
+        List<((Int32 Bx, Int32 By) Cell, Double DepthM)> CutCells,
+        List<((Int32 Bx, Int32 By) Cell, Double DepthM)> FillCells,
+        Grid Grid,
+        Double BladeM,
+        ExperimentalConnectorPlanner.Pose Start,
+        Boolean GradeReturn,
+        out ExperimentalCoveragePlanner.PlanResult SelectedCutPlan,
+        out ExperimentalRunSequencer.Result SelectedCutSequence,
+        out ExperimentalCoveragePlanner.PlanResult SelectedFillPlan,
+        out ExperimentalRunSequencer.Result SelectedFillSequence
+        )
+    {
+        List<ExperimentalCoveragePlanner.PlanResult> CutCandidates =
+            MinimalOmissionCandidates(
+                CutCells, Grid, BladeM, (Start.X, Start.Y), null);
+        List<ExperimentalCoveragePlanner.PlanResult> FillCandidates =
+            MinimalOmissionCandidates(FillCells, Grid, BladeM);
+        Int32 Attempts = 0;
+        foreach (Int32 RankSum in Enumerable.Range(
+            0, CutCandidates.Count + FillCandidates.Count - 1))
+        {
+            Int32 FirstCutIndex = Math.Max(
+                0, RankSum - FillCandidates.Count + 1);
+            Int32 LastCutIndex = Math.Min(
+                CutCandidates.Count - 1, RankSum);
+            for (Int32 CutIndex = FirstCutIndex;
+                CutIndex <= LastCutIndex;
+                CutIndex += 1)
+            {
+                Int32 FillIndex = RankSum - CutIndex;
+                ExperimentalCoveragePlanner.PlanResult CutCandidate =
+                    CutCandidates[CutIndex];
+                ExperimentalCoveragePlanner.PlanResult FillCandidate =
+                    FillCandidates[FillIndex];
+                foreach (ExperimentalConnectorPlanner.Pose FillEntry in
+                    PossibleEntryPoses(FillCandidate.Runs, Grid))
+                {
+                    if (Attempts >= MAX_PAIRED_CANDIDATE_ATTEMPTS)
+                    {
+                        goto Failure;
+                    }
+                    Attempts += 1;
+                    ExperimentalRunSequencer.Result CutSequence =
+                        BuildSequence(
+                            CutCandidate.Runs, Grid, Start, FillEntry);
+                    if (!CutSequence.Success)
+                    {
+                        CutSequence = BuildFlexibleSequence(
+                            CutCandidate.Runs, Grid, Start, FillEntry);
+                    }
+                    if (!CutSequence.Success
+                        || (CutSequence.Runs.Count == 0)
+                        || !PoseConnectsToSequence(Start, CutSequence, Grid))
+                    {
+                        continue;
+                    }
+                    ExperimentalConnectorPlanner.Pose CutExit =
+                        CutSequence.Runs[CutSequence.Runs.Count - 1].ExitPose;
+                    if (!TryBuildFeasibleFillCandidate(
+                        FillCandidate,
+                        Grid,
+                        CutExit,
+                        GradeReturn,
+                        out ExperimentalRunSequencer.Result FillSequence)
+                        || !SequencesConnect(
+                            CutSequence, FillSequence, Grid))
+                    {
+                        continue;
+                    }
+                    SelectedCutPlan = CutCandidate;
+                    SelectedCutSequence = CutSequence;
+                    SelectedFillPlan = FillCandidate;
+                    SelectedFillSequence = FillSequence;
+                    return true;
+                }
+            }
+        }
+
+    Failure:
+        SelectedCutPlan = ExperimentalCoveragePlanner.Plan(
+            CutCells, Grid, BladeM);
+        SelectedCutSequence = BuildSequence(
+            SelectedCutPlan.Runs, Grid);
+        SelectedFillPlan = ExperimentalCoveragePlanner.Plan(
+            FillCells, Grid, BladeM);
+        SelectedFillSequence = BuildSequence(
+            SelectedFillPlan.Runs, Grid);
+        return false;
+    }
+
+    /// <summary>
+    /// Returns an order- and orientation-independent exact signature for one
+    /// coverage decomposition. Opposite cross-axis packing often produces the
+    /// same run set; sequencing that geometry twice cannot change feasibility.
+    /// </summary>
+    private static String CoverageGeometrySignature
+        (
+        ExperimentalCoveragePlanner.PlanResult Candidate
+        )
+    {
+        List<String> Runs = Candidate.Runs.Select(Run =>
+        {
+            (Double X, Double Y) First = Run.StartXy;
+            (Double X, Double Y) Second = Run.EndXy;
+            if ((Second.X < First.X)
+                || ((Second.X == First.X) && (Second.Y < First.Y)))
+            {
+                (First, Second) = (Second, First);
+            }
+            String Cells = String.Join(",", Run.Cells
+                .OrderBy(Entry => Entry.Cell.Bx)
+                .ThenBy(Entry => Entry.Cell.By)
+                .ThenBy(Entry => BitConverter.DoubleToInt64Bits(Entry.DepthM))
+                .Select(Entry => String.Format(
+                    CultureInfo.InvariantCulture,
+                    "{0}:{1}:{2:X16}",
+                    Entry.Cell.Bx,
+                    Entry.Cell.By,
+                    BitConverter.DoubleToInt64Bits(Entry.DepthM))));
+            return String.Format(
+                CultureInfo.InvariantCulture,
+                "{0:X16}:{1:X16}:{2:X16}:{3:X16}:{4}",
+                BitConverter.DoubleToInt64Bits(First.X),
+                BitConverter.DoubleToInt64Bits(First.Y),
+                BitConverter.DoubleToInt64Bits(Second.X),
+                BitConverter.DoubleToInt64Bits(Second.Y),
+                Cells);
+        }).OrderBy(Signature => Signature, StringComparer.Ordinal).ToList();
+        String Omitted = String.Join(",", Candidate.OmittedCells
+            .OrderBy(Entry => Entry.Cell.Bx)
+            .ThenBy(Entry => Entry.Cell.By)
+            .ThenBy(Entry => BitConverter.DoubleToInt64Bits(Entry.DepthM))
+            .Select(Entry => String.Format(
+                CultureInfo.InvariantCulture,
+                "{0}:{1}:{2:X16}",
+                Entry.Cell.Bx,
+                Entry.Cell.By,
+                BitConverter.DoubleToInt64Bits(Entry.DepthM))));
+        return String.Join("|", Runs) + "#" + Omitted;
+    }
+
+    /// <summary>Builds and fully validates one alternate fill heading.</summary>
+    private static Boolean TryBuildFeasibleFillCandidate
+        (
+        ExperimentalCoveragePlanner.PlanResult Candidate,
+        Grid Grid,
+        ExperimentalConnectorPlanner.Pose Start,
+        Boolean GradeReturn,
+        out ExperimentalRunSequencer.Result Sequence
+        )
+    {
+        Sequence = BuildSequence(Candidate.Runs, Grid, Start, null);
+        if (Candidate.Runs.Count == 0) return false;
+        if (!Sequence.Success)
+        {
+            Sequence = BuildFlexibleSequence(
+                Candidate.Runs, Grid, Start, null);
+        }
+        if (!Sequence.Success) return false;
+        if (GradeReturn && (Sequence.Runs.Count > 1))
+        {
+            Sequence = ExperimentalLifecyclePlanner.BuildContinuousFillSequence(
+                Sequence,
+                Start,
+                Constants.DEFAULT_TURNING_CIRCLE_FT * 0.5
+                    * Constants.FEET_TO_METERS,
+                Math.Min(0.5, Grid.GridSizeM),
+                Grid);
+        }
+        return Sequence.Success
+            && PoseConnectsToSequence(Start, Sequence, Grid)
+            && (!GradeReturn || SupportsGradeReturn(Sequence, Grid));
     }
 
     /// <summary>Validates the explicit lifecycle connector between cut exit and fill entry.</summary>
@@ -1805,12 +3383,27 @@ internal static class CompareExperimentalCoverage
         Double SampleSpacingM = Math.Min(0.5, Grid.GridSizeM);
         foreach (ExperimentalCoveragePlanner.Run Run in Runs)
         {
+            ExperimentalCoveragePlanner.Run Reverse = ReverseRun(Run);
             Output.Add(ExperimentalRunSequencer.Prepare(
                 Run, LineupM, MinimumRadiusM, SampleSpacingM, Grid).EntryPose);
+            Output.Add(new ExperimentalConnectorPlanner.Pose(
+                Run.StartXy.X, Run.StartXy.Y, Run.HeadingDeg));
             Output.Add(ExperimentalRunSequencer.Prepare(
-                ReverseRun(Run), LineupM, MinimumRadiusM, SampleSpacingM, Grid).EntryPose);
+                Reverse, LineupM, MinimumRadiusM, SampleSpacingM, Grid).EntryPose);
+            Output.Add(new ExperimentalConnectorPlanner.Pose(
+                Reverse.StartXy.X,
+                Reverse.StartXy.Y,
+                Reverse.HeadingDeg));
         }
-        return Output;
+        return Output
+            .GroupBy(Pose => String.Format(
+                CultureInfo.InvariantCulture,
+                "{0:X16}:{1:X16}:{2:X16}",
+                BitConverter.DoubleToInt64Bits(Pose.X),
+                BitConverter.DoubleToInt64Bits(Pose.Y),
+                BitConverter.DoubleToInt64Bits(Pose.HeadingDeg % 360.0)))
+            .Select(Group => Group.First())
+            .ToList();
     }
 
     /// <summary>
@@ -1831,7 +3424,8 @@ internal static class CompareExperimentalCoverage
         out ExperimentalCoveragePlanner.PlanResult SelectedCutPlan,
         out ExperimentalRunSequencer.Result SelectedCutSequence,
         out ExperimentalCoveragePlanner.PlanResult SelectedFillPlan,
-        out ExperimentalRunSequencer.Result SelectedFillSequence
+        out ExperimentalRunSequencer.Result SelectedFillSequence,
+        Action<String>? Diagnostic = null
         )
     {
         List<ExperimentalCoveragePlanner.PlanResult> PreviousFillCandidates =
@@ -1841,9 +3435,11 @@ internal static class CompareExperimentalCoverage
                 BladeM,
                 (PreviousCutExit.X, PreviousCutExit.Y),
                 null);
+        // If every complete cut layout is unreachable, retain higher-omission
+        // layouts as a controlled final recovery. RankedTriples below guarantees
+        // that no such layout is tried before every lower-omission alternative.
         List<ExperimentalCoveragePlanner.PlanResult> CutCandidates =
-            MinimalOmissionCandidates(
-                CurrentCutCells, Grid, BladeM);
+            OrderedCoverageCandidates(CurrentCutCells, Grid, BladeM);
         List<ExperimentalCoveragePlanner.PlanResult> FillCandidates =
             MinimalOmissionCandidates(
                 CurrentFillCells, Grid, BladeM);
@@ -1858,43 +3454,163 @@ internal static class CompareExperimentalCoverage
         Int32 MinimumOmittedCells = PreviousFillCandidates[0].OmittedCells.Count
             + CutCandidates[0].OmittedCells.Count
             + FillCandidates[0].OmittedCells.Count;
+        Int32 CandidateAttempts = 0;
+        Diagnostic?.Invoke(String.Format(
+            CultureInfo.InvariantCulture,
+            "whole_plan backtrack_candidates previous_fills={0} cuts={1} fills={2} minimum_omitted={3} cut_omission_tiers={4} limit={5}",
+            PreviousFillCandidates.Count,
+            CutCandidates.Count,
+            FillCandidates.Count,
+            MinimumOmittedCells,
+            String.Join(",", CutCandidates
+                .GroupBy(Candidate => Candidate.OmittedCells.Count)
+                .OrderBy(Group => Group.Key)
+                .Select(Group => String.Format(
+                    CultureInfo.InvariantCulture,
+                    "{0}:{1}",
+                    Group.Key,
+                    Group.Count()))),
+            MAX_BACKTRACK_CANDIDATE_ATTEMPTS));
 
-        foreach (ExperimentalCoveragePlanner.PlanResult FillCandidate in FillCandidates)
+        ExperimentalRunSequencer.Result?[] ProvisionalFills =
+            new ExperimentalRunSequencer.Result?[FillCandidates.Count];
+        List<ExperimentalConnectorPlanner.Pose>?[] CutEntryTargetsByCandidate =
+            new List<ExperimentalConnectorPlanner.Pose>?[CutCandidates.Count];
+        Dictionary<(Int32 PreviousFillIndex, Int32 CutIndex, Int32 TargetIndex),
+            (ExperimentalRunSequencer.Result Sequence,
+                ExperimentalConnectorPlanner.Pose Outgoing)?> PreviousOptions =
+            new Dictionary<(Int32 PreviousFillIndex, Int32 CutIndex,
+                Int32 TargetIndex),
+                (ExperimentalRunSequencer.Result Sequence,
+                    ExperimentalConnectorPlanner.Pose Outgoing)?>();
+        List<(Int32 PreviousFillIndex, Int32 CutIndex, Int32 FillIndex)>
+            RankedTriples = Enumerable.Range(0, PreviousFillCandidates.Count)
+                .SelectMany(PreviousFillIndex =>
+                    Enumerable.Range(0, CutCandidates.Count)
+                        .SelectMany(CutIndex =>
+                            Enumerable.Range(0, FillCandidates.Count)
+                                .Select(FillIndex => (
+                                    PreviousFillIndex,
+                                    CutIndex,
+                                    FillIndex))))
+                .OrderBy(Triple =>
+                    PreviousFillCandidates[Triple.PreviousFillIndex]
+                        .OmittedCells.Count
+                    + CutCandidates[Triple.CutIndex].OmittedCells.Count
+                    + FillCandidates[Triple.FillIndex].OmittedCells.Count)
+                .ThenBy(Triple => Triple.PreviousFillIndex
+                    + Triple.CutIndex + Triple.FillIndex)
+                .ThenBy(Triple => Math.Max(
+                    Triple.PreviousFillIndex,
+                    Math.Max(Triple.CutIndex, Triple.FillIndex)))
+                .ThenBy(Triple => Triple.FillIndex)
+                .ThenBy(Triple => Triple.CutIndex)
+                .ThenBy(Triple => Triple.PreviousFillIndex)
+                .ToList();
+        foreach ((Int32 PreviousFillIndex, Int32 CutIndex, Int32 FillIndex) Triple
+            in RankedTriples)
         {
+            ExperimentalCoveragePlanner.PlanResult PreviousFillCandidate =
+                PreviousFillCandidates[Triple.PreviousFillIndex];
+            ExperimentalCoveragePlanner.PlanResult CutCandidate =
+                CutCandidates[Triple.CutIndex];
+            ExperimentalCoveragePlanner.PlanResult FillCandidate =
+                FillCandidates[Triple.FillIndex];
             ExperimentalRunSequencer.Result ProvisionalFill =
-                BuildSequence(FillCandidate.Runs, Grid);
+                ProvisionalFills[Triple.FillIndex]
+                ?? BuildSequence(FillCandidate.Runs, Grid);
+            ProvisionalFills[Triple.FillIndex] = ProvisionalFill;
             if (!ProvisionalFill.Success || (ProvisionalFill.Runs.Count == 0)) continue;
+            if (CutCandidate.Runs.Count == 0) continue;
             ExperimentalConnectorPlanner.Pose FillEntry =
                 ProvisionalFill.Runs[0].EntryPose;
-            foreach (ExperimentalCoveragePlanner.PlanResult CutCandidate in CutCandidates)
+            List<ExperimentalConnectorPlanner.Pose> CutEntryTargets =
+                CutEntryTargetsByCandidate[Triple.CutIndex]
+                ?? PossibleEntryPoses(CutCandidate.Runs, Grid);
+            CutEntryTargetsByCandidate[Triple.CutIndex] = CutEntryTargets;
+            for (Int32 TargetIndex = 0;
+                TargetIndex < CutEntryTargets.Count;
+                TargetIndex += 1)
             {
-                if (CutCandidate.Runs.Count == 0) continue;
-                List<ExperimentalConnectorPlanner.Pose> CutEntryTargets =
-                    PossibleEntryPoses(CutCandidate.Runs, Grid);
-                foreach (ExperimentalConnectorPlanner.Pose CutEntryTarget in CutEntryTargets)
+                ExperimentalConnectorPlanner.Pose CutEntryTarget =
+                    CutEntryTargets[TargetIndex];
+                CandidateAttempts += 1;
+                if ((CandidateAttempts % 10000) == 0)
                 {
-                    foreach (ExperimentalCoveragePlanner.PlanResult PreviousFillCandidate
-                        in PreviousFillCandidates)
-                    {
-                        ExperimentalRunSequencer.Result PreviousFillSequence =
+                    Diagnostic?.Invoke(String.Format(
+                        CultureInfo.InvariantCulture,
+                        "whole_plan backtrack_progress attempts={0} limit={1} cached_previous_options={2}",
+                        CandidateAttempts,
+                        MAX_BACKTRACK_CANDIDATE_ATTEMPTS,
+                        PreviousOptions.Count));
+                }
+                if (CandidateAttempts > MAX_BACKTRACK_CANDIDATE_ATTEMPTS)
+                {
+                    goto BacktrackSearchComplete;
+                }
+                (Int32 PreviousFillIndex, Int32 CutIndex, Int32 TargetIndex)
+                    PreviousKey = (
+                        Triple.PreviousFillIndex,
+                        Triple.CutIndex,
+                        TargetIndex);
+                if (!PreviousOptions.TryGetValue(
+                    PreviousKey,
+                    out (ExperimentalRunSequencer.Result Sequence,
+                        ExperimentalConnectorPlanner.Pose Outgoing)? PreviousOption))
+                {
+                    ExperimentalRunSequencer.Result PreviousFillSequenceCandidate =
                             BuildSequence(
                                 PreviousFillCandidate.Runs,
                                 Grid,
                                 PreviousCutExit,
                                 CutEntryTarget);
-                        if (!PreviousFillSequence.Success
-                            || (PreviousFillSequence.Runs.Count == 0)
-                            || !PoseConnectsToSequence(
-                                PreviousCutExit, PreviousFillSequence, Grid)
-                            || (GradeReturn
-                                && !SupportsGradeReturn(PreviousFillSequence, Grid)))
-                        {
-                            continue;
-                        }
-                        ExperimentalConnectorPlanner.Pose PreviousOutgoing = GradeReturn
-                            ? ReversePose(PreviousFillSequence.Runs[0].EntryPose)
-                            : PreviousFillSequence.Runs[
-                                PreviousFillSequence.Runs.Count - 1].ExitPose;
+                    if (GradeReturn
+                        && PreviousFillSequenceCandidate.Success
+                        && (PreviousFillSequenceCandidate.Runs.Count > 1))
+                    {
+                        PreviousFillSequenceCandidate =
+                                ExperimentalLifecyclePlanner.BuildContinuousFillSequence(
+                                    PreviousFillSequenceCandidate,
+                                    PreviousCutExit,
+                                    Constants.DEFAULT_TURNING_CIRCLE_FT * 0.5
+                                        * Constants.FEET_TO_METERS,
+                                    Math.Min(0.5, Grid.GridSizeM),
+                                    Grid);
+                    }
+                    if (!PreviousFillSequenceCandidate.Success
+                        || (PreviousFillSequenceCandidate.Runs.Count == 0)
+                        || !PoseConnectsToSequence(
+                            PreviousCutExit,
+                            PreviousFillSequenceCandidate,
+                            Grid)
+                        || (GradeReturn
+                            && !SupportsGradeReturn(
+                                PreviousFillSequenceCandidate,
+                                Grid,
+                                FillSequencePrepared: true)))
+                    {
+                        PreviousOption = null;
+                    }
+                    else
+                    {
+                        ExperimentalConnectorPlanner.Pose PreviousOutgoingCandidate =
+                            GradeReturn
+                                ? ReversePose(
+                                    PreviousFillSequenceCandidate.Runs[0].EntryPose)
+                                : PreviousFillSequenceCandidate.Runs[
+                                    PreviousFillSequenceCandidate.Runs.Count - 1]
+                                    .ExitPose;
+                        PreviousOption = (
+                            PreviousFillSequenceCandidate,
+                            PreviousOutgoingCandidate);
+                    }
+                    PreviousOptions[PreviousKey] = PreviousOption;
+                }
+                if (!PreviousOption.HasValue) continue;
+                ExperimentalRunSequencer.Result PreviousFillSequence =
+                    PreviousOption.Value.Sequence;
+                ExperimentalConnectorPlanner.Pose PreviousOutgoing =
+                    PreviousOption.Value.Outgoing;
                         ExperimentalRunSequencer.Result CutSequence = BuildSequence(
                             CutCandidate.Runs, Grid, PreviousOutgoing, FillEntry);
                         if (!CutSequence.Success
@@ -1907,9 +3623,25 @@ internal static class CompareExperimentalCoverage
                             CutSequence.Runs[CutSequence.Runs.Count - 1].ExitPose;
                         ExperimentalRunSequencer.Result FillSequence = BuildSequence(
                             FillCandidate.Runs, Grid, CutExit, null);
+                        if (GradeReturn
+                            && FillSequence.Success
+                            && (FillSequence.Runs.Count > 1))
+                        {
+                            FillSequence =
+                                ExperimentalLifecyclePlanner.BuildContinuousFillSequence(
+                                    FillSequence,
+                                    CutExit,
+                                    Constants.DEFAULT_TURNING_CIRCLE_FT * 0.5
+                                        * Constants.FEET_TO_METERS,
+                                    Math.Min(0.5, Grid.GridSizeM),
+                                    Grid);
+                        }
                         if (!FillSequence.Success
                             || !SequencesConnect(CutSequence, FillSequence, Grid)
-                            || (GradeReturn && !SupportsGradeReturn(FillSequence, Grid)))
+                            || (GradeReturn && !SupportsGradeReturn(
+                                FillSequence,
+                                Grid,
+                                FillSequencePrepared: true)))
                         {
                             continue;
                         }
@@ -1933,20 +3665,31 @@ internal static class CompareExperimentalCoverage
                         BestFillSequence = FillSequence;
                         BestOmittedCells = OmittedCells;
                         BestScore = Score;
-                        if (OmittedCells == MinimumOmittedCells)
-                        {
-                            SelectedPreviousFillPlan = PreviousFillCandidate;
-                            SelectedPreviousFillSequence = PreviousFillSequence;
-                            SelectedCutPlan = CutCandidate;
-                            SelectedCutSequence = CutSequence;
-                            SelectedFillPlan = FillCandidate;
-                            SelectedFillSequence = FillSequence;
-                            return true;
-                        }
-                    }
-                }
+                        SelectedPreviousFillPlan = PreviousFillCandidate;
+                        SelectedPreviousFillSequence = PreviousFillSequence;
+                        SelectedCutPlan = CutCandidate;
+                        SelectedCutSequence = CutSequence;
+                        SelectedFillPlan = FillCandidate;
+                        SelectedFillSequence = FillSequence;
+                        Diagnostic?.Invoke(String.Format(
+                            CultureInfo.InvariantCulture,
+                            "whole_plan backtrack_result attempts={0} selected=True previous_fill_index={1} cut_index={2} fill_index={3} omitted_cells={4} additional_omitted={5}",
+                            CandidateAttempts,
+                            Triple.PreviousFillIndex,
+                            Triple.CutIndex,
+                            Triple.FillIndex,
+                            OmittedCells,
+                            OmittedCells - MinimumOmittedCells));
+                        return true;
             }
         }
+    BacktrackSearchComplete:
+        Diagnostic?.Invoke(String.Format(
+            CultureInfo.InvariantCulture,
+            "whole_plan backtrack_result attempts={0} selected={1} exhausted={2}",
+            CandidateAttempts,
+            BestPreviousFillPlan != null,
+            CandidateAttempts > MAX_BACKTRACK_CANDIDATE_ATTEMPTS));
         if ((BestPreviousFillPlan != null)
             && (BestPreviousFillSequence != null)
             && (BestCutPlan != null)
@@ -1970,6 +3713,166 @@ internal static class CompareExperimentalCoverage
         SelectedFillPlan = ExperimentalCoveragePlanner.Plan(CurrentFillCells, Grid, BladeM);
         SelectedFillSequence = BuildSequence(SelectedFillPlan.Runs, Grid);
         return false;
+    }
+
+    /// <summary>
+    /// Reorients the preceding cut before retrying the bounded three-way recovery.
+    /// Only distinct forward exits of the already-selected cut geometry are tried,
+    /// so this adds sequencing freedom without changing the preceding cut coverage.
+    /// </summary>
+    private static Boolean TryBacktrackPreviousCutAndCurrentPass
+        (
+        ExperimentalRunSequencer.Result ExistingPreviousCut,
+        List<((Int32 Bx, Int32 By) Cell, Double DepthM)> PreviousFillCells,
+        List<((Int32 Bx, Int32 By) Cell, Double DepthM)> CurrentCutCells,
+        List<((Int32 Bx, Int32 By) Cell, Double DepthM)> CurrentFillCells,
+        Grid Grid,
+        Double BladeM,
+        ExperimentalConnectorPlanner.Pose? PreviousIncoming,
+        ExperimentalConnectorPlanner.Pose ExistingPreviousCutExit,
+        Boolean GradeReturn,
+        out ExperimentalRunSequencer.Result SelectedPreviousCut,
+        out ExperimentalCoveragePlanner.PlanResult SelectedPreviousFillPlan,
+        out ExperimentalRunSequencer.Result SelectedPreviousFillSequence,
+        out ExperimentalCoveragePlanner.PlanResult SelectedCutPlan,
+        out ExperimentalRunSequencer.Result SelectedCutSequence,
+        out ExperimentalCoveragePlanner.PlanResult SelectedFillPlan,
+        out ExperimentalRunSequencer.Result SelectedFillSequence,
+        Action<String>? Diagnostic = null
+        )
+    {
+        List<ExperimentalCoveragePlanner.Run> PreviousCutRuns =
+            ExistingPreviousCut.Runs
+                .Select(Run => Run.Run)
+                .ToList();
+        List<ExperimentalConnectorPlanner.Pose> PreviousFillEntries =
+            MinimalOmissionCandidates(PreviousFillCells, Grid, BladeM)
+                .SelectMany(Candidate => PossibleEntryPoses(Candidate.Runs, Grid))
+                .GroupBy(Pose => String.Format(
+                    CultureInfo.InvariantCulture,
+                    "{0:F2},{1:F2},{2:F1}",
+                    Pose.X,
+                    Pose.Y,
+                    NormalizeHeading(Pose.HeadingDeg)),
+                    StringComparer.Ordinal)
+                .Select(Group => Group.First())
+                .ToList();
+        List<ExperimentalRunSequencer.Result> PreviousCutOptions =
+            new List<ExperimentalRunSequencer.Result>();
+        foreach (ExperimentalConnectorPlanner.Pose FillEntry in PreviousFillEntries)
+        {
+            ExperimentalRunSequencer.Result Candidate = BuildSequence(
+                PreviousCutRuns,
+                Grid,
+                PreviousIncoming,
+                FillEntry);
+            if (!Candidate.Success || (Candidate.Runs.Count == 0)) continue;
+            if (PreviousIncoming.HasValue
+                && !PoseConnectsToSequence(
+                    PreviousIncoming.Value,
+                    Candidate,
+                    Grid))
+            {
+                continue;
+            }
+            if (!SequenceConnectsToPose(Candidate, FillEntry, Grid)) continue;
+            ExperimentalConnectorPlanner.Pose Exit = Candidate.Runs[
+                Candidate.Runs.Count - 1].ExitPose;
+            if (PoseApproximatelyEquals(Exit, ExistingPreviousCutExit)) continue;
+            if (PreviousCutOptions.Any(Option => PoseApproximatelyEquals(
+                Option.Runs[Option.Runs.Count - 1].ExitPose,
+                Exit)))
+            {
+                continue;
+            }
+            PreviousCutOptions.Add(Candidate);
+        }
+        Diagnostic?.Invoke(String.Format(
+            CultureInfo.InvariantCulture,
+            "whole_plan deep_backtrack_candidates previous_fill_entries={0} distinct_previous_cut_exits={1}",
+            PreviousFillEntries.Count,
+            PreviousCutOptions.Count));
+        foreach (ExperimentalRunSequencer.Result PreviousCutOption
+            in PreviousCutOptions)
+        {
+            ExperimentalConnectorPlanner.Pose PreviousCutExit =
+                PreviousCutOption.Runs[
+                    PreviousCutOption.Runs.Count - 1].ExitPose;
+            if (TryBacktrackPreviousFillAndCurrentPass(
+                PreviousFillCells,
+                CurrentCutCells,
+                CurrentFillCells,
+                Grid,
+                BladeM,
+                PreviousCutExit,
+                GradeReturn,
+                out SelectedPreviousFillPlan,
+                out SelectedPreviousFillSequence,
+                out SelectedCutPlan,
+                out SelectedCutSequence,
+                out SelectedFillPlan,
+                out SelectedFillSequence,
+                Diagnostic))
+            {
+                SelectedPreviousCut = PreviousCutOption;
+                return true;
+            }
+        }
+        SelectedPreviousCut = ExistingPreviousCut;
+        SelectedPreviousFillPlan = ExperimentalCoveragePlanner.Plan(
+            PreviousFillCells, Grid, BladeM);
+        SelectedPreviousFillSequence = BuildSequence(
+            SelectedPreviousFillPlan.Runs, Grid);
+        SelectedCutPlan = ExperimentalCoveragePlanner.Plan(
+            CurrentCutCells, Grid, BladeM);
+        SelectedCutSequence = BuildSequence(SelectedCutPlan.Runs, Grid);
+        SelectedFillPlan = ExperimentalCoveragePlanner.Plan(
+            CurrentFillCells, Grid, BladeM);
+        SelectedFillSequence = BuildSequence(SelectedFillPlan.Runs, Grid);
+        return false;
+    }
+
+    /// <summary>Returns the final forward pose after one completed pass.</summary>
+    private static ExperimentalConnectorPlanner.Pose? PassOutgoingPose
+        (
+        ExperimentalLifecyclePlanner.PassPlan Pass,
+        Boolean GradeReturn
+        )
+    {
+        if (Pass.Fill.Runs.Count > 0)
+        {
+            return GradeReturn
+                ? ReversePose(Pass.Fill.Runs[0].EntryPose)
+                : Pass.Fill.Runs[Pass.Fill.Runs.Count - 1].ExitPose;
+        }
+        if (Pass.Cut.Runs.Count > 0)
+        {
+            return Pass.Cut.Runs[Pass.Cut.Runs.Count - 1].ExitPose;
+        }
+        return null;
+    }
+
+    /// <summary>Compares two poses at the sequencer's practical cache precision.</summary>
+    private static Boolean PoseApproximatelyEquals
+        (
+        ExperimentalConnectorPlanner.Pose First,
+        ExperimentalConnectorPlanner.Pose Second
+        )
+    {
+        return (Math.Abs(First.X - Second.X) <= 0.01)
+            && (Math.Abs(First.Y - Second.Y) <= 0.01)
+            && (Math.Abs(NormalizeHeading(First.HeadingDeg - Second.HeadingDeg))
+                <= 0.1
+                || Math.Abs(
+                    NormalizeHeading(First.HeadingDeg - Second.HeadingDeg) - 360.0)
+                    <= 0.1);
+    }
+
+    /// <summary>Normalizes a heading to [0, 360).</summary>
+    private static Double NormalizeHeading(Double HeadingDeg)
+    {
+        Double Output = HeadingDeg % 360.0;
+        return Output < 0.0 ? Output + 360.0 : Output;
     }
 
     /// <summary>Reverses a coverage run without changing its assigned work cells.</summary>
@@ -2073,6 +3976,503 @@ internal static class CompareExperimentalCoverage
             new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>(), Grid, BladeM);
         SelectedSequence = BuildSequence(SelectedPlan.Runs, Grid);
         return false;
+    }
+
+    /// <summary>
+    /// Removes the smallest bounded set of edge cut cells needed to obtain a
+    /// complete forward-only inbound and cut-to-fill connection. Compact runs
+    /// whose physical endpoints touch the edge zone are included even when their
+    /// cell centers lie just beyond the one-cell classification threshold.
+    /// </summary>
+    private static Boolean TryCutWithMinimalAdditionalEdgeOmission
+        (
+        List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Cells,
+        Grid Grid,
+        Double BladeM,
+        ExperimentalConnectorPlanner.Pose Start,
+        List<((Int32 Bx, Int32 By) Cell, Double DepthM)> FillCells,
+        ExperimentalCoveragePlanner.PlanResult FillPlan,
+        ExperimentalRunSequencer.Result FillSequence,
+        Boolean GradeReturn,
+        IReadOnlyList<IReadOnlyCollection<(Int32 Bx, Int32 By)>>
+            PreferredRunCellSets,
+        out ExperimentalCoveragePlanner.PlanResult SelectedPlan,
+        out ExperimentalRunSequencer.Result SelectedSequence,
+        out ExperimentalCoveragePlanner.PlanResult SelectedFillPlan,
+        out ExperimentalRunSequencer.Result SelectedFillSequence,
+        Action<String>? Diagnostic = null
+        )
+    {
+        SelectedFillPlan = FillPlan;
+        SelectedFillSequence = FillSequence;
+        ExperimentalFieldEdgePolicy EdgePolicy =
+            new ExperimentalFieldEdgePolicy(Grid, Grid.GridSizeM);
+        const Int32 MaximumCompactEdgeRunCells = 2;
+        List<ExperimentalCoveragePlanner.Run> CompactEndpointEdgeRuns =
+            OrderedCoverageCandidates(Cells, Grid, BladeM)
+                .SelectMany(Candidate => Candidate.Runs)
+                .Where(Run => Run.Cells.Count <= MaximumCompactEdgeRunCells)
+                .Where(Run => EdgePolicy.IsFieldPointNearOuterEdge(
+                        Run.StartXy.X, Run.StartXy.Y)
+                    || EdgePolicy.IsFieldPointNearOuterEdge(
+                        Run.EndXy.X, Run.EndXy.Y))
+                .ToList();
+        HashSet<(Int32 Bx, Int32 By)> CompactEndpointEdgeCells =
+            CompactEndpointEdgeRuns
+                .SelectMany(Run => Run.Cells.Select(Entry => Entry.Cell))
+                .ToHashSet();
+        HashSet<(Int32 Bx, Int32 By)> PreferredRunCells = PreferredRunCellSets
+            .SelectMany(Set => Set)
+            .ToHashSet();
+        List<((Int32 Bx, Int32 By) Cell, Double DepthM)> EdgeCells = Cells
+            .Where(Entry => (PreferredRunCellSets.Count > 0)
+                || EdgePolicy.IsEdgeWorkCell(Entry.Cell)
+                || CompactEndpointEdgeCells.Contains(Entry.Cell)
+                || PreferredRunCells.Contains(Entry.Cell))
+            .OrderBy(Entry => Entry.Cell.Bx)
+            .ThenBy(Entry => Entry.Cell.By)
+            .ToList();
+        const Int32 MaximumOmissionSetsPerTier = 128;
+        Int32 MaximumAdditionalOmissions = Math.Min(6, EdgeCells.Count);
+        ExperimentalConnectorPlanner.Pose FillEntry =
+            FillSequence.Runs[0].EntryPose;
+        Dictionary<(Int32 Bx, Int32 By), Int32> EdgeCellIndices = EdgeCells
+            .Select((Entry, Index) => (Entry.Cell, Index))
+            .ToDictionary(Item => Item.Cell, Item => Item.Index);
+        HashSet<String> CompactRunRemovalKeys = CompactEndpointEdgeRuns
+            .Select(Run => Run.Cells
+                .Select(Entry => Entry.Cell)
+                .Where(Cell => EdgeCellIndices.ContainsKey(Cell))
+                .Select(Cell => EdgeCellIndices[Cell])
+                .Distinct()
+                .OrderBy(Index => Index)
+                .ToArray())
+            .Where(Set => (Set.Length > 0)
+                && (Set.Length <= MaximumAdditionalOmissions))
+            .Select(Set => String.Join(",", Set))
+            .ToHashSet(StringComparer.Ordinal);
+        List<Int32[]> PreferredRunRemovalSets = PreferredRunCellSets
+            .Select(Set => Set
+                .Where(Cell => EdgeCellIndices.ContainsKey(Cell))
+                .Select(Cell => EdgeCellIndices[Cell])
+                .Distinct()
+                .OrderBy(Index => Index)
+                .ToArray())
+            .Where(Set => (Set.Length > 0)
+                && (Set.Length <= MaximumAdditionalOmissions))
+            .ToList();
+        HashSet<String> PreferredRunRemovalKeys = PreferredRunRemovalSets
+            .Select(Set => String.Join(",", Set))
+            .ToHashSet(StringComparer.Ordinal);
+        List<Int32[]> PreferredRunSubsetSets = PreferredRunRemovalSets
+            .SelectMany(Set => Enumerable.Range(1, Set.Length)
+                .SelectMany(Count => EnumerateIndexCombinations(
+                    Set.Length, Count, MaximumOmissionSetsPerTier)
+                    .Select(Subset => Subset.Select(Index => Set[Index])
+                        .OrderBy(Index => Index)
+                        .ToArray())))
+            .GroupBy(Set => String.Join(",", Set), StringComparer.Ordinal)
+            .Select(Group => Group.First())
+            .ToList();
+        List<Int32[]> ConflictExpansionSets = new List<Int32[]>();
+        List<Int32[]> PriorityRemovalSets = BuildPriorityEdgeRemovalSets(
+            Cells,
+            EdgeCells,
+            EdgeCellIndices,
+            Grid,
+            BladeM,
+            MaximumAdditionalOmissions)
+            .OrderBy(Set => Set.Length)
+            .ThenBy(Set => PreferredRunRemovalKeys.Contains(
+                String.Join(",", Set)) ? 0 : 1)
+            .ThenBy(Set => CompactRunRemovalKeys.Contains(
+                String.Join(",", Set)) ? 0 : 1)
+            .ThenBy(Set => String.Join(",", Set), StringComparer.Ordinal)
+            .ToList();
+        for (Int32 OmissionCount = 1;
+            OmissionCount <= MaximumAdditionalOmissions;
+            OmissionCount += 1)
+        {
+            Int32 OmissionSets = 0;
+            HashSet<String> SeenSets = new HashSet<String>(StringComparer.Ordinal);
+            IEnumerable<Int32[]> CandidateRemovalSets =
+                PreferredRunSubsetSets.Count > 0
+                    ? PreferredRunSubsetSets
+                        .Where(Set => Set.Length == OmissionCount)
+                    : PriorityRemovalSets
+                        .Where(Set => Set.Length == OmissionCount)
+                        .Concat(EnumerateIndexCombinations(
+                            EdgeCells.Count,
+                            OmissionCount,
+                            MaximumOmissionSetsPerTier));
+            foreach (Int32[] RemovedIndices in CandidateRemovalSets)
+            {
+                String RemovalKey = String.Join(",", RemovedIndices);
+                if (!SeenSets.Add(RemovalKey)) continue;
+                if (OmissionSets >= MaximumOmissionSetsPerTier) break;
+                OmissionSets += 1;
+                if (PreferredRunRemovalKeys.Contains(RemovalKey))
+                {
+                    Diagnostic?.Invoke(String.Format(
+                        CultureInfo.InvariantCulture,
+                        "whole_plan infeasible_run_omission_candidate removed={0} set={1} cells=[{2}]",
+                        OmissionCount,
+                        RemovalKey,
+                        String.Join(",", RemovedIndices.Select(Index =>
+                            String.Format(
+                                CultureInfo.InvariantCulture,
+                                "{0}:{1}",
+                                EdgeCells[Index].Cell.Bx,
+                                EdgeCells[Index].Cell.By)))));
+                }
+                if (CompactRunRemovalKeys.Contains(RemovalKey))
+                {
+                    Diagnostic?.Invoke(String.Format(
+                        CultureInfo.InvariantCulture,
+                        "whole_plan compact_edge_run_omission_candidate removed={0} set={1} cells=[{2}]",
+                        OmissionCount,
+                        RemovalKey,
+                        String.Join(",", RemovedIndices.Select(Index =>
+                            String.Format(
+                                CultureInfo.InvariantCulture,
+                                "{0}:{1}",
+                                EdgeCells[Index].Cell.Bx,
+                                EdgeCells[Index].Cell.By)))));
+                }
+                if ((OmissionSets % 25) == 0)
+                {
+                    Diagnostic?.Invoke(String.Format(
+                        CultureInfo.InvariantCulture,
+                        "whole_plan edge_cut_omission_progress removed={0} sets_tested={1} limit={2}",
+                        OmissionCount,
+                        OmissionSets,
+                        MaximumOmissionSetsPerTier));
+                }
+                HashSet<(Int32 Bx, Int32 By)> RemovedCells = RemovedIndices
+                    .Select(Index => EdgeCells[Index].Cell)
+                    .ToHashSet();
+                List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Remaining = Cells
+                    .Where(Entry => !RemovedCells.Contains(Entry.Cell))
+                    .ToList();
+                const Int32 MaximumDetourCoverageCandidates = 1;
+                Boolean JointFillRecoveryAttempted = false;
+                List<ExperimentalCoveragePlanner.PlanResult>
+                    DetourCoverageCandidates =
+                        new List<ExperimentalCoveragePlanner.PlanResult>();
+                foreach (ExperimentalCoveragePlanner.PlanResult Candidate in
+                    OrderedCoverageCandidates(
+                        Remaining,
+                        Grid,
+                        BladeM,
+                        (Start.X, Start.Y),
+                        (FillEntry.X, FillEntry.Y)))
+                {
+                    if (Candidate.Runs.Count == 0) continue;
+                    ExperimentalRunSequencer.Result Sequence = BuildSequence(
+                        Candidate.Runs,
+                        Grid,
+                        Start,
+                        FillEntry);
+                    if (!Sequence.Success)
+                    {
+                        Sequence = BuildFlexibleSequence(
+                            Candidate.Runs,
+                            Grid,
+                            Start,
+                            FillEntry);
+                    }
+                    if (!Sequence.Success
+                        || !PoseConnectsToSequence(Start, Sequence, Grid)
+                        || !SequencesConnect(Sequence, FillSequence, Grid))
+                    {
+                        if (!JointFillRecoveryAttempted)
+                        {
+                            JointFillRecoveryAttempted = true;
+                            if (TrySelectFeasibleCutFillPair(
+                                Remaining,
+                                FillCells,
+                                Grid,
+                                BladeM,
+                                Start,
+                                GradeReturn,
+                                out ExperimentalCoveragePlanner.PlanResult
+                                    AlternativeCut,
+                                out ExperimentalRunSequencer.Result
+                                    AlternativeCutSequence,
+                                out ExperimentalCoveragePlanner.PlanResult
+                                    AlternativeFill,
+                                out ExperimentalRunSequencer.Result
+                                    AlternativeFillSequence))
+                            {
+                                List<((Int32 Bx, Int32 By) Cell,
+                                    Double DepthM)> JointOmitted =
+                                        new List<((Int32, Int32), Double)>(
+                                            AlternativeCut.OmittedCells);
+                                JointOmitted.AddRange(RemovedIndices.Select(
+                                    Index => EdgeCells[Index]));
+                                SelectedPlan =
+                                    new ExperimentalCoveragePlanner.PlanResult(
+                                        AlternativeCut.HeadingDeg,
+                                        AlternativeCut.Runs,
+                                        AlternativeCut.ConnectorDistanceM,
+                                        AlternativeCut.AnchorDistanceM,
+                                        AlternativeCut.Score,
+                                        JointOmitted);
+                                SelectedSequence = AlternativeCutSequence;
+                                SelectedFillPlan = AlternativeFill;
+                                SelectedFillSequence =
+                                    AlternativeFillSequence;
+                                Diagnostic?.Invoke(String.Format(
+                                    CultureInfo.InvariantCulture,
+                                    "whole_plan edge_cut_omission_joint_fill_result removed={0} sets_tested={1} cut_heading={2:F1} fill_heading={3:F1} total_omitted={4}",
+                                    OmissionCount,
+                                    OmissionSets,
+                                    AlternativeCut.HeadingDeg,
+                                    AlternativeFill.HeadingDeg,
+                                    JointOmitted.Count));
+                                return true;
+                            }
+                        }
+                        if (DetourCoverageCandidates.Count
+                            < MaximumDetourCoverageCandidates)
+                        {
+                            DetourCoverageCandidates.Add(Candidate);
+                        }
+                        continue;
+                    }
+                    List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Omitted =
+                        new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>(
+                            Candidate.OmittedCells);
+                    Omitted.AddRange(RemovedIndices.Select(Index => EdgeCells[Index]));
+                    SelectedPlan = new ExperimentalCoveragePlanner.PlanResult(
+                        Candidate.HeadingDeg,
+                        Candidate.Runs,
+                        Candidate.ConnectorDistanceM,
+                        Candidate.AnchorDistanceM,
+                        Candidate.Score,
+                        Omitted);
+                    SelectedSequence = Sequence;
+                    Diagnostic?.Invoke(String.Format(
+                        CultureInfo.InvariantCulture,
+                        "whole_plan edge_cut_omission_result removed={0} sets_tested={1} coverage_omitted={2} total_omitted={3}",
+                        OmissionCount,
+                        OmissionSets,
+                        Candidate.OmittedCells.Count,
+                        Omitted.Count));
+                    return true;
+                }
+                foreach (ExperimentalCoveragePlanner.PlanResult Candidate in
+                    DetourCoverageCandidates)
+                {
+                    ExperimentalRunSequencer.Result Sequence =
+                        ExperimentalRunSequencer.OptimizeFlexibleEndpoints(
+                            Candidate.Runs,
+                            Start,
+                            FillEntry,
+                            Constants.DEFAULT_EQUIPMENT_LENGTH_FT
+                                * Constants.FEET_TO_METERS,
+                            Constants.DEFAULT_TURNING_CIRCLE_FT * 0.5
+                                * Constants.FEET_TO_METERS,
+                            Math.Min(0.5, Grid.GridSizeM),
+                            Grid,
+                            AllowForwardDetour: true);
+                    if (!Sequence.Success
+                        || !PoseConnectsToSequence(Start, Sequence, Grid)
+                        || !SequencesConnect(Sequence, FillSequence, Grid))
+                    {
+                        foreach (Int32 RunIndex in
+                            Sequence.InfeasibleRunIndices)
+                        {
+                            if ((RunIndex < 0)
+                                || (RunIndex >= Candidate.Runs.Count))
+                            {
+                                continue;
+                            }
+                            Int32[] Expanded = RemovedIndices
+                                .Concat(Candidate.Runs[RunIndex].Cells
+                                    .Select(Entry => Entry.Cell)
+                                    .Where(Cell => EdgeCellIndices
+                                        .ContainsKey(Cell))
+                                    .Select(Cell => EdgeCellIndices[Cell]))
+                                .Distinct()
+                                .OrderBy(Index => Index)
+                                .ToArray();
+                            if ((Expanded.Length <= RemovedIndices.Length)
+                                || (Expanded.Length
+                                    > MaximumAdditionalOmissions))
+                            {
+                                continue;
+                            }
+                            String ExpandedKey = String.Join(",", Expanded);
+                            if (PreferredRunRemovalKeys.Add(ExpandedKey))
+                            {
+                                ConflictExpansionSets.Add(Expanded);
+                                Diagnostic?.Invoke(String.Format(
+                                    CultureInfo.InvariantCulture,
+                                    "whole_plan infeasible_run_omission_expand from={0} to={1} heading={2:F1} run={3} cells=[{4}]",
+                                    RemovalKey,
+                                    ExpandedKey,
+                                    Candidate.HeadingDeg,
+                                    RunIndex,
+                                    String.Join(",", Expanded.Select(Index =>
+                                        String.Format(
+                                            CultureInfo.InvariantCulture,
+                                            "{0}:{1}",
+                                            EdgeCells[Index].Cell.Bx,
+                                            EdgeCells[Index].Cell.By)))));
+                            }
+                        }
+                        continue;
+                    }
+                    List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Omitted =
+                        new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>(
+                            Candidate.OmittedCells);
+                    Omitted.AddRange(RemovedIndices.Select(
+                        Index => EdgeCells[Index]));
+                    SelectedPlan = new ExperimentalCoveragePlanner.PlanResult(
+                        Candidate.HeadingDeg,
+                        Candidate.Runs,
+                        Candidate.ConnectorDistanceM,
+                        Candidate.AnchorDistanceM,
+                        Candidate.Score,
+                        Omitted);
+                    SelectedSequence = Sequence;
+                    Diagnostic?.Invoke(String.Format(
+                        CultureInfo.InvariantCulture,
+                        "whole_plan edge_cut_omission_detour_result removed={0} sets_tested={1} coverage_omitted={2} total_omitted={3}",
+                        OmissionCount,
+                        OmissionSets,
+                        Candidate.OmittedCells.Count,
+                        Omitted.Count));
+                    return true;
+                }
+            }
+            if (ConflictExpansionSets.Count > 0)
+            {
+                PreferredRunSubsetSets.AddRange(ConflictExpansionSets);
+                ConflictExpansionSets.Clear();
+            }
+            Diagnostic?.Invoke(String.Format(
+                CultureInfo.InvariantCulture,
+                "whole_plan edge_cut_omission_tier removed={0} sets_tested={1} selected=False truncated={2}",
+                OmissionCount,
+                OmissionSets,
+                OmissionSets >= MaximumOmissionSetsPerTier));
+        }
+        SelectedPlan = ExperimentalCoveragePlanner.Plan(
+            new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>(), Grid, BladeM);
+        SelectedSequence = BuildSequence(SelectedPlan.Runs, Grid);
+        return false;
+    }
+
+    /// <summary>
+    /// Prioritizes whole boundary run fragments and connected corner components
+    /// before arbitrary cell combinations of the same omission count.
+    /// </summary>
+    private static List<Int32[]> BuildPriorityEdgeRemovalSets
+        (
+        List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Cells,
+        List<((Int32 Bx, Int32 By) Cell, Double DepthM)> EdgeCells,
+        Dictionary<(Int32 Bx, Int32 By), Int32> EdgeCellIndices,
+        Grid Grid,
+        Double BladeM,
+        Int32 MaximumSize
+        )
+    {
+        Dictionary<String, Int32[]> Sets =
+            new Dictionary<String, Int32[]>(StringComparer.Ordinal);
+        void AddSet(IEnumerable<(Int32 Bx, Int32 By)> CellsToRemove)
+        {
+            Int32[] Indices = CellsToRemove
+                .Where(Cell => EdgeCellIndices.ContainsKey(Cell))
+                .Select(Cell => EdgeCellIndices[Cell])
+                .Distinct()
+                .OrderBy(Index => Index)
+                .ToArray();
+            if ((Indices.Length == 0) || (Indices.Length > MaximumSize)) return;
+            Sets[String.Join(",", Indices)] = Indices;
+        }
+        foreach (ExperimentalCoveragePlanner.PlanResult Candidate in
+            OrderedCoverageCandidates(Cells, Grid, BladeM))
+        {
+            foreach (ExperimentalCoveragePlanner.Run Run in Candidate.Runs)
+            {
+                AddSet(Run.Cells.Select(Entry => Entry.Cell));
+            }
+        }
+        HashSet<(Int32 Bx, Int32 By)> Unvisited = EdgeCells
+            .Select(Entry => Entry.Cell)
+            .ToHashSet();
+        while (Unvisited.Count > 0)
+        {
+            (Int32 Bx, Int32 By) Seed = Unvisited
+                .OrderBy(Cell => Cell.Bx)
+                .ThenBy(Cell => Cell.By)
+                .First();
+            Queue<(Int32 Bx, Int32 By)> Queue =
+                new Queue<(Int32 Bx, Int32 By)>();
+            List<(Int32 Bx, Int32 By)> Component =
+                new List<(Int32 Bx, Int32 By)>();
+            Queue.Enqueue(Seed);
+            Unvisited.Remove(Seed);
+            while (Queue.Count > 0)
+            {
+                (Int32 Bx, Int32 By) Cell = Queue.Dequeue();
+                Component.Add(Cell);
+                for (Int32 Dx = -1; Dx <= 1; Dx += 1)
+                {
+                    for (Int32 Dy = -1; Dy <= 1; Dy += 1)
+                    {
+                        if ((Dx == 0) && (Dy == 0)) continue;
+                        (Int32 Bx, Int32 By) Neighbor =
+                            (Cell.Bx + Dx, Cell.By + Dy);
+                        if (Unvisited.Remove(Neighbor)) Queue.Enqueue(Neighbor);
+                    }
+                }
+            }
+            AddSet(Component);
+        }
+        return Sets.Values
+            .OrderBy(Set => Set.Length)
+            .ThenBy(Set => String.Join(",", Set), StringComparer.Ordinal)
+            .ToList();
+    }
+
+    /// <summary>Enumerates lexicographic fixed-size index sets under a hard cap.</summary>
+    private static IEnumerable<Int32[]> EnumerateIndexCombinations
+        (
+        Int32 ItemCount,
+        Int32 SelectionCount,
+        Int32 Limit
+        )
+    {
+        if ((SelectionCount <= 0)
+            || (SelectionCount > ItemCount)
+            || (Limit <= 0))
+        {
+            yield break;
+        }
+        Int32[] Indices = Enumerable.Range(0, SelectionCount).ToArray();
+        Int32 Produced = 0;
+        while (Produced < Limit)
+        {
+            yield return (Int32[])Indices.Clone();
+            Produced += 1;
+            Int32 Position = SelectionCount - 1;
+            while ((Position >= 0)
+                && (Indices[Position] == ItemCount - SelectionCount + Position))
+            {
+                Position -= 1;
+            }
+            if (Position < 0) yield break;
+            Indices[Position] += 1;
+            for (Int32 Index = Position + 1;
+                Index < SelectionCount;
+                Index += 1)
+            {
+                Indices[Index] = Indices[Index - 1] + 1;
+            }
+        }
     }
 
     /// <summary>Plans and validates a fill after removing one fixed edge-cell set.</summary>
@@ -2188,6 +4588,24 @@ internal static class CompareExperimentalCoverage
             TotalM += Distance(Points[Index - 1], Points[Index]);
         }
         return TotalM;
+    }
+
+    /// <summary>Returns a linearly interpolated percentile from an ascending sample.</summary>
+    private static Double Percentile
+        (
+        List<Double> SortedValues,
+        Double Fraction
+        )
+    {
+        if (SortedValues.Count == 0) return 0.0;
+        Double Position = Math.Max(0.0, Math.Min(1.0, Fraction))
+            * (SortedValues.Count - 1);
+        Int32 Lower = (Int32)Math.Floor(Position);
+        Int32 Upper = (Int32)Math.Ceiling(Position);
+        if (Lower == Upper) return SortedValues[Lower];
+        Double Weight = Position - Lower;
+        return SortedValues[Lower]
+            + (Weight * (SortedValues[Upper] - SortedValues[Lower]));
     }
 
     /// <summary>Finds the nearest driven heading before or after one lifecycle segment.</summary>

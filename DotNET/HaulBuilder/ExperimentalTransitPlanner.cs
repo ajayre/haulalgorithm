@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
+using System.Threading;
 
 namespace HaulBuilder
 {
@@ -12,11 +14,43 @@ namespace HaulBuilder
         private const Double AUTOMATIC_ALIGNMENT_TOLERANCE_DEG = 5.0;
         private const Double SHORT_ALIGNMENT_JOG_TOLERANCE_DEG = 15.0;
         private const Double MAX_MANUAL_HEADING_CORRECTION_DEG = 30.0;
+        private const Int32 MAX_CONNECT_CACHE_ENTRIES_PER_FIELD = 200000;
         private static readonly Object AllowanceCacheLock = new Object();
         private static readonly Dictionary<(Grid Field, Int64 AllowanceBits),
             (ExperimentalFieldEdgePolicy Policy, Grid AllowanceGrid)> AllowanceCache =
                 new Dictionary<(Grid Field, Int64 AllowanceBits),
                     (ExperimentalFieldEdgePolicy Policy, Grid AllowanceGrid)>();
+        private readonly record struct ConnectCacheKey
+            (
+            Int64 StartX,
+            Int64 StartY,
+            Int64 StartHeading,
+            Int64 EndX,
+            Int64 EndY,
+            Int64 EndHeading,
+            Int64 Radius,
+            Int64 Spacing,
+            Boolean AllowManual,
+            Int64 MaximumManual,
+            Int64 EdgeAllowance,
+            Boolean AllowDetour
+            );
+        private static readonly Object ConnectCacheLock = new Object();
+        private static readonly Dictionary<Grid,
+            Dictionary<ConnectCacheKey, Result>> ConnectCache =
+                new Dictionary<Grid, Dictionary<ConnectCacheKey, Result>>();
+        private static readonly Dictionary<Grid,
+            Dictionary<ConnectCacheKey, Result>> RetainedConnectCache =
+                new Dictionary<Grid, Dictionary<ConnectCacheKey, Result>>();
+        private static Int64 ConnectCacheHits;
+        private static Int64 ConnectCacheMisses;
+        private static Int64 ConnectCacheClears;
+        private static Int64 ForwardDetourCalls;
+        private static Int64 ForwardDetourSuccesses;
+        private static Int64 ForwardDetourExpansionLimitHits;
+        private static Int64 ForwardDetourExpansions;
+        private static Int64 ForwardDetourElapsedTicks;
+        private static Int64 ForwardDetourMaximumSuccessExpansions;
         /// <summary>
         /// One automatic or operator-controlled portion of a transit.
         /// </summary>
@@ -111,7 +145,182 @@ namespace HaulBuilder
             Boolean AllowManualAssist = true,
             Double MaxManualAssistM = 45.0 * Constants.FEET_TO_METERS,
             Double EdgeAllowanceM = Constants.DEFAULT_BLADE_WIDTH_MM / 1000.0,
-            Boolean AllowForwardDetour = false
+            Boolean AllowForwardDetour = false,
+            Boolean RetainResult = false
+            )
+        {
+            ConnectCacheKey Key = new ConnectCacheKey(
+                BitConverter.DoubleToInt64Bits(Start.X),
+                BitConverter.DoubleToInt64Bits(Start.Y),
+                NormalizedHeadingBits(Start.HeadingDeg),
+                BitConverter.DoubleToInt64Bits(End.X),
+                BitConverter.DoubleToInt64Bits(End.Y),
+                NormalizedHeadingBits(End.HeadingDeg),
+                BitConverter.DoubleToInt64Bits(MinimumRadiusM),
+                BitConverter.DoubleToInt64Bits(SampleSpacingM),
+                AllowManualAssist,
+                BitConverter.DoubleToInt64Bits(MaxManualAssistM),
+                BitConverter.DoubleToInt64Bits(EdgeAllowanceM),
+                AllowForwardDetour);
+            lock (ConnectCacheLock)
+            {
+                if (RetainedConnectCache.TryGetValue(
+                        Field,
+                        out Dictionary<ConnectCacheKey, Result>? RetainedFieldCache)
+                    && RetainedFieldCache.TryGetValue(Key, out Result? Retained))
+                {
+                    ConnectCacheHits += 1;
+                    return Retained;
+                }
+                if (ConnectCache.TryGetValue(
+                        Field,
+                        out Dictionary<ConnectCacheKey, Result>? FieldCache)
+                    && FieldCache.TryGetValue(Key, out Result? Cached))
+                {
+                    ConnectCacheHits += 1;
+                    if (RetainResult)
+                    {
+                        RetainCachedResult(Field, Key, Cached);
+                    }
+                    return Cached;
+                }
+                ConnectCacheMisses += 1;
+            }
+
+            Result Result = ConnectUncached(
+                Start,
+                End,
+                MinimumRadiusM,
+                SampleSpacingM,
+                Field,
+                AllowManualAssist,
+                MaxManualAssistM,
+                EdgeAllowanceM,
+                AllowForwardDetour);
+            lock (ConnectCacheLock)
+            {
+                if (!ConnectCache.TryGetValue(
+                    Field,
+                    out Dictionary<ConnectCacheKey, Result>? FieldCache))
+                {
+                    FieldCache = new Dictionary<ConnectCacheKey, Result>();
+                    ConnectCache[Field] = FieldCache;
+                }
+                if (FieldCache.Count >= MAX_CONNECT_CACHE_ENTRIES_PER_FIELD)
+                {
+                    FieldCache.Clear();
+                    ConnectCacheClears += 1;
+                }
+                FieldCache[Key] = Result;
+                if (RetainResult)
+                {
+                    RetainCachedResult(Field, Key, Result);
+                }
+            }
+            return Result;
+        }
+
+        /// <summary>Clears field-scoped connector memoization and counters.</summary>
+        static public void ResetCache
+            (
+            )
+        {
+            lock (ConnectCacheLock)
+            {
+                ConnectCache.Clear();
+                RetainedConnectCache.Clear();
+                ConnectCacheHits = 0;
+                ConnectCacheMisses = 0;
+                ConnectCacheClears = 0;
+                ForwardDetourCalls = 0;
+                ForwardDetourSuccesses = 0;
+                ForwardDetourExpansionLimitHits = 0;
+                ForwardDetourExpansions = 0;
+                ForwardDetourElapsedTicks = 0;
+                ForwardDetourMaximumSuccessExpansions = 0;
+            }
+        }
+
+        /// <summary>Gets bounded forward-search workload counters.</summary>
+        static public (Int64 Calls, Int64 Successes, Int64 ExpansionLimitHits,
+            Int64 Expansions, Int64 MaximumSuccessExpansions,
+            Double ElapsedSeconds) GetForwardDetourStatistics
+            (
+            )
+        {
+            return (
+                Interlocked.Read(ref ForwardDetourCalls),
+                Interlocked.Read(ref ForwardDetourSuccesses),
+                Interlocked.Read(ref ForwardDetourExpansionLimitHits),
+                Interlocked.Read(ref ForwardDetourExpansions),
+                Interlocked.Read(ref ForwardDetourMaximumSuccessExpansions),
+                Interlocked.Read(ref ForwardDetourElapsedTicks)
+                    / (Double)Stopwatch.Frequency);
+        }
+
+        /// <summary>Gets connector memoization counters for audit diagnostics.</summary>
+        static public (Int64 Hits, Int64 Misses, Int32 Entries,
+            Int32 RetainedEntries, Int64 Clears) GetCacheStatistics
+            (
+            )
+        {
+            lock (ConnectCacheLock)
+            {
+                return (
+                    ConnectCacheHits,
+                    ConnectCacheMisses,
+                    ConnectCache.Values.Sum(Cache => Cache.Count),
+                    RetainedConnectCache.Values.Sum(Cache => Cache.Count),
+                    ConnectCacheClears);
+            }
+        }
+
+        /// <summary>Keeps a selected connector available after speculative-cache churn.</summary>
+        private static void RetainCachedResult
+            (
+            Grid Field,
+            ConnectCacheKey Key,
+            Result Result
+            )
+        {
+            if (!RetainedConnectCache.TryGetValue(
+                Field,
+                out Dictionary<ConnectCacheKey, Result>? FieldCache))
+            {
+                FieldCache = new Dictionary<ConnectCacheKey, Result>();
+                RetainedConnectCache[Field] = FieldCache;
+            }
+            FieldCache[Key] = Result;
+        }
+
+        /// <summary>Returns canonical cache bits for a compass heading.</summary>
+        private static Int64 NormalizedHeadingBits
+            (
+            Double HeadingDeg
+            )
+        {
+            Double Normalized = HeadingDeg % 360.0;
+            if (Normalized < 0.0) Normalized += 360.0;
+            if ((Math.Abs(Normalized) <= 1e-12)
+                || (Math.Abs(Normalized - 360.0) <= 1e-12))
+            {
+                Normalized = 0.0;
+            }
+            return BitConverter.DoubleToInt64Bits(Normalized);
+        }
+
+        /// <summary>Computes one uncached forward-only transit.</summary>
+        private static Result ConnectUncached
+            (
+            ExperimentalConnectorPlanner.Pose Start,
+            ExperimentalConnectorPlanner.Pose End,
+            Double MinimumRadiusM,
+            Double SampleSpacingM,
+            Grid Field,
+            Boolean AllowManualAssist,
+            Double MaxManualAssistM,
+            Double EdgeAllowanceM,
+            Boolean AllowForwardDetour
             )
         {
             List<(Double X, Double Y)> Gentle = GentleBend(
@@ -318,7 +527,9 @@ namespace HaulBuilder
             )
         {
             const Int32 HEADING_BIN_COUNT = 24;
-            const Int32 MAX_EXPANSIONS = 60000;
+            const Int32 MAX_EXPANSIONS = 4000;
+            Stopwatch Timer = Stopwatch.StartNew();
+            Interlocked.Increment(ref ForwardDetourCalls);
             Double SpatialResolutionM = Math.Max(
                 SampleSpacingM,
                 Math.Min(0.5 * AllowedField.GridSizeM, 0.25 * MinimumRadiusM));
@@ -374,6 +585,11 @@ namespace HaulBuilder
                         && IsForwardContinuous(Points))
                     {
                         Double LengthM = PolylineLength(Points);
+                        RecordForwardDetour(
+                            true,
+                            false,
+                            ExpansionCount,
+                            Timer.ElapsedTicks);
                         return new Result(
                             true,
                             false,
@@ -419,7 +635,44 @@ namespace HaulBuilder
                             NextPose, End, MinimumRadiusM));
                 }
             }
+            RecordForwardDetour(
+                false,
+                ExpansionCount >= MAX_EXPANSIONS,
+                ExpansionCount,
+                Timer.ElapsedTicks);
             return null;
+        }
+
+        /// <summary>Accumulates one completed bounded forward-search outcome.</summary>
+        private static void RecordForwardDetour
+            (
+            Boolean Success,
+            Boolean ExpansionLimitHit,
+            Int32 ExpansionCount,
+            Int64 ElapsedTicks
+            )
+        {
+            if (Success) Interlocked.Increment(ref ForwardDetourSuccesses);
+            if (Success)
+            {
+                Int64 Previous = Interlocked.Read(
+                    ref ForwardDetourMaximumSuccessExpansions);
+                while ((ExpansionCount > Previous)
+                    && (Interlocked.CompareExchange(
+                        ref ForwardDetourMaximumSuccessExpansions,
+                        ExpansionCount,
+                        Previous) != Previous))
+                {
+                    Previous = Interlocked.Read(
+                        ref ForwardDetourMaximumSuccessExpansions);
+                }
+            }
+            if (ExpansionLimitHit)
+            {
+                Interlocked.Increment(ref ForwardDetourExpansionLimitHits);
+            }
+            Interlocked.Add(ref ForwardDetourExpansions, ExpansionCount);
+            Interlocked.Add(ref ForwardDetourElapsedTicks, ElapsedTicks);
         }
 
         /// <summary>Samples one forward straight or minimum-radius arc primitive.</summary>

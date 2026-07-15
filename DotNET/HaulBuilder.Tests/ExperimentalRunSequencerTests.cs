@@ -76,6 +76,42 @@ namespace HaulBuilder.Tests
         }
 
         /// <summary>
+        /// Verifies flexible endpoint sequencing remains bounded for a run group
+        /// larger than the exact subset-search limit.
+        /// </summary>
+        [Fact]
+        public void OptimizeFlexibleEndpoints_LargeRunGroup_IsDeterministicAndComplete
+            (
+            )
+        {
+            Grid Grid = MakeGrid();
+            List<ExperimentalCoveragePlanner.Run> Runs =
+                new List<ExperimentalCoveragePlanner.Run>();
+            for (Int32 Index = 0; Index < 12; Index += 1)
+            {
+                Runs.Add(MakeRun(
+                    (4.5, 2.5 + (1.5 * Index)),
+                    (18.5, 2.5 + (1.5 * Index)),
+                    90.0,
+                    (4, 2 + Index)));
+            }
+
+            ExperimentalRunSequencer.Result First =
+                ExperimentalRunSequencer.OptimizeFlexibleEndpoints(
+                    Runs, null, null, 2.0, 3.0, 0.5, Grid);
+            ExperimentalRunSequencer.Result Second =
+                ExperimentalRunSequencer.OptimizeFlexibleEndpoints(
+                    Runs, null, null, 2.0, 3.0, 0.5, Grid);
+
+            Assert.True(First.Success, First.FailureReason);
+            Assert.Equal(12, First.Runs.Count);
+            Assert.Equal(11, First.Connectors.Count);
+            Assert.Equal(
+                First.Runs.Select(Run => (Run.Run.StartXy, Run.Run.EndXy)),
+                Second.Runs.Select(Run => (Run.Run.StartXy, Run.Run.EndXy)));
+        }
+
+        /// <summary>
         /// Verifies a loaded inbound path starts the overlapping long fill instead
         /// of crossing it blade-up to reach a small interior fragment first.
         /// </summary>

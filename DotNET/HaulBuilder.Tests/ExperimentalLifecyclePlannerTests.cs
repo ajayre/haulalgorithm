@@ -279,6 +279,51 @@ namespace HaulBuilder.Tests
         }
 
         /// <summary>
+        /// Verifies the allocation-free grade feasibility check agrees with a full
+        /// lifecycle build when the supplied fill sequence is already prepared.
+        /// </summary>
+        [Fact]
+        public void SupportsPreparedGradeReturn_AgreesWithPreparedLifecycleBuild
+            (
+            )
+        {
+            Grid Grid = MakeGrid();
+            ExperimentalRunSequencer.Result Fill = MakePass(
+                Grid, 5.5, 15.5, 15.5).Fill;
+            ExperimentalRunSequencer.Result Empty =
+                new ExperimentalRunSequencer.Result(
+                    true,
+                    new List<ExperimentalRunSequencer.SequencedRun>(),
+                    new List<ExperimentalTransitPlanner.Result>(),
+                    0.0,
+                    0.0,
+                    String.Empty);
+
+            Boolean Supported =
+                ExperimentalLifecyclePlanner.SupportsPreparedGradeReturn(
+                    Fill,
+                    RADIUS_M,
+                    SAMPLE_M,
+                    Grid,
+                    out String FailureReason);
+            ExperimentalLifecyclePlanner.Result Lifecycle =
+                ExperimentalLifecyclePlanner.Build(
+                    new List<ExperimentalLifecyclePlanner.PassPlan>
+                    {
+                        new ExperimentalLifecyclePlanner.PassPlan(Empty, Fill),
+                    },
+                    true,
+                    LINEUP_M,
+                    RADIUS_M,
+                    SAMPLE_M,
+                    Grid,
+                    FillSequencesPrepared: true);
+
+            Assert.Equal(Lifecycle.Success, Supported);
+            Assert.True(Supported, FailureReason);
+        }
+
+        /// <summary>
         /// Verifies a loaded westbound approach fills an aligned corridor immediately
         /// instead of deadheading west across it and returning to fill eastbound.
         /// </summary>
@@ -341,6 +386,76 @@ namespace HaulBuilder.Tests
             Assert.Equal((12.0, 15.0), Result.Runs[1].Run.EndXy);
             Assert.Single(Result.Connectors);
             Assert.Equal("AUTO_CORRIDOR_BRIDGE", Result.Connectors[0].Mode);
+        }
+
+        /// <summary>
+        /// Verifies a fill aimed toward a field edge is stopped early enough to
+        /// make its forward-only grade turnaround. The uncovered tail is recorded
+        /// as coverage shortfall instead of creating an impossible endpoint turn.
+        /// </summary>
+        [Fact]
+        public void ContinuousFillSequence_FieldEdgeRetreatsForGradeTurn
+            (
+            )
+        {
+            Grid Grid = MakeGrid();
+            ExperimentalCoveragePlanner.Run EdgeFill =
+                MakeRun(20.0, 0.5, 12.0, 270.0);
+            ExperimentalRunSequencer.SequencedRun Prepared =
+                ExperimentalRunSequencer.Prepare(
+                    EdgeFill,
+                    LINEUP_M,
+                    RADIUS_M,
+                    SAMPLE_M,
+                    Grid);
+            ExperimentalRunSequencer.Result Original =
+                new ExperimentalRunSequencer.Result(
+                    true,
+                    new List<ExperimentalRunSequencer.SequencedRun>
+                    {
+                        Prepared,
+                    },
+                    new List<ExperimentalTransitPlanner.Result>(),
+                    0.0,
+                    LINEUP_M,
+                    String.Empty);
+
+            ExperimentalRunSequencer.Result Result =
+                ExperimentalLifecyclePlanner.BuildContinuousFillSequence(
+                    Original,
+                    null,
+                    RADIUS_M,
+                    SAMPLE_M,
+                    Grid);
+
+            Assert.True(Result.Success, Result.FailureReason);
+            Assert.Single(Result.Runs);
+            Assert.True(Result.Runs[0].Run.EndXy.X > EdgeFill.EndXy.X);
+            Assert.True(Result.Runs[0].EndCoverageShortfallM > 0.0);
+
+            ExperimentalRunSequencer.Result Empty =
+                new ExperimentalRunSequencer.Result(
+                    true,
+                    new List<ExperimentalRunSequencer.SequencedRun>(),
+                    new List<ExperimentalTransitPlanner.Result>(),
+                    0.0,
+                    0.0,
+                    String.Empty);
+            ExperimentalLifecyclePlanner.Result Lifecycle =
+                ExperimentalLifecyclePlanner.Build(
+                    new List<ExperimentalLifecyclePlanner.PassPlan>
+                    {
+                        new ExperimentalLifecyclePlanner.PassPlan(Empty, Result),
+                    },
+                    true,
+                    LINEUP_M,
+                    RADIUS_M,
+                    SAMPLE_M,
+                    Grid);
+
+            Assert.True(Lifecycle.Success, Lifecycle.FailureReason);
+            Assert.Contains(Lifecycle.Segments, Segment =>
+                Segment.Phase == ExperimentalLifecyclePlanner.Phase.TurnToGrade);
         }
 
         /// <summary>

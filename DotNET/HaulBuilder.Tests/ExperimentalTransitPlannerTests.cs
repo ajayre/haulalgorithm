@@ -70,6 +70,32 @@ namespace HaulBuilder.Tests
                 Point => Assert.True(Grid.ContainsWorldXy(Point.X, Point.Y)));
         }
 
+        /// <summary>
+        /// Verifies identical field-scoped connector queries reuse the immutable
+        /// result instead of repeating geometric search.
+        /// </summary>
+        [Fact]
+        public void Connect_IdenticalQuery_ReusesCachedResult
+            (
+            )
+        {
+            Grid Grid = MakeGrid(30, 20, null);
+            ExperimentalConnectorPlanner.Pose Start =
+                new ExperimentalConnectorPlanner.Pose(5.5, 10.5, 90.0);
+            ExperimentalConnectorPlanner.Pose End =
+                new ExperimentalConnectorPlanner.Pose(20.5, 10.5, 90.0);
+
+            ExperimentalTransitPlanner.Result First =
+                ExperimentalTransitPlanner.Connect(
+                    Start, End, 5.0, 0.5, Grid, true, 30.0, 1.0, true);
+            ExperimentalTransitPlanner.Result Second =
+                ExperimentalTransitPlanner.Connect(
+                    Start, End, 5.0, 0.5, Grid, true, 30.0, 1.0, true);
+
+            // A reference match proves the second call came from the field cache.
+            Assert.Same(First, Second);
+        }
+
         /// <summary>Returns the largest sampled heading change within a polyline.</summary>
         private static Double MaximumInteriorDeflectionDeg
             (

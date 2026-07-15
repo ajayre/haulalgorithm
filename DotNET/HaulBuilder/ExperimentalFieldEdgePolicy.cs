@@ -38,7 +38,8 @@ namespace HaulBuilder
             )
         {
             if (!IsValidCell(Cell.Bx, Cell.By)) return false;
-            return DistanceFromCellCenterToExteriorM(Cell) <= HaulGridSizeM + NUMERIC_TOLERANCE;
+            return DistanceFromCellCenterToExteriorM(Cell)
+                <= HaulGridSizeM + NUMERIC_TOLERANCE;
         }
 
         /// <summary>Returns true when an in-field world point occupies an edge-adjacent valid cell.</summary>

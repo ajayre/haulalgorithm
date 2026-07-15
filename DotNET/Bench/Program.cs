@@ -73,6 +73,27 @@ internal static class Program
             return;
         }
 
+        if ((args.Length > 0) && (args[0] == "--report-whole-guidance"))
+        {
+            Environment.Exit(CompareExperimentalCoverage.ReportWholeField(
+                args.Skip(1).ToArray()));
+            return;
+        }
+
+        if ((args.Length > 0) && (args[0] == "--profile-guidance-coverage"))
+        {
+            Environment.Exit(CompareExperimentalCoverage.ProfileGuidanceCoverage(
+                args.Skip(1).ToArray()));
+            return;
+        }
+
+        if ((args.Length > 0) && (args[0] == "--diagnose-guidance-connector"))
+        {
+            Environment.Exit(CompareExperimentalCoverage.DiagnoseGuidanceConnector(
+                args.Skip(1).ToArray()));
+            return;
+        }
+
         if ((args.Length > 0) && (args[0] == "--export-routes-1-3"))
         {
             Environment.Exit(CompareExperimentalCoverage.ExportFirstThree(args.Skip(1).ToArray()));

@@ -167,13 +167,16 @@ namespace HaulBuilder
             Double PreferredLineupM,
             Double MinimumRadiusM,
             Double SampleSpacingM,
-            Grid Field
+            Grid Field,
+            Action<Int32, Int32>? Progress = null,
+            Boolean FillSequencesPrepared = false
             )
         {
             if (Passes == null) throw new ArgumentNullException(nameof(Passes));
             List<Segment> Segments = new List<Segment>();
             Int32 ManualAssistCount = 0;
             ExperimentalConnectorPlanner.Pose? Current = null;
+            Progress?.Invoke(0, Passes.Count);
 
             for (Int32 PassIndex = 0; PassIndex < Passes.Count; PassIndex += 1)
             {
@@ -228,7 +231,7 @@ namespace HaulBuilder
                 ExperimentalRunSequencer.Result LifecycleFill = Pass.Fill;
                 if (Pass.Fill.Runs.Count > 0)
                 {
-                    LifecycleFill = GradeReturn
+                    LifecycleFill = GradeReturn && !FillSequencesPrepared
                         ? BuildContinuousFillSequence(
                             Pass.Fill,
                             Current,
@@ -310,6 +313,8 @@ namespace HaulBuilder
                     }
                     Current = GradeRuns[GradeRuns.Count - 1].ExitPose;
                 }
+
+                Progress?.Invoke(PassIndex + 1, Passes.Count);
             }
 
             if (Current.HasValue)
@@ -754,9 +759,17 @@ namespace HaulBuilder
             {
                 return Sequence.Runs.Count == 0
                     ? Sequence
-                    : StopFinalRunAtWorkEnd(Sequence);
+                    : RetreatFinalFillForGradeTurn(
+                        StopFinalRunAtWorkEnd(Sequence),
+                        MinimumRadiusM,
+                        SampleSpacingM,
+                        Field);
             }
-            if (UsesCorridorBridges(Sequence)) return Sequence;
+            if (UsesCorridorBridges(Sequence))
+            {
+                return RetreatFinalFillForGradeTurn(
+                    Sequence, MinimumRadiusM, SampleSpacingM, Field);
+            }
 
             Double PreferredLineupM = Sequence.Runs.Max(Run => Math.Max(
                 Run.EntryLineupM,
@@ -768,7 +781,14 @@ namespace HaulBuilder
                 MinimumRadiusM,
                 SampleSpacingM,
                 Field);
-            if (Sequence.Runs.Count <= 1) return StopFinalRunAtWorkEnd(Sequence);
+            if (Sequence.Runs.Count <= 1)
+            {
+                return RetreatFinalFillForGradeTurn(
+                    StopFinalRunAtWorkEnd(Sequence),
+                    MinimumRadiusM,
+                    SampleSpacingM,
+                    Field);
+            }
 
             if (Inbound.HasValue)
             {
@@ -812,7 +832,97 @@ namespace HaulBuilder
                     BestScoreM = ScoreM;
                 }
             }
-            return Best ?? StopFinalRunAtWorkEnd(Sequence);
+            return Best ?? RetreatFinalFillForGradeTurn(
+                StopFinalRunAtWorkEnd(Sequence),
+                MinimumRadiusM,
+                SampleSpacingM,
+                Field);
+        }
+
+        /// <summary>
+        /// Stops the final fill early only when needed to leave enough forward
+        /// clearance for the mandatory turn into reverse-direction grading.
+        /// </summary>
+        private static ExperimentalRunSequencer.Result RetreatFinalFillForGradeTurn
+            (
+            ExperimentalRunSequencer.Result Sequence,
+            Double MinimumRadiusM,
+            Double SampleSpacingM,
+            Grid Field
+            )
+        {
+            if (!Sequence.Success || (Sequence.Runs.Count == 0)) return Sequence;
+            List<ExperimentalRunSequencer.SequencedRun> Runs =
+                new List<ExperimentalRunSequencer.SequencedRun>(Sequence.Runs);
+            ExperimentalRunSequencer.SequencedRun Original =
+                Runs[Runs.Count - 1];
+            Double MinimumWorkM = Math.Max(
+                0.5 * Field.GridSizeM,
+                SampleSpacingM);
+            Double MaximumRetreatM = Math.Max(
+                0.0,
+                Original.Run.LengthM - MinimumWorkM);
+            Double StepM = Math.Min(SampleSpacingM, 0.5 * Field.GridSizeM);
+            Double HeadingRad = Original.Run.HeadingDeg * Math.PI / 180.0;
+            Double UnitX = Math.Sin(HeadingRad);
+            Double UnitY = Math.Cos(HeadingRad);
+            for (Double RetreatM = 0.0;
+                RetreatM <= MaximumRetreatM + 1e-9;
+                RetreatM += StepM)
+            {
+                Double CandidateRetreatM = Math.Min(RetreatM, MaximumRetreatM);
+                (Double X, Double Y) End = (
+                    Original.Run.EndXy.X - (UnitX * CandidateRetreatM),
+                    Original.Run.EndXy.Y - (UnitY * CandidateRetreatM));
+                ExperimentalConnectorPlanner.Pose FillExit =
+                    new ExperimentalConnectorPlanner.Pose(
+                        End.X,
+                        End.Y,
+                        Original.Run.HeadingDeg);
+                ExperimentalConnectorPlanner.Pose GradeEntry =
+                    new ExperimentalConnectorPlanner.Pose(
+                        End.X,
+                        End.Y,
+                        Original.Run.HeadingDeg + 180.0);
+                ExperimentalTransitPlanner.Result GradeTurn =
+                    ExperimentalTransitPlanner.Connect(
+                        FillExit,
+                        GradeEntry,
+                        MinimumRadiusM,
+                        SampleSpacingM,
+                        Field,
+                        EdgeAllowanceM: Field.GridSizeM,
+                        AllowForwardDetour: true);
+                if (!GradeTurn.Success)
+                {
+                    if (CandidateRetreatM >= MaximumRetreatM - 1e-9) break;
+                    continue;
+                }
+                ExperimentalCoveragePlanner.Run RetreatedRun =
+                    new ExperimentalCoveragePlanner.Run(
+                        Original.Run.Cells,
+                        Original.Run.StartXy,
+                        End,
+                        Original.Run.HeadingDeg,
+                        Original.Run.MaximumLateralErrorM);
+                Runs[Runs.Count - 1] =
+                    new ExperimentalRunSequencer.SequencedRun(
+                        RetreatedRun,
+                        Original.EntryPose,
+                        FillExit,
+                        Original.EntryLineupM,
+                        0.0,
+                        Original.StartCoverageShortfallM,
+                        Original.EndCoverageShortfallM + CandidateRetreatM);
+                return new ExperimentalRunSequencer.Result(
+                    true,
+                    Runs,
+                    Sequence.Connectors,
+                    Sequence.ConnectorDistanceM,
+                    Sequence.MinimumLineupM,
+                    String.Empty);
+            }
+            return Sequence;
         }
 
         /// <summary>
@@ -1687,6 +1797,72 @@ namespace HaulBuilder
             return Output;
         }
 
+        /// <summary>
+        /// Checks the forward-only turnaround and reverse-order connectors needed to
+        /// grade an already prepared fill sequence.  Unlike <see cref="Build"/>, this
+        /// does not rebuild the fill sequence or allocate lifecycle segments merely
+        /// to answer a feasibility question.
+        /// </summary>
+        static public Boolean SupportsPreparedGradeReturn
+            (
+            ExperimentalRunSequencer.Result FillSequence,
+            Double MinimumRadiusM,
+            Double SampleSpacingM,
+            Grid Field,
+            out String FailureReason,
+            Boolean RetainResults = false
+            )
+        {
+            FailureReason = String.Empty;
+            if (!FillSequence.Success)
+            {
+                FailureReason = FillSequence.FailureReason;
+                return false;
+            }
+            if (FillSequence.Runs.Count == 0) return true;
+
+            List<ExperimentalRunSequencer.SequencedRun> GradeRuns = BuildGradeRuns(
+                FillSequence.Runs,
+                0.0,
+                MinimumRadiusM,
+                SampleSpacingM,
+                Field);
+            ExperimentalTransitPlanner.Result TurnToGrade =
+                ExperimentalTransitPlanner.Connect(
+                    FillSequence.Runs[FillSequence.Runs.Count - 1].ExitPose,
+                    GradeRuns[0].EntryPose,
+                    MinimumRadiusM,
+                    SampleSpacingM,
+                    Field,
+                    EdgeAllowanceM: Field.GridSizeM,
+                    AllowForwardDetour: true,
+                    RetainResult: RetainResults);
+            if (!TurnToGrade.Success)
+            {
+                FailureReason = TurnToGrade.FailureReason;
+                return false;
+            }
+
+            if (CanRetraceFillConnectors(FillSequence)) return true;
+            for (Int32 Index = 1; Index < GradeRuns.Count; Index += 1)
+            {
+                ExperimentalTransitPlanner.Result Connector =
+                    ExperimentalTransitPlanner.Connect(
+                        GradeRuns[Index - 1].ExitPose,
+                        GradeRuns[Index].EntryPose,
+                        MinimumRadiusM,
+                        SampleSpacingM,
+                        Field,
+                        EdgeAllowanceM: Field.GridSizeM,
+                        AllowForwardDetour: true,
+                        RetainResult: RetainResults);
+                if (Connector.Success) continue;
+                FailureReason = Connector.FailureReason;
+                return false;
+            }
+            return true;
+        }
+
         /// <summary>Plans and appends one lifecycle transit.</summary>
         private static Boolean AppendTransit
             (
@@ -1707,6 +1883,7 @@ namespace HaulBuilder
                 MinimumRadiusM,
                 SampleSpacingM,
                 Field,
+                EdgeAllowanceM: Field.GridSizeM,
                 AllowForwardDetour: true);
             FailureReason = Transit.FailureReason;
             if (!Transit.Success) return false;

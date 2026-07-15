@@ -247,7 +247,7 @@ namespace HaulBuilder
             }
 
             ExperimentalFieldEdgePolicy EdgePolicy =
-                new ExperimentalFieldEdgePolicy(Grid, BladeWidthM);
+                new ExperimentalFieldEdgePolicy(Grid, Grid.GridSizeM);
             List<PlanResult> Candidates = new List<PlanResult>();
             for (Double HeadingDeg = 0.0; HeadingDeg < 180.0; HeadingDeg += HEADING_STEP_DEG)
             {
