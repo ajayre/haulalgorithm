@@ -320,6 +320,59 @@ namespace HaulBuilder
         }
 
         /// <summary>
+        /// Re-packs one fill allocation at an established heading while allowing
+        /// nearby along-lane gaps to remain inside a continuous work envelope.
+        /// The returned runs retain the exact input cell/depth multiset; the extra
+        /// centerline is temporary placement redistributed by the grade return.
+        /// </summary>
+        static internal PlanResult BuildFillEnvelopeCandidate
+            (
+            List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Cells,
+            Grid Grid,
+            Double BladeWidthM,
+            Double HeadingDeg,
+            Double MaximumAlongGapGridMultiplier
+            )
+        {
+            if (Cells == null) throw new ArgumentNullException(nameof(Cells));
+            if (Grid == null) throw new ArgumentNullException(nameof(Grid));
+            if (BladeWidthM <= 0.0)
+            {
+                throw new ArgumentOutOfRangeException(nameof(BladeWidthM));
+            }
+            if (MaximumAlongGapGridMultiplier
+                < MAX_ALONG_GAP_GRID_MULTIPLIER)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(MaximumAlongGapGridMultiplier));
+            }
+            Double NormalizedHeadingDeg = ((HeadingDeg % 180.0) + 180.0)
+                % 180.0;
+            List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Omitted =
+                new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>();
+            PlanResult Selected = new Boolean[] { false, true }
+                .Select(DescendingCross => BuildCandidate(
+                    Cells,
+                    Grid,
+                    BladeWidthM,
+                    NormalizedHeadingDeg,
+                    DescendingCross,
+                    null,
+                    null,
+                    Omitted,
+                    MaximumAlongGapGridMultiplier))
+                .OrderBy(Candidate => Candidate.Score)
+                .ThenBy(Candidate => Candidate.HeadingDeg)
+                .First();
+            if (!ConservesAllocation(Cells, Selected.OrderedCells))
+            {
+                throw new InvalidOperationException(
+                    "Fill-envelope planning changed the cell/depth multiset.");
+            }
+            return Selected;
+        }
+
+        /// <summary>
         /// Builds and scores one heading and cross-axis packing direction.
         /// </summary>
         private static PlanResult BuildCandidate
@@ -331,7 +384,9 @@ namespace HaulBuilder
             Boolean DescendingCross,
             (Double X, Double Y)? OrientStartXy,
             (Double X, Double Y)? OrientEndXy,
-            List<((Int32 Bx, Int32 By) Cell, Double DepthM)> OmittedCells
+            List<((Int32 Bx, Int32 By) Cell, Double DepthM)> OmittedCells,
+            Double MaximumAlongGapGridMultiplier =
+                MAX_ALONG_GAP_GRID_MULTIPLIER
             )
         {
             if (Cells.Count == 0)
@@ -351,7 +406,8 @@ namespace HaulBuilder
             List<ProjectedCell> Projected = Project(Cells, Grid, Origin, AlongUnit, CrossUnit);
             List<List<ProjectedCell>> Groups = PackCrossAxis(Projected, BladeWidthM, DescendingCross);
             List<Run> Runs = new List<Run>();
-            Double MaximumGapM = MAX_ALONG_GAP_GRID_MULTIPLIER * Grid.GridSizeM;
+            Double MaximumGapM = MaximumAlongGapGridMultiplier
+                * Grid.GridSizeM;
             foreach (List<ProjectedCell> Group in Groups)
             {
                 Runs.AddRange(BuildGroupRuns(

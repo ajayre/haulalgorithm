@@ -464,6 +464,55 @@ internal static class HaulOptimizationBench
                 RouteTime.Value / 3600.0,
                 RouteDistanceM));
         }
+        FieldEdgePolicy ExactEdgePolicy = new FieldEdgePolicy(Grid, Grid.GridSizeM);
+        foreach (Int32 PassNumber in DiagnosticPasses
+            .Where(PassNumber => PassNumber >= 1
+                && PassNumber <= ExactResult.Plan.Passes.Count)
+            .OrderBy(PassNumber => PassNumber))
+        {
+            LifecyclePlanner.PassPlan Pass =
+                ExactResult.Plan.Passes[PassNumber - 1];
+            Console.WriteLine(
+                "exact_route pass={0} cut_runs={1} fill_runs={2}",
+                PassNumber,
+                Pass.Cut.Runs.Count,
+                Pass.Fill.Runs.Count);
+            for (Int32 RunIndex = 0;
+                RunIndex < Pass.Fill.Runs.Count;
+                RunIndex += 1)
+            {
+                CoveragePlanner.Run Run = Pass.Fill.Runs[RunIndex].Run;
+                Int32 MinimumBx = Run.Cells.Min(Entry => Entry.Cell.Bx);
+                Int32 MaximumBx = Run.Cells.Max(Entry => Entry.Cell.Bx);
+                Int32 MinimumBy = Run.Cells.Min(Entry => Entry.Cell.By);
+                Int32 MaximumBy = Run.Cells.Max(Entry => Entry.Cell.By);
+                List<Double> EdgeHeadings = Run.Cells
+                    .Select(Entry => ExactEdgePolicy.TryGetParallelHeadingDeg(
+                        Entry.Cell, out Double EdgeHeadingDeg)
+                            ? (Double?)EdgeHeadingDeg
+                            : null)
+                    .Where(HeadingDeg => HeadingDeg.HasValue)
+                    .Select(HeadingDeg => HeadingDeg!.Value)
+                    .ToList();
+                Console.WriteLine(String.Format(
+                    CultureInfo.InvariantCulture,
+                    "exact_route_fill_run pass={0} run={1} cells={2} heading={3:F2} length_m={4:F2} bounds=({5},{6})-({7},{8}) edge_headings={9}",
+                    PassNumber,
+                    RunIndex,
+                    Run.Cells.Count,
+                    Run.HeadingDeg,
+                    Run.LengthM,
+                    MinimumBx,
+                    MinimumBy,
+                    MaximumBx,
+                    MaximumBy,
+                    EdgeHeadings.Count == 0
+                        ? "none"
+                        : String.Join(",", EdgeHeadings
+                            .Select(HeadingDeg => HeadingDeg.ToString(
+                                "F1", CultureInfo.InvariantCulture)))));
+            }
+        }
         Double ExactHours = ExactResult.DeterministicSeconds / 3600.0;
         Double SavingsPercent = 100.0 * (433.483 - ExactHours) / 433.483;
         Boolean GatePassed = ExactHours <= 216.742;

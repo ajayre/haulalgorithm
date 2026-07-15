@@ -115,13 +115,15 @@ public static class GuidancePlanner
             LifecyclePlanner.Result Lifecycle,
             GuidanceTiming.Result Timing,
             GuidanceResult Guidance,
-            GuidanceTime SummaryTime
+            GuidanceTime SummaryTime,
+            IReadOnlyList<LifecyclePlanner.PassPlan> Passes
             )
         {
             this.Lifecycle = Lifecycle;
             this.Timing = Timing;
             this.Guidance = Guidance;
             this.SummaryTime = SummaryTime;
+            this.Passes = Passes;
         }
 
         /// <summary>Gets the final connected forward-only lifecycle.</summary>
@@ -135,6 +137,9 @@ public static class GuidancePlanner
 
         /// <summary>Gets the legacy-shaped timing summary backed by detailed timing.</summary>
         public GuidanceTime SummaryTime { get; }
+
+        /// <summary>Gets the final selected cut/fill sequences used by the lifecycle.</summary>
+        public IReadOnlyList<LifecyclePlanner.PassPlan> Passes { get; }
     }
 
     /// <summary>Builds the default production guidance and final-geometry timing.</summary>
@@ -204,7 +209,7 @@ public static class GuidancePlanner
         GuidanceResult Guidance = BuildGuidanceResult(
             Lifecycle, Timing, Route, Grid, Field, HeadingDeg, Options);
         GuidanceTime SummaryTime = BuildSummaryTime(Timing);
-        return new BuildResult(Lifecycle, Timing, Guidance, SummaryTime);
+        return new BuildResult(Lifecycle, Timing, Guidance, SummaryTime, Passes);
     }
 
     /// <summary>Adapts lifecycle geometry to the established waypoint export model.</summary>

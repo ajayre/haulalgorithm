@@ -16,7 +16,7 @@
 
 **[0.0.9]** **Relationship to `GUIDANCE-TIMING-AUDIT.md`:** The promoted full-field guidance report is the measured performance baseline. Its timing implementation and final centerline are authoritative for acceptance comparisons until a later audited baseline is deliberately promoted.
 
-**[0.0.10]** **Implementation status:** Experimental optimized path implemented. The canonical ledger, depth-layer lanes, balanced cycle packing, equal-load global pair refinement, compact production-guidance preflight, bounded difficult-cycle deferral, production option gate, focused unit tests, and non-interactive exact benchmark are present. The bounded checkpoint in section 0.2 exceeds the `50%` raw-time target, but it is not a fixed-work release result because its additional deferred ledger remains unfinished. The legacy path therefore remains the production default.
+**[0.0.10]** **Implementation status:** Experimental optimized path implemented. The canonical ledger, depth-layer lanes, balanced cycle packing, equal-load global pair refinement, adaptive fill-redistribution envelopes, compact production-guidance preflight, bounded difficult-cycle deferral, production option gate, focused unit tests, and non-interactive exact benchmark are present. The bounded checkpoint in section 0.2 exceeds the `50%` raw-time target, but it is not a fixed-work release result because its additional deferred ledger remains unfinished. The legacy path therefore remains the production default.
 
 **[0.0.11]** **Final default:** The legacy `Passes.GeneratePasses` path shall remain available as a diagnostic fallback. The new optimizer shall become the default only after all invariant, guidance, full-field time, determinism, and rollout gates in sections 10, 14, and 16 pass.
 
@@ -30,6 +30,7 @@
 | **2.0.0** | 2026-07-15 | Replaced local-only refinement with global lane-first allocation, flow-constrained matching, exact guidance costing, a fixed-work performance gate, explicit deferred-work accounting, and a checkpointed iteration harness. |
 | **2.1.0** | 2026-07-15 | Recorded the first implemented exact checkpoint, its explicit perimeter deferral, test status, and unresolved 50% gate. |
 | **2.2.0** | 2026-07-15 | Promoted six-run cycle packing, deterministic equal-load pair refinement, exact compact-cycle preflight, and an opt-in bounded difficult-work ledger; recorded both the best complete automatic-work checkpoint and the first raw-time checkpoint below 50% of baseline. |
+| **2.3.0** | 2026-07-15 | Added geometry-derived, proximity-component fill redistribution envelopes with mandatory grade-return validation, exact route diagnostics, focused tests, and the improved complete-work checkpoint. |
 
 ### 0.2 Current implementation checkpoint
 
@@ -43,9 +44,17 @@
 
 **[0.2.5]** The `149`-cycle checkpoint has `57.607 h` loaded transit, `32.803 h` transit to the next cut, `26.464 h` fill-to-grade turning, `24.308 h` acceleration overhead, `92` manual assists, and zero sequencing failures. The next optimization target is completion or reinsertion of the deferred ledger without exceeding the approximately `0.010 h` remaining raw-time margin. The adjacent `148`-cycle candidate is exact-valid but fails the time gate at `216.894 h`, establishing `149` as the minimum omission count under the measured most-fragmented-first ranking.
 
-**[0.2.6]** Focused ledger, optimizer, pair-refinement, difficult-cycle-filter, and connector tests pass `15/15`, and the Release solution and benchmark build successfully. The most recent complete-suite snapshot before these additional focused tests remains `98` passed and `11` failed in pre-existing lineup, Python pass/route parity, guidance conservation, engine-guidance, and PNG-guidance contracts. The production optimizer remains default-off until those failures and the fixed-work performance gate are resolved.
+**[0.2.6]** Focused `CoveragePlannerTests` and `LifecyclePlannerTests` pass `22/22`, and the Release benchmark builds successfully. The complete suite reports `107` passed and the same `11` known failures in lineup, Python pass/route parity, guidance conservation, engine-guidance, and PNG-guidance contracts. The production optimizer remains default-off until those failures and the fixed-work performance gate are resolved.
 
 **[0.2.7]** Enabling `EnableHaulOptimization` now selects the measured north-south, six-run, edge-deferral, eight-round centroid-refinement, flow-weight `1.0`, and route-window `200` defaults. `HaulOptimizationMaximumCompactOmissions` defaults to `0`; setting it to a positive bound is an explicit authorization to retain the omitted cycles in `HaulOptimizationResult.DeferredWork` for later completion analysis.
+
+**[0.2.8]** The current complete automatic-work checkpoint adds adaptive fill redistribution envelopes without changing pairing, target surface, cut/fill ratio, allocation ownership, or the deferred ledger. It produces `3,043` cycles, `229.290 h` deterministic, `286.612 h` scheduled, `2,172,722.3 m`, `54,221` lifecycle segments, and `257` manual assists with zero sequence failures. This is `47.105%` below the `433.483 h` baseline and remains `12.548 h` above the fixed-work release limit.
+
+**[0.2.9]** Relative to the `236.004 h` checkpoint in [0.2.2], adaptive whole-allocation and proximity-component envelopes save `6.714 h` deterministic and `53,042.7 m`. The principal measured reduction is blade-up transit and repeated lineup/exit geometry; blade-down fill and grade distance increases slightly because accepted bridge corridors deliberately redistribute temporary overfill during the mandatory grade return.
+
+**[0.2.10]** The exact diagnostic canaries prove the intended component behavior. Routes `2526`, `2613`, `2728`, and `2858` each change from fourteen selected fill fragments to two final runs: one `25`-cell north-south corridor and one retained isolated cell. Route `2488` changes from seventeen pre-envelope fill fragments, or three fixed-heading envelope runs, to one geometry-selected corridor. Every canary retains zero guidance omissions and an automatic cut-to-fill link.
+
+**[0.2.11]** The reproducible command is `dotnet DotNET/Bench/bin/Release/net8.0/Bench.dll --optimize-haul DotNET/TheShop2_2ft.agd northsouth 6 --defer-edge --reorder-window=200 --flow-weight=1.0 --pair-2opt --exact`. `--diagnostic-pass=N[,N...]` additionally prints each selected exact fill run, its allocation bounds, heading, length, and applicable field-edge headings.
 
 **[0.1.2]** Revisions follow semantic versioning: **MAJOR** denotes an incompatible normative change, **MINOR** a backward-compatible addition, and **PATCH** a clarification that does not change an obligation.
 
@@ -278,6 +287,24 @@ Reporting and optional export
 **[7.3.3]** No cycle shall contain two pieces of the same cell and work kind. A split cell shall therefore be serviced by different cycles.
 
 **[7.3.4]** The lane inventory shall report total lanes, lane lengths, volumes, endpoint poses, boundary clearance, predicted run count, split entries, and unlaneable entries.
+
+### 7.4 Fill redistribution envelopes
+
+**[7.4.1]** Fill guidance may join close-proximity allocated fill fragments with a continuous blade-down envelope when the mandatory reverse grading pass can redistribute temporary overplacement to the unchanged requested final surface. This rule applies to fill only; cut guidance shall not remove material from intervening non-cut cells.
+
+**[7.4.2]** Envelope headings shall be derived from the allocation geometry rather than limited to north-south or east-west. Deterministic candidates shall include established run headings, the allocation's principal axes, dominant axial headings from bounded nearby-cell links, and locally required field-edge tangents.
+
+**[7.4.3]** Disconnected proximity components shall be evaluated independently. A dense component may select its own heading while isolated or difficult cells remain separate; a distant cell shall not force a poor common heading on neighboring contiguous work.
+
+**[7.4.4]** An envelope shall retain the exact input `(cell, depth)` multiset. It shall not change ownership, depth, volume, cycle balance, cut/fill ratio, target elevation, or deferred work. Additional centerline distance represents temporary placement and grading redistribution, not a ledger reassignment.
+
+**[7.4.5]** The default envelope shall bound along-axis gaps to `12` grid cells, maximum blade-down work inflation to `2.0` times the replaced fragments, and assigned-cell lateral error to one-half grid cell. These are candidate bounds, not permissions to violate field containment, edge-parallel work, blade width, or any guidance rule.
+
+**[7.4.6]** A candidate shall reduce run count, receive forward-only sequencing with loaded-overlap avoidance, conserve allocation bit-for-bit, and prove the complete fill-to-grade turnaround plus reverse connector sequence before acceptance. An infeasible candidate shall be rejected transactionally and the prior sequence retained.
+
+**[7.4.7]** Feasible candidates shall be ranked by an estimate covering both fill and reverse-grade work, inter-run movement, lineups, and a dominant manual-assist penalty. Fewest runs alone shall not select an excessively long or operator-dependent envelope.
+
+**[7.4.8]** Unit tests shall cover a close comb, a non-cardinal diagonal cluster, a dense component with a distant outlier, a sparse rejection, exact cell/depth conservation, and mandatory grade-return feasibility. The exact whole-field benchmark remains the promotion authority.
 
 ## 8. Flow-constrained global pairing and cycle packing
 

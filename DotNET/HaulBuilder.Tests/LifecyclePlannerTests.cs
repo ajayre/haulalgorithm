@@ -658,6 +658,214 @@ namespace HaulBuilder.Tests
         }
 
         /// <summary>
+        /// Verifies a close comb of fill cells becomes one blade-down envelope
+        /// corridor while retaining the exact allocated cell/depth multiset for
+        /// redistribution by the reverse grading run.
+        /// </summary>
+        [Fact]
+        public void ContinuousFillSequence_CloseCombUsesFillEnvelope
+            (
+            )
+        {
+            Grid Grid = MakeCoordinateGrid();
+            List<CoveragePlanner.Run> Fragments = Enumerable.Range(0, 6)
+                .Select(Index => MakeCellRun(
+                    Grid,
+                    6 + Index,
+                    10 + (Index % 2),
+                    90.0))
+                .ToList();
+            List<RunSequencer.SequencedRun> Prepared = Fragments
+                .Select(Run => RunSequencer.Prepare(
+                    Run, LINEUP_M, RADIUS_M, SAMPLE_M, Grid))
+                .ToList();
+            RunSequencer.Result Original = new RunSequencer.Result(
+                true,
+                Prepared,
+                new List<TransitPlanner.Result>(),
+                0.0,
+                LINEUP_M,
+                String.Empty);
+            List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Expected =
+                Fragments.SelectMany(Run => Run.Cells).ToList();
+
+            RunSequencer.Result Continuous =
+                LifecyclePlanner.BuildContinuousFillSequence(
+                    Original,
+                    new ConnectorPlanner.Pose(2.0, 10.5, 90.0),
+                    RADIUS_M,
+                    SAMPLE_M,
+                    Grid);
+
+            Assert.True(Continuous.Success, Continuous.FailureReason);
+            Assert.Single(Continuous.Runs);
+            Assert.True(CoveragePlanner.ConservesAllocation(
+                Expected,
+                Continuous.Runs.SelectMany(Run => Run.Run.Cells).ToList()));
+            Assert.True(
+                Continuous.Runs[0].Run.LengthM > Grid.GridSizeM,
+                Continuous.Runs[0].Run.LengthM.ToString());
+
+            RunSequencer.Result Empty = new RunSequencer.Result(
+                true,
+                new List<RunSequencer.SequencedRun>(),
+                new List<TransitPlanner.Result>(),
+                0.0,
+                0.0,
+                String.Empty);
+            LifecyclePlanner.Result Lifecycle = LifecyclePlanner.Build(
+                new List<LifecyclePlanner.PassPlan>
+                {
+                    new LifecyclePlanner.PassPlan(Empty, Continuous),
+                },
+                true,
+                LINEUP_M,
+                RADIUS_M,
+                SAMPLE_M,
+                Grid,
+                FillSequencesPrepared: true);
+
+            Assert.True(Lifecycle.Success, Lifecycle.FailureReason);
+            Assert.Single(Lifecycle.Segments, Segment =>
+                Segment.Phase == LifecyclePlanner.Phase.Fill);
+            Assert.Single(Lifecycle.Segments, Segment =>
+                Segment.Phase == LifecyclePlanner.Phase.Grade);
+        }
+
+        /// <summary>
+        /// Verifies an oblique close-proximity cluster selects its geometric axis
+        /// instead of inheriting an unrelated fragment or cardinal heading.
+        /// </summary>
+        [Fact]
+        public void ContinuousFillSequence_DiagonalClusterUsesAdaptiveHeading
+            (
+            )
+        {
+            Grid Grid = MakeCoordinateGrid();
+            List<CoveragePlanner.Run> Fragments = Enumerable.Range(0, 6)
+                .Select(Index => MakeCellRun(
+                    Grid,
+                    6 + Index,
+                    6 + Index,
+                    90.0))
+                .ToList();
+            RunSequencer.Result Original = new RunSequencer.Result(
+                true,
+                Fragments.Select(Run => RunSequencer.Prepare(
+                    Run, LINEUP_M, RADIUS_M, SAMPLE_M, Grid)).ToList(),
+                new List<TransitPlanner.Result>(),
+                0.0,
+                LINEUP_M,
+                String.Empty);
+
+            RunSequencer.Result Continuous =
+                LifecyclePlanner.BuildContinuousFillSequence(
+                    Original,
+                    null,
+                    RADIUS_M,
+                    SAMPLE_M,
+                    Grid);
+
+            Assert.True(Continuous.Success, Continuous.FailureReason);
+            Assert.Single(Continuous.Runs);
+            Assert.InRange(
+                FieldEdgePolicy.AxialHeadingDifferenceDeg(
+                    Continuous.Runs[0].Run.HeadingDeg, 45.0),
+                0.0,
+                0.25);
+            Assert.True(CoveragePlanner.ConservesAllocation(
+                Fragments.SelectMany(Run => Run.Cells).ToList(),
+                Continuous.Runs.SelectMany(Run => Run.Run.Cells).ToList()));
+        }
+
+        /// <summary>
+        /// Verifies one distant difficult cell remains separate while a nearby
+        /// fragmented component is compacted at its own geometric heading.
+        /// </summary>
+        [Fact]
+        public void ContinuousFillSequence_DistantOutlierDoesNotSetClusterHeading
+            (
+            )
+        {
+            Grid Grid = MakeCoordinateGrid();
+            List<CoveragePlanner.Run> Fragments = Enumerable.Range(0, 10)
+                .Select(Index => MakeCellRun(
+                    Grid,
+                    25,
+                    20 + Index,
+                    145.0))
+                .Append(MakeCellRun(Grid, 4, 4, 145.0))
+                .ToList();
+            RunSequencer.Result Original = new RunSequencer.Result(
+                true,
+                Fragments.Select(Run => RunSequencer.Prepare(
+                    Run, LINEUP_M, RADIUS_M, SAMPLE_M, Grid)).ToList(),
+                new List<TransitPlanner.Result>(),
+                0.0,
+                LINEUP_M,
+                String.Empty);
+
+            RunSequencer.Result Continuous =
+                LifecyclePlanner.BuildContinuousFillSequence(
+                    Original,
+                    null,
+                    RADIUS_M,
+                    SAMPLE_M,
+                    Grid);
+
+            Assert.True(Continuous.Success, Continuous.FailureReason);
+            Assert.Equal(2, Continuous.Runs.Count);
+            CoveragePlanner.Run Cluster = Continuous.Runs
+                .Select(Run => Run.Run)
+                .Single(Run => Run.Cells.Count == 10);
+            Assert.InRange(
+                FieldEdgePolicy.AxialHeadingDifferenceDeg(
+                    Cluster.HeadingDeg, 0.0),
+                0.0,
+                0.25);
+            Assert.True(CoveragePlanner.ConservesAllocation(
+                Fragments.SelectMany(Run => Run.Cells).ToList(),
+                Continuous.Runs.SelectMany(Run => Run.Run.Cells).ToList()));
+        }
+
+        /// <summary>
+        /// Verifies sparse fragments are not joined when blade-down work distance
+        /// would grow beyond the bounded redistribution envelope.
+        /// </summary>
+        [Fact]
+        public void ContinuousFillSequence_SparseCellsRejectFillEnvelope
+            (
+            )
+        {
+            Grid Grid = MakeCoordinateGrid();
+            List<CoveragePlanner.Run> Fragments = new List<CoveragePlanner.Run>
+            {
+                MakeCellRun(Grid, 5, 12, 90.0),
+                MakeCellRun(Grid, 9, 12, 90.0),
+                MakeCellRun(Grid, 13, 12, 90.0),
+                MakeCellRun(Grid, 17, 12, 90.0),
+            };
+            RunSequencer.Result Original = new RunSequencer.Result(
+                true,
+                Fragments.Select(Run => RunSequencer.Prepare(
+                    Run, LINEUP_M, RADIUS_M, SAMPLE_M, Grid)).ToList(),
+                new List<TransitPlanner.Result>(),
+                0.0,
+                LINEUP_M,
+                String.Empty);
+
+            RunSequencer.Result Continuous =
+                LifecyclePlanner.BuildContinuousFillSequence(
+                    Original,
+                    null,
+                    RADIUS_M,
+                    SAMPLE_M,
+                    Grid);
+
+            Assert.Equal(4, Continuous.Runs.Count);
+        }
+
+        /// <summary>
         /// Verifies nearby aligned cut fragments retain only the outer lineups and
         /// use one short blade-up jog instead of a minimum-radius internal turn.
         /// </summary>
@@ -891,6 +1099,31 @@ namespace HaulBuilder.Tests
                 0.0);
         }
 
+        /// <summary>Creates one cell-centered blade-width work fragment.</summary>
+        private static CoveragePlanner.Run MakeCellRun
+            (
+            Grid Grid,
+            Int32 Bx,
+            Int32 By,
+            Double HeadingDeg
+            )
+        {
+            (Double X, Double Y) Center = Grid.CellCenterXy(Bx, By);
+            Double HeadingRad = HeadingDeg * Math.PI / 180.0;
+            Double HalfM = 0.49 * Grid.GridSizeM;
+            Double Dx = Math.Sin(HeadingRad) * HalfM;
+            Double Dy = Math.Cos(HeadingRad) * HalfM;
+            return new CoveragePlanner.Run(
+                new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>
+                {
+                    ((Bx, By), 0.02),
+                },
+                (Center.X - Dx, Center.Y - Dy),
+                (Center.X + Dx, Center.Y + Dy),
+                HeadingDeg,
+                0.0);
+        }
+
         /// <summary>Creates a large all-valid raw field.</summary>
         private static Grid MakeGrid
             (
@@ -927,6 +1160,44 @@ namespace HaulBuilder.Tests
                 0.0,
                 new Double[HEIGHT, WIDTH],
                 new Double[HEIGHT, WIDTH],
+                Valid,
+                1.3,
+                1.2,
+                61.0,
+                new List<List<(Double X, Double Y)>>());
+        }
+
+        /// <summary>Creates an all-valid grid with physical cell centers.</summary>
+        private static Grid MakeCoordinateGrid
+            (
+            )
+        {
+            const Int32 WIDTH = 50;
+            const Int32 HEIGHT = 40;
+            Boolean[,] Valid = new Boolean[HEIGHT, WIDTH];
+            Double[,] CenterX = new Double[HEIGHT, WIDTH];
+            Double[,] CenterY = new Double[HEIGHT, WIDTH];
+            for (Int32 By = 0; By < HEIGHT; By += 1)
+            {
+                for (Int32 Bx = 0; Bx < WIDTH; Bx += 1)
+                {
+                    Valid[By, Bx] = true;
+                    CenterX[By, Bx] = Bx + 0.5;
+                    CenterY[By, Bx] = By + 0.5;
+                }
+            }
+            return new Grid(
+                1.0,
+                WIDTH,
+                HEIGHT,
+                0.0,
+                0.0,
+                12,
+                true,
+                0.0,
+                0.0,
+                CenterX,
+                CenterY,
                 Valid,
                 1.3,
                 1.2,

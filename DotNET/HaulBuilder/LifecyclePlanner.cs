@@ -16,6 +16,12 @@ namespace HaulBuilder
         private const Double CORRIDOR_GAP_TOLERANCE_CELLS = 2.0;
         private const Double NESTED_FILL_FRAGMENT_MAX_LENGTH_CELLS = 1.25;
         private const Double NESTED_FILL_FRAGMENT_MAX_OFFSET_CELLS = 1.0;
+        private const Double FILL_ENVELOPE_MAX_ALONG_GAP_CELLS = 12.0;
+        private const Double FILL_ENVELOPE_MAX_WORK_INFLATION = 2.0;
+        private const Int32 FILL_ENVELOPE_MINIMUM_FRAGMENT_COUNT = 4;
+        private const Double FILL_ENVELOPE_HEADING_BIN_DEG = 5.0;
+        private const Int32 FILL_ENVELOPE_PROXIMITY_HEADING_LIMIT = 8;
+        private const Int32 FILL_ENVELOPE_SEQUENCE_CANDIDATE_LIMIT = 3;
         private const Double MANUAL_CONNECTOR_PENALTY_M = 100000.0;
         private const Double LOADED_FILL_OVERLAP_PENALTY_M = 100000.0;
         private const Double LOADED_FILL_ALIGNMENT_TOLERANCE_DEG = 20.0;
@@ -831,6 +837,20 @@ namespace HaulBuilder
                         SampleSpacingM,
                         Field);
             }
+            Sequence = RepackFillEnvelope(
+                Sequence,
+                Inbound,
+                MinimumRadiusM,
+                SampleSpacingM,
+                Field);
+            if (Sequence.Runs.Count <= 1)
+            {
+                return RetreatFinalFillForGradeTurn(
+                    StopFinalRunAtWorkEnd(Sequence),
+                    MinimumRadiusM,
+                    SampleSpacingM,
+                    Field);
+            }
             if (UsesCorridorBridges(Sequence))
             {
                 return RetreatFinalFillForGradeTurn(
@@ -904,6 +924,489 @@ namespace HaulBuilder
                 SampleSpacingM,
                 Field);
         }
+
+        /// <summary>
+        /// Converts close-proximity fragments into an oriented blade-width fill
+        /// envelope. Allocation ownership stays on the original cells while the
+        /// longer blade-down centerline represents temporary placement that the
+        /// mandatory reverse grade redistributes to the final surface.
+        /// </summary>
+        private static RunSequencer.Result RepackFillEnvelope
+            (
+            RunSequencer.Result Sequence,
+            ConnectorPlanner.Pose? Inbound,
+            Double MinimumRadiusM,
+            Double SampleSpacingM,
+            Grid Field
+            )
+        {
+            if (!Sequence.Success
+                || (Sequence.Runs.Count < FILL_ENVELOPE_MINIMUM_FRAGMENT_COUNT))
+            {
+                return Sequence;
+            }
+            List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Cells =
+                Sequence.Runs.SelectMany(Run => Run.Run.Cells).ToList();
+            Double OriginalWorkM = Sequence.Runs.Sum(Run => Run.Run.LengthM);
+            FieldEdgePolicy EdgePolicy = new FieldEdgePolicy(
+                Field, Field.GridSizeM);
+            RunSequencer.Result? Best = null;
+            Double BestScoreM = Double.PositiveInfinity;
+            Double BestHeadingDeg = Double.PositiveInfinity;
+            List<(Double HeadingDeg, CoveragePlanner.PlanResult Envelope,
+                Double ProxyScoreM)> Candidates =
+                new List<(Double HeadingDeg, CoveragePlanner.PlanResult Envelope,
+                    Double ProxyScoreM)>();
+            foreach (Double HeadingDeg in FillEnvelopeCandidateHeadings(
+                Cells, Sequence, EdgePolicy))
+            {
+                if (!Cells.All(Entry => EdgePolicy.IsParallelToEdge(
+                    Entry.Cell, HeadingDeg, 7.5)))
+                {
+                    continue;
+                }
+                CoveragePlanner.PlanResult Envelope =
+                    CoveragePlanner.BuildFillEnvelopeCandidate(
+                        Cells,
+                        Field,
+                        Field.GridSizeM,
+                        HeadingDeg,
+                        FILL_ENVELOPE_MAX_ALONG_GAP_CELLS);
+                if ((Envelope.Runs.Count >= Sequence.Runs.Count)
+                    || (Envelope.WorkDistanceM > OriginalWorkM
+                        * FILL_ENVELOPE_MAX_WORK_INFLATION)
+                    || (Envelope.MaximumLateralErrorM
+                        > (0.5 * Field.GridSizeM) + 1e-9))
+                {
+                    continue;
+                }
+                Double ProxyScoreM = 2.0 * (Envelope.WorkDistanceM
+                    + Envelope.ConnectorDistanceM
+                    + (Envelope.Runs.Count * Sequence.MinimumLineupM));
+                Candidates.Add((HeadingDeg, Envelope, ProxyScoreM));
+            }
+            foreach ((Double HeadingDeg, CoveragePlanner.PlanResult Envelope,
+                Double ProxyScoreM) Candidate in Candidates
+                    .OrderBy(Candidate => Candidate.ProxyScoreM)
+                    .ThenBy(Candidate => Candidate.Envelope.Runs.Count)
+                    .ThenBy(Candidate => Candidate.HeadingDeg)
+                    .Take(FILL_ENVELOPE_SEQUENCE_CANDIDATE_LIMIT))
+            {
+                Double HeadingDeg = Candidate.HeadingDeg;
+                CoveragePlanner.PlanResult Envelope = Candidate.Envelope;
+                RunSequencer.Result Repacked = RunSequencer.Optimize(
+                    Envelope.Runs,
+                    Inbound,
+                    null,
+                    Sequence.MinimumLineupM,
+                    MinimumRadiusM,
+                    SampleSpacingM,
+                    Field,
+                    AvoidLoadedRunOverlap: true);
+                if (!Repacked.Success) continue;
+                List<((Int32 Bx, Int32 By) Cell, Double DepthM)> RepackedCells =
+                    Repacked.Runs.SelectMany(Run => Run.Run.Cells).ToList();
+                if (!CoveragePlanner.ConservesAllocation(Cells, RepackedCells))
+                {
+                    continue;
+                }
+                RunSequencer.Result Prepared;
+                if (Repacked.Runs.Count <= 1)
+                {
+                    Prepared = RetreatFinalFillForGradeTurn(
+                        StopFinalRunAtWorkEnd(Repacked),
+                        MinimumRadiusM,
+                        SampleSpacingM,
+                        Field);
+                }
+                else
+                {
+                    RunSequencer.Result? BestCorridor = null;
+                    Double BestCorridorScoreM = Double.PositiveInfinity;
+                    for (Int32 DirectionIndex = 0;
+                        DirectionIndex < 2;
+                        DirectionIndex += 1)
+                    {
+                        Double DirectionDeg = (HeadingDeg
+                            + (180.0 * DirectionIndex)) % 360.0;
+                        if (TryBuildCorridorCandidate(
+                            Repacked,
+                            Inbound,
+                            DirectionDeg,
+                            MinimumRadiusM,
+                            SampleSpacingM,
+                            Field,
+                            out RunSequencer.Result Corridor,
+                            out Double CorridorScoreM)
+                            && (CorridorScoreM + 1e-9 < BestCorridorScoreM))
+                        {
+                            BestCorridor = Corridor;
+                            BestCorridorScoreM = CorridorScoreM;
+                        }
+                    }
+                    Prepared = BestCorridor
+                        ?? RetreatFinalFillForGradeTurn(
+                            StopFinalRunAtWorkEnd(Repacked),
+                            MinimumRadiusM,
+                            SampleSpacingM,
+                            Field);
+                }
+                Prepared = RetreatFinalFillForGradeTurn(
+                    Prepared, MinimumRadiusM, SampleSpacingM, Field);
+                if (!SupportsPreparedGradeReturn(
+                    Prepared,
+                    MinimumRadiusM,
+                    SampleSpacingM,
+                    Field,
+                    out _))
+                {
+                    continue;
+                }
+                Double LineupDistanceM = Prepared.Runs.Sum(Run =>
+                    Run.EntryLineupM + Run.ExitLineupM);
+                Double ManualPenaltyM = Prepared.Connectors.Sum(Connector =>
+                    Connector.ManualAssistDistanceM > 1e-9
+                        ? MANUAL_CONNECTOR_PENALTY_M
+                            + Connector.ManualAssistDistanceM
+                        : 0.0);
+                // Fill and reverse grade both traverse the envelope.  Include
+                // lineups and inter-run movement so a very long one-run box does
+                // not beat a shorter, better-oriented multi-run envelope merely
+                // because its run count is smaller.
+                Double ScoreM = 2.0 * (Envelope.WorkDistanceM
+                    + Prepared.ConnectorDistanceM
+                    + LineupDistanceM)
+                    + ManualPenaltyM;
+                if ((ScoreM + 1e-9 < BestScoreM)
+                    || ((Math.Abs(ScoreM - BestScoreM) <= 1e-9)
+                        && (HeadingDeg < BestHeadingDeg)))
+                {
+                    Best = Prepared;
+                    BestScoreM = ScoreM;
+                    BestHeadingDeg = HeadingDeg;
+                }
+            }
+            return Best ?? RepackFillEnvelopeComponents(
+                Sequence,
+                Cells,
+                Inbound,
+                OriginalWorkM,
+                MinimumRadiusM,
+                SampleSpacingM,
+                Field,
+                EdgePolicy);
+        }
+
+        /// <summary>
+        /// Compacts separate close-proximity components independently.  This keeps
+        /// an isolated difficult cell from forcing a poor common heading on a dense
+        /// neighboring comb, while still sequencing and grading the exact union.
+        /// </summary>
+        private static RunSequencer.Result RepackFillEnvelopeComponents
+            (
+            RunSequencer.Result Sequence,
+            List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Cells,
+            ConnectorPlanner.Pose? Inbound,
+            Double OriginalWorkM,
+            Double MinimumRadiusM,
+            Double SampleSpacingM,
+            Grid Field,
+            FieldEdgePolicy EdgePolicy
+            )
+        {
+            List<HashSet<(Int32 Bx, Int32 By)>> Components =
+                BuildFillEnvelopeComponents(Cells);
+            if (Components.Count <= 1) return Sequence;
+
+            Dictionary<(Int32 Bx, Int32 By), Int32> ComponentByCell =
+                new Dictionary<(Int32 Bx, Int32 By), Int32>();
+            for (Int32 ComponentIndex = 0;
+                ComponentIndex < Components.Count;
+                ComponentIndex += 1)
+            {
+                foreach ((Int32 Bx, Int32 By) Cell in Components[ComponentIndex])
+                {
+                    ComponentByCell[Cell] = ComponentIndex;
+                }
+            }
+            List<List<RunSequencer.SequencedRun>> RunsByComponent =
+                Enumerable.Range(0, Components.Count)
+                    .Select(_ => new List<RunSequencer.SequencedRun>())
+                    .ToList();
+            foreach (RunSequencer.SequencedRun Run in Sequence.Runs)
+            {
+                if (Run.Run.Cells.Count == 0) return Sequence;
+                Int32 ComponentIndex = ComponentByCell[Run.Run.Cells[0].Cell];
+                if (Run.Run.Cells.Any(Entry =>
+                    ComponentByCell[Entry.Cell] != ComponentIndex))
+                {
+                    return Sequence;
+                }
+                RunsByComponent[ComponentIndex].Add(Run);
+            }
+
+            List<CoveragePlanner.Run> ReplacementRuns =
+                new List<CoveragePlanner.Run>();
+            Boolean Changed = false;
+            for (Int32 ComponentIndex = 0;
+                ComponentIndex < Components.Count;
+                ComponentIndex += 1)
+            {
+                List<RunSequencer.SequencedRun> ComponentRuns =
+                    RunsByComponent[ComponentIndex];
+                List<((Int32 Bx, Int32 By) Cell, Double DepthM)> ComponentCells =
+                    Cells.Where(Entry =>
+                        ComponentByCell[Entry.Cell] == ComponentIndex).ToList();
+                if (ComponentRuns.Count < FILL_ENVELOPE_MINIMUM_FRAGMENT_COUNT)
+                {
+                    ReplacementRuns.AddRange(ComponentRuns.Select(Run => Run.Run));
+                    continue;
+                }
+                Double ComponentWorkM =
+                    ComponentRuns.Sum(Run => Run.Run.LengthM);
+                RunSequencer.Result ComponentSequence =
+                    new RunSequencer.Result(
+                        true,
+                        ComponentRuns,
+                        new List<TransitPlanner.Result>(),
+                        0.0,
+                        Sequence.MinimumLineupM,
+                        String.Empty);
+                CoveragePlanner.PlanResult? BestEnvelope =
+                    FillEnvelopeCandidateHeadings(
+                        ComponentCells, ComponentSequence, EdgePolicy)
+                    .Where(HeadingDeg => ComponentCells.All(Entry =>
+                        EdgePolicy.IsParallelToEdge(
+                            Entry.Cell, HeadingDeg, 7.5)))
+                    .Select(HeadingDeg =>
+                        CoveragePlanner.BuildFillEnvelopeCandidate(
+                            ComponentCells,
+                            Field,
+                            Field.GridSizeM,
+                            HeadingDeg,
+                            FILL_ENVELOPE_MAX_ALONG_GAP_CELLS))
+                    .Where(Envelope =>
+                        Envelope.Runs.Count < ComponentRuns.Count
+                        && Envelope.WorkDistanceM <= ComponentWorkM
+                            * FILL_ENVELOPE_MAX_WORK_INFLATION
+                        && Envelope.MaximumLateralErrorM
+                            <= (0.5 * Field.GridSizeM) + 1e-9)
+                    .OrderBy(Envelope => 2.0 * (
+                        Envelope.WorkDistanceM
+                        + Envelope.ConnectorDistanceM
+                        + (Envelope.Runs.Count * Sequence.MinimumLineupM)))
+                    .ThenBy(Envelope => Envelope.Runs.Count)
+                    .ThenBy(Envelope => Envelope.HeadingDeg)
+                    .FirstOrDefault();
+                if (BestEnvelope == null)
+                {
+                    ReplacementRuns.AddRange(ComponentRuns.Select(Run => Run.Run));
+                    continue;
+                }
+                ReplacementRuns.AddRange(BestEnvelope.Runs);
+                Changed = true;
+            }
+            if (!Changed || (ReplacementRuns.Count >= Sequence.Runs.Count))
+            {
+                return Sequence;
+            }
+            Double ReplacementWorkM =
+                ReplacementRuns.Sum(Run => Run.LengthM);
+            if (ReplacementWorkM > OriginalWorkM
+                * FILL_ENVELOPE_MAX_WORK_INFLATION)
+            {
+                return Sequence;
+            }
+            RunSequencer.Result Repacked = RunSequencer.Optimize(
+                ReplacementRuns,
+                Inbound,
+                null,
+                Sequence.MinimumLineupM,
+                MinimumRadiusM,
+                SampleSpacingM,
+                Field,
+                AvoidLoadedRunOverlap: true);
+            if (!Repacked.Success) return Sequence;
+            List<((Int32 Bx, Int32 By) Cell, Double DepthM)> RepackedCells =
+                Repacked.Runs.SelectMany(Run => Run.Run.Cells).ToList();
+            if (!CoveragePlanner.ConservesAllocation(Cells, RepackedCells))
+            {
+                return Sequence;
+            }
+            RunSequencer.Result Prepared = RetreatFinalFillForGradeTurn(
+                StopFinalRunAtWorkEnd(Repacked),
+                MinimumRadiusM,
+                SampleSpacingM,
+                Field);
+            return SupportsPreparedGradeReturn(
+                Prepared,
+                MinimumRadiusM,
+                SampleSpacingM,
+                Field,
+                out _)
+                ? Prepared
+                : Sequence;
+        }
+
+        /// <summary>Builds connected components of allocation cells within the bounded gap.</summary>
+        private static List<HashSet<(Int32 Bx, Int32 By)>> BuildFillEnvelopeComponents
+            (
+            List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Cells
+            )
+        {
+            HashSet<(Int32 Bx, Int32 By)> Remaining =
+                Cells.Select(Entry => Entry.Cell).ToHashSet();
+            List<HashSet<(Int32 Bx, Int32 By)>> Components =
+                new List<HashSet<(Int32 Bx, Int32 By)>>();
+            Double MaximumDistanceCells =
+                FILL_ENVELOPE_MAX_ALONG_GAP_CELLS + 1.0;
+            Double MaximumDistanceSquared =
+                MaximumDistanceCells * MaximumDistanceCells;
+            while (Remaining.Count > 0)
+            {
+                (Int32 Bx, Int32 By) Seed = Remaining.First();
+                Remaining.Remove(Seed);
+                HashSet<(Int32 Bx, Int32 By)> Component =
+                    new HashSet<(Int32 Bx, Int32 By)> { Seed };
+                Queue<(Int32 Bx, Int32 By)> Pending =
+                    new Queue<(Int32 Bx, Int32 By)>();
+                Pending.Enqueue(Seed);
+                while (Pending.Count > 0)
+                {
+                    (Int32 Bx, Int32 By) Current = Pending.Dequeue();
+                    List<(Int32 Bx, Int32 By)> Neighbors = Remaining
+                        .Where(Candidate =>
+                        {
+                            Double Dx = Candidate.Bx - Current.Bx;
+                            Double Dy = Candidate.By - Current.By;
+                            return ((Dx * Dx) + (Dy * Dy))
+                                <= MaximumDistanceSquared + 1e-9;
+                        })
+                        .ToList();
+                    foreach ((Int32 Bx, Int32 By) Neighbor in Neighbors)
+                    {
+                        Remaining.Remove(Neighbor);
+                        Component.Add(Neighbor);
+                        Pending.Enqueue(Neighbor);
+                    }
+                }
+                Components.Add(Component);
+            }
+            return Components;
+        }
+
+        /// <summary>
+        /// Derives envelope axes from the allocation rather than assuming cardinal
+        /// travel.  Principal axes describe the overall cluster; short pair links
+        /// describe the dominant directions of its close-proximity concave shape.
+        /// Existing run and mandatory edge headings remain candidates.
+        /// </summary>
+        private static List<Double> FillEnvelopeCandidateHeadings
+            (
+            List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Cells,
+            RunSequencer.Result Sequence,
+            FieldEdgePolicy EdgePolicy
+            )
+        {
+            List<Double> Headings = new List<Double>();
+            Action<Double> AddHeading = HeadingDeg =>
+            {
+                Double Normalized = NormalizeAxialHeading(HeadingDeg);
+                if (!Headings.Any(Existing =>
+                    FieldEdgePolicy.AxialHeadingDifferenceDeg(
+                        Existing, Normalized) <= 0.25))
+                {
+                    Headings.Add(Normalized);
+                }
+            };
+            foreach (RunSequencer.SequencedRun Run in Sequence.Runs)
+            {
+                AddHeading(Run.Run.HeadingDeg);
+            }
+
+            Double MeanX = Cells.Average(Entry => (Double)Entry.Cell.Bx);
+            Double MeanY = Cells.Average(Entry => (Double)Entry.Cell.By);
+            Double CovarianceXx = 0.0;
+            Double CovarianceXy = 0.0;
+            Double CovarianceYy = 0.0;
+            foreach (((Int32 Bx, Int32 By) Cell, Double DepthM) Entry in Cells)
+            {
+                Double Dx = Entry.Cell.Bx - MeanX;
+                Double Dy = Entry.Cell.By - MeanY;
+                CovarianceXx += Dx * Dx;
+                CovarianceXy += Dx * Dy;
+                CovarianceYy += Dy * Dy;
+            }
+            if ((CovarianceXx + CovarianceYy) > 1e-9)
+            {
+                Double MajorAxisFromXRad = 0.5 * Math.Atan2(
+                    2.0 * CovarianceXy,
+                    CovarianceXx - CovarianceYy);
+                Double MajorHeadingDeg = Math.Atan2(
+                    Math.Cos(MajorAxisFromXRad),
+                    Math.Sin(MajorAxisFromXRad)) * 180.0 / Math.PI;
+                AddHeading(MajorHeadingDeg);
+                AddHeading(MajorHeadingDeg + 90.0);
+            }
+
+            Int32 BinCount = (Int32)Math.Round(
+                180.0 / FILL_ENVELOPE_HEADING_BIN_DEG);
+            Double[] BinWeights = new Double[BinCount];
+            Double[] BinSinTwice = new Double[BinCount];
+            Double[] BinCosTwice = new Double[BinCount];
+            Double MaximumPairDistanceCells =
+                FILL_ENVELOPE_MAX_ALONG_GAP_CELLS + 1.0;
+            for (Int32 First = 0; First < Cells.Count; First += 1)
+            {
+                for (Int32 Second = First + 1; Second < Cells.Count; Second += 1)
+                {
+                    Double Dx = Cells[Second].Cell.Bx - Cells[First].Cell.Bx;
+                    Double Dy = Cells[Second].Cell.By - Cells[First].Cell.By;
+                    Double DistanceCells = Math.Sqrt((Dx * Dx) + (Dy * Dy));
+                    if ((DistanceCells <= 1e-9)
+                        || (DistanceCells > MaximumPairDistanceCells))
+                    {
+                        continue;
+                    }
+                    Double HeadingDeg = NormalizeAxialHeading(
+                        Math.Atan2(Dx, Dy) * 180.0 / Math.PI);
+                    Int32 Bin = (Int32)Math.Floor(
+                        (HeadingDeg + (0.5 * FILL_ENVELOPE_HEADING_BIN_DEG))
+                            / FILL_ENVELOPE_HEADING_BIN_DEG) % BinCount;
+                    Double Weight = 1.0 / DistanceCells;
+                    Double TwiceRad = 2.0 * HeadingDeg * Math.PI / 180.0;
+                    BinWeights[Bin] += Weight;
+                    BinSinTwice[Bin] += Weight * Math.Sin(TwiceRad);
+                    BinCosTwice[Bin] += Weight * Math.Cos(TwiceRad);
+                }
+            }
+            foreach (Int32 Bin in Enumerable.Range(0, BinCount)
+                .Where(Index => BinWeights[Index] > 0.0)
+                .OrderByDescending(Index => BinWeights[Index])
+                .ThenBy(Index => Index)
+                .Take(FILL_ENVELOPE_PROXIMITY_HEADING_LIMIT))
+            {
+                AddHeading(0.5 * Math.Atan2(
+                    BinSinTwice[Bin],
+                    BinCosTwice[Bin]) * 180.0 / Math.PI);
+            }
+
+            foreach (((Int32 Bx, Int32 By) Cell, Double DepthM) Entry in Cells)
+            {
+                if (EdgePolicy.TryGetParallelHeadingDeg(
+                    Entry.Cell, out Double EdgeHeadingDeg))
+                {
+                    AddHeading(EdgeHeadingDeg);
+                }
+            }
+            return Headings.OrderBy(HeadingDeg => HeadingDeg).ToList();
+        }
+
+        /// <summary>Normalizes an undirected compass heading to [0, 180).</summary>
+        private static Double NormalizeAxialHeading
+            (
+            Double HeadingDeg
+            ) => ((HeadingDeg % 180.0) + 180.0) % 180.0;
 
         /// <summary>
         /// Stops the final fill early only when needed to leave enough forward
