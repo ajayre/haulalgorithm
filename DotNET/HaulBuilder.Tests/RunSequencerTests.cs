@@ -7,9 +7,9 @@ using HaulBuilder;
 namespace HaulBuilder.Tests
 {
     /// <summary>
-    /// Verifies field-clamped lineups and deterministic experimental sequencing.
+    /// Verifies field-clamped lineups and deterministic production sequencing.
     /// </summary>
-    public sealed class ExperimentalRunSequencerTests
+    public sealed class RunSequencerTests
     {
         /// <summary>
         /// Verifies every selected lineup and nominal transit remains inside the raw field.
@@ -20,13 +20,13 @@ namespace HaulBuilder.Tests
             )
         {
             Grid Grid = MakeGrid();
-            List<ExperimentalCoveragePlanner.Run> Runs = new List<ExperimentalCoveragePlanner.Run>
+            List<CoveragePlanner.Run> Runs = new List<CoveragePlanner.Run>
             {
                 MakeRun((5.5, 5.5), (15.5, 5.5), 90.0, (5, 5)),
                 MakeRun((15.5, 10.5), (5.5, 10.5), 270.0, (5, 10)),
             };
 
-            ExperimentalRunSequencer.Result Result = ExperimentalRunSequencer.Optimize(
+            RunSequencer.Result Result = RunSequencer.Optimize(
                 Runs, null, null, 4.0, 5.0, 0.5, Grid);
 
             Assert.True(Result.Success, Result.FailureReason);
@@ -52,7 +52,7 @@ namespace HaulBuilder.Tests
             )
         {
             Grid Grid = MakeGrid();
-            List<ExperimentalCoveragePlanner.Run> Runs = new List<ExperimentalCoveragePlanner.Run>();
+            List<CoveragePlanner.Run> Runs = new List<CoveragePlanner.Run>();
             for (Int32 Index = 0; Index < 8; Index += 1)
             {
                 Runs.Add(MakeRun(
@@ -62,9 +62,9 @@ namespace HaulBuilder.Tests
                     (4, 3 + (2 * Index))));
             }
 
-            ExperimentalRunSequencer.Result First = ExperimentalRunSequencer.Optimize(
+            RunSequencer.Result First = RunSequencer.Optimize(
                 Runs, null, null, 2.0, 3.0, 0.5, Grid);
-            ExperimentalRunSequencer.Result Second = ExperimentalRunSequencer.Optimize(
+            RunSequencer.Result Second = RunSequencer.Optimize(
                 Runs, null, null, 2.0, 3.0, 0.5, Grid);
 
             Assert.True(First.Success, First.FailureReason);
@@ -85,8 +85,8 @@ namespace HaulBuilder.Tests
             )
         {
             Grid Grid = MakeGrid();
-            List<ExperimentalCoveragePlanner.Run> Runs =
-                new List<ExperimentalCoveragePlanner.Run>();
+            List<CoveragePlanner.Run> Runs =
+                new List<CoveragePlanner.Run>();
             for (Int32 Index = 0; Index < 12; Index += 1)
             {
                 Runs.Add(MakeRun(
@@ -96,11 +96,11 @@ namespace HaulBuilder.Tests
                     (4, 2 + Index)));
             }
 
-            ExperimentalRunSequencer.Result First =
-                ExperimentalRunSequencer.OptimizeFlexibleEndpoints(
+            RunSequencer.Result First =
+                RunSequencer.OptimizeFlexibleEndpoints(
                     Runs, null, null, 2.0, 3.0, 0.5, Grid);
-            ExperimentalRunSequencer.Result Second =
-                ExperimentalRunSequencer.OptimizeFlexibleEndpoints(
+            RunSequencer.Result Second =
+                RunSequencer.OptimizeFlexibleEndpoints(
                     Runs, null, null, 2.0, 3.0, 0.5, Grid);
 
             Assert.True(First.Success, First.FailureReason);
@@ -121,16 +121,16 @@ namespace HaulBuilder.Tests
             )
         {
             Grid Grid = MakeGrid();
-            ExperimentalCoveragePlanner.Run LongRun = MakeRun(
+            CoveragePlanner.Run LongRun = MakeRun(
                 (5.5, 10.5), (18.5, 10.5), 90.0, (5, 10));
-            ExperimentalCoveragePlanner.Run InteriorFragment = MakeRun(
+            CoveragePlanner.Run InteriorFragment = MakeRun(
                 (14.5, 11.0), (12.5, 11.0), 270.0, (12, 11));
-            ExperimentalConnectorPlanner.Pose LoadedInbound =
-                new ExperimentalConnectorPlanner.Pose(22.5, 10.5, 270.0);
+            ConnectorPlanner.Pose LoadedInbound =
+                new ConnectorPlanner.Pose(22.5, 10.5, 270.0);
 
-            ExperimentalRunSequencer.Result Result =
-                ExperimentalRunSequencer.Optimize(
-                    new List<ExperimentalCoveragePlanner.Run>
+            RunSequencer.Result Result =
+                RunSequencer.Optimize(
+                    new List<CoveragePlanner.Run>
                     {
                         InteriorFragment,
                         LongRun,
@@ -159,11 +159,11 @@ namespace HaulBuilder.Tests
             )
         {
             Grid Grid = MakeGrid();
-            ExperimentalCoveragePlanner.Run Run = MakeRun(
+            CoveragePlanner.Run Run = MakeRun(
                 (5.5, 12.5), (24.5, 12.5), 90.0, (24, 12));
 
-            ExperimentalRunSequencer.SequencedRun Prepared =
-                ExperimentalRunSequencer.Prepare(
+            RunSequencer.SequencedRun Prepared =
+                RunSequencer.Prepare(
                     Run, 0.0, 4.0, 0.5, Grid);
 
             Assert.Equal(Run.StartXy, Prepared.Run.StartXy);
@@ -175,7 +175,7 @@ namespace HaulBuilder.Tests
         }
 
         /// <summary>Creates one minimal allocated straight run.</summary>
-        private static ExperimentalCoveragePlanner.Run MakeRun
+        private static CoveragePlanner.Run MakeRun
             (
             (Double X, Double Y) Start,
             (Double X, Double Y) End,
@@ -183,7 +183,7 @@ namespace HaulBuilder.Tests
             (Int32 Bx, Int32 By) Cell
             )
         {
-            return new ExperimentalCoveragePlanner.Run(
+            return new CoveragePlanner.Run(
                 new List<((Int32 Bx, Int32 By) Cell, Double DepthM)> { (Cell, 0.02) },
                 Start,
                 End,

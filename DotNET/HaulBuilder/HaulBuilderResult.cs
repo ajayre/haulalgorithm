@@ -93,6 +93,16 @@ namespace HaulBuilder
         public GuidanceTime? GuidanceTime { get; set; }
 
         /// <summary>
+        /// Gets or sets the final connected forward-only guidance lifecycle.
+        /// </summary>
+        public LifecyclePlanner.Result? LifecycleGuidance { get; set; }
+
+        /// <summary>
+        /// Gets or sets detailed timing integrated over final guidance geometry.
+        /// </summary>
+        public GuidanceTiming.Result? DetailedGuidanceTime { get; set; }
+
+        /// <summary>
         /// Gets or sets base time-model result.
         /// </summary>
         public TimeResult? TimeResult { get; set; }

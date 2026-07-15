@@ -522,6 +522,13 @@ namespace HaulBuilder.Tests
             Assert.True(Result.PassResult!.Passes.Count > 0);
             Assert.True(Result.Metrics!.MoveVolumeBcy > 0.0);
             Assert.True(Result.GuidancePoints.Count > 0);
+            Assert.NotNull(Result.LifecycleGuidance);
+            Assert.True(Result.LifecycleGuidance!.Success);
+            Assert.NotNull(Result.DetailedGuidanceTime);
+            Assert.Equal(
+                Result.DetailedGuidanceTime!.TotalSeconds,
+                Result.GuidanceTime!.TotalS,
+                6);
         }
 
         /// <summary>

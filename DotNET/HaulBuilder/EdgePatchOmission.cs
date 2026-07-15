@@ -142,8 +142,8 @@ namespace HaulBuilder
                     Array.Empty<EdgePatchOmissionCell>());
             }
 
-            ExperimentalFieldEdgePolicy EdgePolicy =
-                new ExperimentalFieldEdgePolicy(Grid, Grid.GridSizeM);
+            FieldEdgePolicy EdgePolicy =
+                new FieldEdgePolicy(Grid, Grid.GridSizeM);
             List<Candidate> Candidates = BuildCandidates(
                 Source.Passes,
                 CutPerM,
@@ -299,7 +299,7 @@ namespace HaulBuilder
             (
             IReadOnlyList<Pass> Passes,
             Double CutPerM,
-            ExperimentalFieldEdgePolicy EdgePolicy,
+            FieldEdgePolicy EdgePolicy,
             HaulBuilderOptions Options
             )
         {

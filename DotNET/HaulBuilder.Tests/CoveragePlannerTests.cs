@@ -9,7 +9,7 @@ namespace HaulBuilder.Tests
     /// <summary>
     /// Verifies the isolated straight-run coverage planner without enabling it in production.
     /// </summary>
-    public sealed class ExperimentalCoveragePlannerTests
+    public sealed class CoveragePlannerTests
     {
         private const Double BLADE_WIDTH_M = 2.0;
 
@@ -26,14 +26,14 @@ namespace HaulBuilder.Tests
             List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Before =
                 new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>(Cells);
 
-            ExperimentalCoveragePlanner.PlanResult Plan = ExperimentalCoveragePlanner.Plan(
+            CoveragePlanner.PlanResult Plan = CoveragePlanner.Plan(
                 Cells,
                 Grid,
                 BLADE_WIDTH_M,
                 null,
                 Grid.CellCenterXy(15, 15));
 
-            Assert.True(ExperimentalCoveragePlanner.ConservesAllocation(Cells, Plan.OrderedCells));
+            Assert.True(CoveragePlanner.ConservesAllocation(Cells, Plan.OrderedCells));
             Assert.Equal(Before, Cells);
             Assert.Equal(Cells.Count, Plan.Runs.Sum(Run => Run.Cells.Count));
         }
@@ -49,7 +49,7 @@ namespace HaulBuilder.Tests
             Grid Grid = MakeGrid();
             List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Cells = MakeKnottedCells();
 
-            ExperimentalCoveragePlanner.PlanResult Plan = ExperimentalCoveragePlanner.Plan(
+            CoveragePlanner.PlanResult Plan = CoveragePlanner.Plan(
                 Cells,
                 Grid,
                 BLADE_WIDTH_M,
@@ -79,9 +79,9 @@ namespace HaulBuilder.Tests
             List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Cells = MakeKnottedCells();
             (Double X, Double Y) Target = Grid.CellCenterXy(15, 15);
 
-            ExperimentalCoveragePlanner.PlanResult First = ExperimentalCoveragePlanner.Plan(
+            CoveragePlanner.PlanResult First = CoveragePlanner.Plan(
                 Cells, Grid, BLADE_WIDTH_M, null, Target);
-            ExperimentalCoveragePlanner.PlanResult Second = ExperimentalCoveragePlanner.Plan(
+            CoveragePlanner.PlanResult Second = CoveragePlanner.Plan(
                 Cells, Grid, BLADE_WIDTH_M, null, Target);
 
             Assert.Equal(First.HeadingDeg, Second.HeadingDeg, 9);
@@ -90,7 +90,7 @@ namespace HaulBuilder.Tests
         }
 
         /// <summary>
-        /// Verifies merely evaluating an experimental plan cannot change existing guidance output.
+        /// Verifies merely evaluating an guidance plan cannot change existing guidance output.
         /// </summary>
         [Fact]
         public void Plan_DoesNotChangeDefaultGuidance
@@ -112,7 +112,7 @@ namespace HaulBuilder.Tests
             GuidanceResult Before = Swaths.BuildGuidance(
                 Grid, Field, Route, BLADE_WIDTH_M * 1000.0, 90.0);
 
-            ExperimentalCoveragePlanner.PlanResult Ignored = ExperimentalCoveragePlanner.Plan(
+            CoveragePlanner.PlanResult Ignored = CoveragePlanner.Plan(
                 Pass.CutCells,
                 Grid,
                 BLADE_WIDTH_M,
@@ -148,12 +148,12 @@ namespace HaulBuilder.Tests
                     ((3, 3), 0.02),
                 };
 
-            ExperimentalCoveragePlanner.PlanResult Plan = ExperimentalCoveragePlanner.Plan(
+            CoveragePlanner.PlanResult Plan = CoveragePlanner.Plan(
                 Cells, Grid, BLADE_WIDTH_M, null, null);
 
-            Assert.True(ExperimentalCoveragePlanner.ConservesAllocation(Cells, Plan.AccountedCells));
+            Assert.True(CoveragePlanner.ConservesAllocation(Cells, Plan.AccountedCells));
             Assert.True(Plan.Runs.Count < Cells.Count);
-            foreach (ExperimentalCoveragePlanner.Run Run in Plan.Runs)
+            foreach (CoveragePlanner.Run Run in Plan.Runs)
             {
                 for (Int32 Index = 0; Index <= 20; Index += 1)
                 {
@@ -183,13 +183,13 @@ namespace HaulBuilder.Tests
                     ((6, 2), 0.014),
                 };
 
-            ExperimentalCoveragePlanner.PlanResult Plan = ExperimentalCoveragePlanner.Plan(
+            CoveragePlanner.PlanResult Plan = CoveragePlanner.Plan(
                 Cells, Grid, BLADE_WIDTH_M, null, null);
 
             Assert.Empty(Plan.OmittedCells);
             Assert.NotEmpty(Plan.Runs);
             Assert.All(Plan.Runs, Run => Assert.True(
-                ExperimentalFieldEdgePolicy.AxialHeadingDifferenceDeg(
+                FieldEdgePolicy.AxialHeadingDifferenceDeg(
                     Run.HeadingDeg, 90.0) <= 7.5 + 1e-9));
         }
 
@@ -210,10 +210,10 @@ namespace HaulBuilder.Tests
                     ((2, 4), 0.013),
                 };
 
-            ExperimentalCoveragePlanner.PlanResult Plan = ExperimentalCoveragePlanner.Plan(
+            CoveragePlanner.PlanResult Plan = CoveragePlanner.Plan(
                 Cells, Grid, BLADE_WIDTH_M, null, null);
 
-            Assert.True(ExperimentalCoveragePlanner.ConservesAllocation(
+            Assert.True(CoveragePlanner.ConservesAllocation(
                 Cells, Plan.AccountedCells));
             Assert.Single(Plan.OmittedCells);
             Assert.Equal(2, Plan.OrderedCells.Count);
@@ -270,7 +270,7 @@ namespace HaulBuilder.Tests
         /// </summary>
         private static String RunSignature
             (
-            ExperimentalCoveragePlanner.PlanResult Plan
+            CoveragePlanner.PlanResult Plan
             )
         {
             return String.Join(

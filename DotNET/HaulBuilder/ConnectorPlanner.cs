@@ -5,9 +5,9 @@ using System.Linq;
 namespace HaulBuilder
 {
     /// <summary>
-    /// Builds isolated forward-only minimum-radius connectors for experimental coverage runs.
+    /// Builds isolated forward-only minimum-radius connectors for guidance coverage runs.
     /// </summary>
-    public static class ExperimentalConnectorPlanner
+    public static class ConnectorPlanner
     {
         private const Double TWO_PI = 2.0 * Math.PI;
         private const Double NUMERIC_TOLERANCE = 1e-9;

@@ -5,9 +5,9 @@ using System.Linq;
 namespace HaulBuilder
 {
     /// <summary>
-    /// Orders experimental straight work runs using in-field lineups and strict connectors.
+    /// Orders straight work runs using in-field lineups and strict connectors.
     /// </summary>
-    public static class ExperimentalRunSequencer
+    public static class RunSequencer
     {
         private const Double COST_TOLERANCE = 1e-9;
         private const Double LINEUP_SHORTFALL_WEIGHT = 4.0;
@@ -43,9 +43,9 @@ namespace HaulBuilder
             /// <param name="EndCoverageShortfallM">Nominal work omitted after the driven end.</param>
             public SequencedRun
                 (
-                ExperimentalCoveragePlanner.Run Run,
-                ExperimentalConnectorPlanner.Pose EntryPose,
-                ExperimentalConnectorPlanner.Pose ExitPose,
+                CoveragePlanner.Run Run,
+                ConnectorPlanner.Pose EntryPose,
+                ConnectorPlanner.Pose ExitPose,
                 Double EntryLineupM,
                 Double ExitLineupM,
                 Double StartCoverageShortfallM,
@@ -63,13 +63,13 @@ namespace HaulBuilder
             }
 
             /// <summary>Gets the oriented straight work run.</summary>
-            public ExperimentalCoveragePlanner.Run Run { get; }
+            public CoveragePlanner.Run Run { get; }
 
             /// <summary>Gets the blade-up entry pose.</summary>
-            public ExperimentalConnectorPlanner.Pose EntryPose { get; }
+            public ConnectorPlanner.Pose EntryPose { get; }
 
             /// <summary>Gets the blade-up exit pose.</summary>
-            public ExperimentalConnectorPlanner.Pose ExitPose { get; }
+            public ConnectorPlanner.Pose ExitPose { get; }
 
             /// <summary>Gets available straight distance before work.</summary>
             public Double EntryLineupM { get; }
@@ -90,7 +90,7 @@ namespace HaulBuilder
         public sealed class Result
         {
             /// <summary>
-            /// Initializes an experimental sequence result.
+            /// Initializes an guidance sequence result.
             /// </summary>
             /// <param name="Success">Whether all required strict connectors exist.</param>
             /// <param name="Runs">Ordered oriented runs with lineups.</param>
@@ -103,7 +103,7 @@ namespace HaulBuilder
                 (
                 Boolean Success,
                 List<SequencedRun> Runs,
-                List<ExperimentalTransitPlanner.Result> Connectors,
+                List<TransitPlanner.Result> Connectors,
                 Double ConnectorDistanceM,
                 Double MinimumLineupM,
                 String FailureReason,
@@ -128,7 +128,7 @@ namespace HaulBuilder
             public List<SequencedRun> Runs { get; }
 
             /// <summary>Gets strict connectors between successive runs.</summary>
-            public List<ExperimentalTransitPlanner.Result> Connectors { get; }
+            public List<TransitPlanner.Result> Connectors { get; }
 
             /// <summary>Gets total curved connector distance.</summary>
             public Double ConnectorDistanceM { get; }
@@ -157,9 +157,9 @@ namespace HaulBuilder
         /// <returns>Complete strict sequence or explicit failure.</returns>
         static public Result Optimize
             (
-            List<ExperimentalCoveragePlanner.Run> Runs,
-            ExperimentalConnectorPlanner.Pose? Start,
-            ExperimentalConnectorPlanner.Pose? End,
+            List<CoveragePlanner.Run> Runs,
+            ConnectorPlanner.Pose? Start,
+            ConnectorPlanner.Pose? End,
             Double PreferredLineupM,
             Double MinimumRadiusM,
             Double SampleSpacingM,
@@ -172,7 +172,7 @@ namespace HaulBuilder
             if (Runs.Count == 0)
             {
                 return new Result(true, new List<SequencedRun>(),
-                    new List<ExperimentalTransitPlanner.Result>(), 0.0, 0.0, String.Empty);
+                    new List<TransitPlanner.Result>(), 0.0, 0.0, String.Empty);
             }
             SequencedRun[,] Options = new SequencedRun[Runs.Count, 2];
             for (Int32 RunIndex = 0; RunIndex < Runs.Count; RunIndex += 1)
@@ -281,9 +281,9 @@ namespace HaulBuilder
         /// </summary>
         static public Result OptimizeFlexibleEndpoints
             (
-            List<ExperimentalCoveragePlanner.Run> Runs,
-            ExperimentalConnectorPlanner.Pose? Start,
-            ExperimentalConnectorPlanner.Pose? End,
+            List<CoveragePlanner.Run> Runs,
+            ConnectorPlanner.Pose? Start,
+            ConnectorPlanner.Pose? End,
             Double PreferredLineupM,
             Double MinimumRadiusM,
             Double SampleSpacingM,
@@ -536,8 +536,8 @@ namespace HaulBuilder
         private static Result OptimizeFlexibleGreedy
             (
             List<List<SequencedRun>> Options,
-            ExperimentalConnectorPlanner.Pose? Start,
-            ExperimentalConnectorPlanner.Pose? End,
+            ConnectorPlanner.Pose? Start,
+            ConnectorPlanner.Pose? End,
             Double PreferredLineupM,
             Double MinimumRadiusM,
             Double SampleSpacingM,
@@ -638,8 +638,8 @@ namespace HaulBuilder
         private static Boolean TryFlexibleBeamOrder
             (
             List<List<SequencedRun>> Options,
-            ExperimentalConnectorPlanner.Pose? Start,
-            ExperimentalConnectorPlanner.Pose? End,
+            ConnectorPlanner.Pose? Start,
+            ConnectorPlanner.Pose? End,
             Double PreferredLineupM,
             Double MinimumRadiusM,
             Double SampleSpacingM,
@@ -781,8 +781,8 @@ namespace HaulBuilder
         private static Boolean TryFlexibleExactOrder
             (
             List<List<SequencedRun>> Options,
-            ExperimentalConnectorPlanner.Pose? Start,
-            ExperimentalConnectorPlanner.Pose? End,
+            ConnectorPlanner.Pose? Start,
+            ConnectorPlanner.Pose? End,
             Double PreferredLineupM,
             Double MinimumRadiusM,
             Double SampleSpacingM,
@@ -1280,8 +1280,8 @@ namespace HaulBuilder
         private static Boolean TryFlexibleGreedyOrder
             (
             List<List<SequencedRun>> Options,
-            ExperimentalConnectorPlanner.Pose? Start,
-            ExperimentalConnectorPlanner.Pose? End,
+            ConnectorPlanner.Pose? Start,
+            ConnectorPlanner.Pose? End,
             Double PreferredLineupM,
             Double MinimumRadiusM,
             Double SampleSpacingM,
@@ -1394,7 +1394,7 @@ namespace HaulBuilder
             {
                 Output.Add(new SequencedRun(
                     Base.Run,
-                    new ExperimentalConnectorPlanner.Pose(
+                    new ConnectorPlanner.Pose(
                         Base.Run.StartXy.X,
                         Base.Run.StartXy.Y,
                         Base.Run.HeadingDeg),
@@ -1409,7 +1409,7 @@ namespace HaulBuilder
                 Output.Add(new SequencedRun(
                     Base.Run,
                     Base.EntryPose,
-                    new ExperimentalConnectorPlanner.Pose(
+                    new ConnectorPlanner.Pose(
                         Base.Run.EndXy.X,
                         Base.Run.EndXy.Y,
                         Base.Run.HeadingDeg),
@@ -1423,11 +1423,11 @@ namespace HaulBuilder
             {
                 Output.Add(new SequencedRun(
                     Base.Run,
-                    new ExperimentalConnectorPlanner.Pose(
+                    new ConnectorPlanner.Pose(
                         Base.Run.StartXy.X,
                         Base.Run.StartXy.Y,
                         Base.Run.HeadingDeg),
-                    new ExperimentalConnectorPlanner.Pose(
+                    new ConnectorPlanner.Pose(
                         Base.Run.EndXy.X,
                         Base.Run.EndXy.Y,
                         Base.Run.HeadingDeg),
@@ -1457,8 +1457,8 @@ namespace HaulBuilder
                 {
                     continue;
                 }
-                    ExperimentalCoveragePlanner.Run AdjustedRun =
-                        new ExperimentalCoveragePlanner.Run(
+                    CoveragePlanner.Run AdjustedRun =
+                        new CoveragePlanner.Run(
                             Base.Run.Cells,
                             (
                                 Base.Run.StartXy.X + (UnitX * StartRetreatM),
@@ -1471,13 +1471,13 @@ namespace HaulBuilder
                     Output.Add(new SequencedRun(
                         AdjustedRun,
                         StartRetreatM > COST_TOLERANCE
-                            ? new ExperimentalConnectorPlanner.Pose(
+                            ? new ConnectorPlanner.Pose(
                                 AdjustedRun.StartXy.X,
                                 AdjustedRun.StartXy.Y,
                                 AdjustedRun.HeadingDeg)
                             : Base.EntryPose,
                         EndRetreatM > COST_TOLERANCE
-                            ? new ExperimentalConnectorPlanner.Pose(
+                            ? new ConnectorPlanner.Pose(
                                 AdjustedRun.EndXy.X,
                                 AdjustedRun.EndXy.Y,
                                 AdjustedRun.HeadingDeg)
@@ -1536,8 +1536,8 @@ namespace HaulBuilder
         private static Result OptimizeGreedy
             (
             SequencedRun[,] Options,
-            ExperimentalConnectorPlanner.Pose? Start,
-            ExperimentalConnectorPlanner.Pose? End,
+            ConnectorPlanner.Pose? Start,
+            ConnectorPlanner.Pose? End,
             Double PreferredLineupM,
             Double MinimumRadiusM,
             Double SampleSpacingM,
@@ -1584,8 +1584,8 @@ namespace HaulBuilder
         private static Boolean TryGreedyOrder
             (
             SequencedRun[,] Options,
-            ExperimentalConnectorPlanner.Pose? Start,
-            ExperimentalConnectorPlanner.Pose? End,
+            ConnectorPlanner.Pose? Start,
+            ConnectorPlanner.Pose? End,
             Double PreferredLineupM,
             Double MinimumRadiusM,
             Double SampleSpacingM,
@@ -1713,7 +1713,7 @@ namespace HaulBuilder
         /// </summary>
         static public SequencedRun Prepare
             (
-            ExperimentalCoveragePlanner.Run Run,
+            CoveragePlanner.Run Run,
             Double PreferredLineupM,
             Double SampleSpacingM,
             Grid Field
@@ -1727,14 +1727,14 @@ namespace HaulBuilder
         /// </summary>
         static public SequencedRun Prepare
             (
-            ExperimentalCoveragePlanner.Run Run,
+            CoveragePlanner.Run Run,
             Double PreferredLineupM,
             Double MinimumRadiusM,
             Double SampleSpacingM,
             Grid Field
             )
         {
-            ExperimentalCoveragePlanner.Run DriveRun = MinimumRadiusM > 0.0
+            CoveragePlanner.Run DriveRun = MinimumRadiusM > 0.0
                 ? RetreatForTurnClearance(
                     Run, PreferredLineupM, MinimumRadiusM, SampleSpacingM, Field)
                 : Run;
@@ -1747,11 +1747,11 @@ namespace HaulBuilder
                 DriveRun.EndXy, UnitX, UnitY, PreferredLineupM, SampleSpacingM, Field);
             return new SequencedRun(
                 DriveRun,
-                new ExperimentalConnectorPlanner.Pose(
+                new ConnectorPlanner.Pose(
                     DriveRun.StartXy.X - (UnitX * EntryM),
                     DriveRun.StartXy.Y - (UnitY * EntryM),
                     DriveRun.HeadingDeg),
-                new ExperimentalConnectorPlanner.Pose(
+                new ConnectorPlanner.Pose(
                     DriveRun.EndXy.X + (UnitX * ExitM),
                     DriveRun.EndXy.Y + (UnitY * ExitM),
                     DriveRun.HeadingDeg),
@@ -1764,9 +1764,9 @@ namespace HaulBuilder
         /// <summary>
         /// Moves work endpoints inward only as far as required to begin an in-field quarter turn.
         /// </summary>
-        private static ExperimentalCoveragePlanner.Run RetreatForTurnClearance
+        private static CoveragePlanner.Run RetreatForTurnClearance
             (
-            ExperimentalCoveragePlanner.Run Run,
+            CoveragePlanner.Run Run,
             Double PreferredLineupM,
             Double MinimumRadiusM,
             Double SampleSpacingM,
@@ -1812,7 +1812,7 @@ namespace HaulBuilder
                 return Run;
             }
 
-            return new ExperimentalCoveragePlanner.Run(
+            return new CoveragePlanner.Run(
                 Run.Cells,
                 (
                     Run.StartXy.X + (UnitX * StartRetreatM),
@@ -1858,12 +1858,12 @@ namespace HaulBuilder
                     : AvailableStraight(
                         WorkPoint, UnitX, UnitY,
                         PreferredLineupM, SampleSpacingM, Field);
-                ExperimentalConnectorPlanner.Pose TurnPose = Entry
-                    ? new ExperimentalConnectorPlanner.Pose(
+                ConnectorPlanner.Pose TurnPose = Entry
+                    ? new ConnectorPlanner.Pose(
                         WorkPoint.X - (UnitX * LineupM),
                         WorkPoint.Y - (UnitY * LineupM),
                         HeadingDeg + 180.0)
-                    : new ExperimentalConnectorPlanner.Pose(
+                    : new ConnectorPlanner.Pose(
                         WorkPoint.X + (UnitX * LineupM),
                         WorkPoint.Y + (UnitY * LineupM),
                         HeadingDeg);
@@ -1880,7 +1880,7 @@ namespace HaulBuilder
         /// <summary>Checks whether either minimum-radius turn direction stays in field for 90 degrees.</summary>
         private static Boolean CanBeginTurn
             (
-            ExperimentalConnectorPlanner.Pose Pose,
+            ConnectorPlanner.Pose Pose,
             Double RadiusM,
             Double SampleSpacingM,
             Grid Field
@@ -1983,7 +1983,7 @@ namespace HaulBuilder
             (
             Double[,,] Costs,
             SequencedRun[,] Options,
-            ExperimentalConnectorPlanner.Pose? End,
+            ConnectorPlanner.Pose? End,
             Double MinimumRadiusM,
             Double SampleSpacingM,
             Grid Field
@@ -2055,8 +2055,8 @@ namespace HaulBuilder
             Boolean AllowForwardDetour = false
             )
         {
-            List<ExperimentalTransitPlanner.Result> Connectors =
-                new List<ExperimentalTransitPlanner.Result>();
+            List<TransitPlanner.Result> Connectors =
+                new List<TransitPlanner.Result>();
             Double ConnectorDistanceM = 0.0;
             Double MinimumLineupM = Double.PositiveInfinity;
             foreach (SequencedRun Run in Runs)
@@ -2066,7 +2066,7 @@ namespace HaulBuilder
             }
             for (Int32 Index = 1; Index < Runs.Count; Index += 1)
             {
-                ExperimentalTransitPlanner.Result Connector = ExperimentalTransitPlanner.Connect(
+                TransitPlanner.Result Connector = TransitPlanner.Connect(
                     Runs[Index - 1].ExitPose,
                     Runs[Index].EntryPose,
                     MinimumRadiusM,
@@ -2119,8 +2119,8 @@ namespace HaulBuilder
         /// </summary>
         private static Double ConnectorCost
             (
-            ExperimentalConnectorPlanner.Pose Start,
-            ExperimentalConnectorPlanner.Pose End,
+            ConnectorPlanner.Pose Start,
+            ConnectorPlanner.Pose End,
             Double MinimumRadiusM,
             Double SampleSpacingM,
             Grid Field,
@@ -2130,7 +2130,7 @@ namespace HaulBuilder
             Boolean AllowForwardDetour = false
             )
         {
-            ExperimentalTransitPlanner.Result Connector = ExperimentalTransitPlanner.Connect(
+            TransitPlanner.Result Connector = TransitPlanner.Connect(
                 Start, End, MinimumRadiusM, SampleSpacingM, Field,
                 EdgeAllowanceM: Field.GridSizeM,
                 AllowForwardDetour: AllowForwardDetour);
@@ -2179,7 +2179,7 @@ namespace HaulBuilder
         private static Boolean HasAnyDirectLoadedEntry
             (
             SequencedRun[,] Options,
-            ExperimentalConnectorPlanner.Pose Inbound,
+            ConnectorPlanner.Pose Inbound,
             Double PreferredLineupM,
             Double CorridorWidthM
             )
@@ -2209,7 +2209,7 @@ namespace HaulBuilder
         /// </summary>
         private static Boolean CanUseDirectLoadedEntry
             (
-            ExperimentalConnectorPlanner.Pose Inbound,
+            ConnectorPlanner.Pose Inbound,
             SequencedRun Run,
             Double PreferredLineupM,
             Double CorridorWidthM
@@ -2241,7 +2241,7 @@ namespace HaulBuilder
             SequencedRun Run
             ) => new SequencedRun(
                 Run.Run,
-                new ExperimentalConnectorPlanner.Pose(
+                new ConnectorPlanner.Pose(
                     Run.Run.StartXy.X,
                     Run.Run.StartXy.Y,
                     Run.Run.HeadingDeg),
@@ -2281,7 +2281,7 @@ namespace HaulBuilder
                     RunIndex += 1)
                 {
                     if ((CompletedMask & (1 << RunIndex)) != 0) continue;
-                    ExperimentalCoveragePlanner.Run Run = Options[RunIndex, 0].Run;
+                    CoveragePlanner.Run Run = Options[RunIndex, 0].Run;
                     Double AlignmentDeg = HeadingDifferenceDeg(
                         SegmentHeadingDeg, Run.HeadingDeg);
                     AlignmentDeg = Math.Min(AlignmentDeg, 180.0 - AlignmentDeg);
@@ -2368,15 +2368,15 @@ namespace HaulBuilder
         /// <summary>
         /// Reverses one run without changing its allocated cells or geometry.
         /// </summary>
-        private static ExperimentalCoveragePlanner.Run Reverse
+        private static CoveragePlanner.Run Reverse
             (
-            ExperimentalCoveragePlanner.Run Input
+            CoveragePlanner.Run Input
             )
         {
             List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Cells =
                 new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>(Input.Cells);
             Cells.Reverse();
-            return new ExperimentalCoveragePlanner.Run(
+            return new CoveragePlanner.Run(
                 Cells,
                 Input.EndXy,
                 Input.StartXy,
@@ -2418,7 +2418,7 @@ namespace HaulBuilder
             )
         {
             return new Result(false, new List<SequencedRun>(),
-                new List<ExperimentalTransitPlanner.Result>(), 0.0, 0.0, Reason,
+                new List<TransitPlanner.Result>(), 0.0, 0.0, Reason,
                 InfeasibleRunIndices);
         }
     }

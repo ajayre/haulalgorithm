@@ -7,9 +7,9 @@ using System.Threading;
 namespace HaulBuilder
 {
     /// <summary>
-    /// Builds forward-only radius-valid experimental transit with explicit operator-alignment fallback.
+    /// Builds forward-only radius-valid transit with explicit operator-alignment fallback.
     /// </summary>
-    public static class ExperimentalTransitPlanner
+    public static class TransitPlanner
     {
         private const Double AUTOMATIC_ALIGNMENT_TOLERANCE_DEG = 5.0;
         private const Double SHORT_ALIGNMENT_JOG_TOLERANCE_DEG = 15.0;
@@ -17,9 +17,9 @@ namespace HaulBuilder
         private const Int32 MAX_CONNECT_CACHE_ENTRIES_PER_FIELD = 200000;
         private static readonly Object AllowanceCacheLock = new Object();
         private static readonly Dictionary<(Grid Field, Int64 AllowanceBits),
-            (ExperimentalFieldEdgePolicy Policy, Grid AllowanceGrid)> AllowanceCache =
+            (FieldEdgePolicy Policy, Grid AllowanceGrid)> AllowanceCache =
                 new Dictionary<(Grid Field, Int64 AllowanceBits),
-                    (ExperimentalFieldEdgePolicy Policy, Grid AllowanceGrid)>();
+                    (FieldEdgePolicy Policy, Grid AllowanceGrid)>();
         private readonly record struct ConnectCacheKey
             (
             Int64 StartX,
@@ -75,7 +75,7 @@ namespace HaulBuilder
         }
 
         /// <summary>
-        /// Outcome of one experimental reposition segment.
+        /// Outcome of one reposition segment.
         /// </summary>
         public sealed class Result
         {
@@ -137,8 +137,8 @@ namespace HaulBuilder
         /// </summary>
         static public Result Connect
             (
-            ExperimentalConnectorPlanner.Pose Start,
-            ExperimentalConnectorPlanner.Pose End,
+            ConnectorPlanner.Pose Start,
+            ConnectorPlanner.Pose End,
             Double MinimumRadiusM,
             Double SampleSpacingM,
             Grid Field,
@@ -312,8 +312,8 @@ namespace HaulBuilder
         /// <summary>Computes one uncached forward-only transit.</summary>
         private static Result ConnectUncached
             (
-            ExperimentalConnectorPlanner.Pose Start,
-            ExperimentalConnectorPlanner.Pose End,
+            ConnectorPlanner.Pose Start,
+            ConnectorPlanner.Pose End,
             Double MinimumRadiusM,
             Double SampleSpacingM,
             Grid Field,
@@ -331,7 +331,7 @@ namespace HaulBuilder
             Double ShortJogLengthM = ShortJog.Count > 0
                 ? PolylineLength(ShortJog)
                 : Double.PositiveInfinity;
-            ExperimentalConnectorPlanner.Result Automatic = ExperimentalConnectorPlanner.Connect(
+            ConnectorPlanner.Result Automatic = ConnectorPlanner.Connect(
                 Start, End, MinimumRadiusM, SampleSpacingM, Field);
             Boolean GentleAllowed = (Gentle.Count > 0)
                 && DensePolylineAllowed(Gentle, Field, null);
@@ -448,8 +448,8 @@ namespace HaulBuilder
         /// </summary>
         private static List<(Double X, Double Y)> ShortAlignmentJog
             (
-            ExperimentalConnectorPlanner.Pose Start,
-            ExperimentalConnectorPlanner.Pose End,
+            ConnectorPlanner.Pose Start,
+            ConnectorPlanner.Pose End,
             Double SampleSpacingM,
             Grid Field
             )
@@ -494,7 +494,7 @@ namespace HaulBuilder
             /// <summary>Initializes one forward-only pose-lattice node.</summary>
             public ForwardSearchNode
                 (
-                ExperimentalConnectorPlanner.Pose Pose,
+                ConnectorPlanner.Pose Pose,
                 Int32 ParentIndex,
                 List<(Double X, Double Y)> Incoming,
                 Double CostM
@@ -506,7 +506,7 @@ namespace HaulBuilder
                 this.CostM = CostM;
             }
 
-            public ExperimentalConnectorPlanner.Pose Pose { get; }
+            public ConnectorPlanner.Pose Pose { get; }
             public Int32 ParentIndex { get; }
             public List<(Double X, Double Y)> Incoming { get; }
             public Double CostM { get; }
@@ -519,8 +519,8 @@ namespace HaulBuilder
         /// </summary>
         private static Result? TryForwardDetour
             (
-            ExperimentalConnectorPlanner.Pose Start,
-            ExperimentalConnectorPlanner.Pose End,
+            ConnectorPlanner.Pose Start,
+            ConnectorPlanner.Pose End,
             Double MinimumRadiusM,
             Double SampleSpacingM,
             Grid AllowedField
@@ -570,8 +570,8 @@ namespace HaulBuilder
                 }
                 ExpansionCount += 1;
 
-                ExperimentalConnectorPlanner.Result Exact =
-                    ExperimentalConnectorPlanner.Connect(
+                ConnectorPlanner.Result Exact =
+                    ConnectorPlanner.Connect(
                         Node.Pose,
                         End,
                         MinimumRadiusM,
@@ -611,7 +611,7 @@ namespace HaulBuilder
                         PrimitiveLengthM,
                         MinimumRadiusM,
                         SampleSpacingM,
-                        out ExperimentalConnectorPlanner.Pose NextPose);
+                        out ConnectorPlanner.Pose NextPose);
                     if (!Primitive.All(Point =>
                         AllowedField.ContainsWorldXy(Point.X, Point.Y)))
                     {
@@ -678,12 +678,12 @@ namespace HaulBuilder
         /// <summary>Samples one forward straight or minimum-radius arc primitive.</summary>
         private static List<(Double X, Double Y)> SampleForwardPrimitive
             (
-            ExperimentalConnectorPlanner.Pose Start,
+            ConnectorPlanner.Pose Start,
             Int32 Steering,
             Double LengthM,
             Double RadiusM,
             Double SampleSpacingM,
-            out ExperimentalConnectorPlanner.Pose End
+            out ConnectorPlanner.Pose End
             )
         {
             Int32 Count = Math.Max(1, (Int32)Math.Ceiling(LengthM / SampleSpacingM));
@@ -702,7 +702,7 @@ namespace HaulBuilder
                         Start.Y + (Math.Cos(HeadingRad) * TravelM)));
                 }
                 (Double X, Double Y) Last = Points[Points.Count - 1];
-                End = new ExperimentalConnectorPlanner.Pose(
+                End = new ConnectorPlanner.Pose(
                     Last.X, Last.Y, Start.HeadingDeg);
                 return Points;
             }
@@ -723,7 +723,7 @@ namespace HaulBuilder
                     CenterY - (RadiusX * Sin) + (RadiusY * Cos)));
             }
             (Double X, Double Y) ArcEnd = Points[Points.Count - 1];
-            End = new ExperimentalConnectorPlanner.Pose(
+            End = new ConnectorPlanner.Pose(
                 ArcEnd.X,
                 ArcEnd.Y,
                 Start.HeadingDeg + (TotalTurnRad * 180.0 / Math.PI));
@@ -733,7 +733,7 @@ namespace HaulBuilder
         /// <summary>Quantizes one continuous pose for bounded forward search.</summary>
         private static ForwardStateKey QuantizeForwardState
             (
-            ExperimentalConnectorPlanner.Pose Pose,
+            ConnectorPlanner.Pose Pose,
             Grid Field,
             Double SpatialResolutionM,
             Int32 HeadingBinCount
@@ -755,8 +755,8 @@ namespace HaulBuilder
         /// <summary>Returns an admissible distance/heading lower bound.</summary>
         private static Double ForwardHeuristicM
             (
-            ExperimentalConnectorPlanner.Pose Start,
-            ExperimentalConnectorPlanner.Pose End,
+            ConnectorPlanner.Pose Start,
+            ConnectorPlanner.Pose End,
             Double RadiusM
             )
         {
@@ -817,8 +817,8 @@ namespace HaulBuilder
         /// </summary>
         private static Result? TryExteriorConnector
             (
-            ExperimentalConnectorPlanner.Pose Start,
-            ExperimentalConnectorPlanner.Pose End,
+            ConnectorPlanner.Pose Start,
+            ConnectorPlanner.Pose End,
             Double MinimumRadiusM,
             Double SampleSpacingM,
             Grid Field,
@@ -826,7 +826,7 @@ namespace HaulBuilder
             Boolean AllowForwardDetour
             )
         {
-            (ExperimentalFieldEdgePolicy Policy, Grid AllowanceGrid) =
+            (FieldEdgePolicy Policy, Grid AllowanceGrid) =
                 GetAllowanceContext(Field, EdgeAllowanceM);
             if (!Policy.IsFieldPointNearOuterEdge(Start.X, Start.Y)
                 && !Policy.IsFieldPointNearOuterEdge(End.X, End.Y))
@@ -835,7 +835,7 @@ namespace HaulBuilder
             }
             List<(Double X, Double Y)> Gentle = GentleBend(
                 Start, End, MinimumRadiusM, SampleSpacingM, AllowanceGrid);
-            ExperimentalConnectorPlanner.Result Curve = ExperimentalConnectorPlanner.Connect(
+            ConnectorPlanner.Result Curve = ConnectorPlanner.Connect(
                 Start, End, MinimumRadiusM, SampleSpacingM, AllowanceGrid);
             List<(Double X, Double Y)> Selected = new List<(Double X, Double Y)>();
             Double SelectedLengthM = Double.PositiveInfinity;
@@ -881,7 +881,7 @@ namespace HaulBuilder
         }
 
         /// <summary>Reuses immutable exterior masks during sequence-cost evaluation.</summary>
-        private static (ExperimentalFieldEdgePolicy Policy, Grid AllowanceGrid) GetAllowanceContext
+        private static (FieldEdgePolicy Policy, Grid AllowanceGrid) GetAllowanceContext
             (
             Grid Field,
             Double EdgeAllowanceM
@@ -892,13 +892,13 @@ namespace HaulBuilder
             lock (AllowanceCacheLock)
             {
                 if (AllowanceCache.TryGetValue(Key, out
-                    (ExperimentalFieldEdgePolicy Policy, Grid AllowanceGrid) Existing))
+                    (FieldEdgePolicy Policy, Grid AllowanceGrid) Existing))
                 {
                     return Existing;
                 }
-                ExperimentalFieldEdgePolicy Policy =
-                    new ExperimentalFieldEdgePolicy(Field, EdgeAllowanceM);
-                (ExperimentalFieldEdgePolicy Policy, Grid AllowanceGrid) Created =
+                FieldEdgePolicy Policy =
+                    new FieldEdgePolicy(Field, EdgeAllowanceM);
+                (FieldEdgePolicy Policy, Grid AllowanceGrid) Created =
                     (Policy, Policy.BuildExteriorAllowanceGrid());
                 AllowanceCache[Key] = Created;
                 return Created;
@@ -910,8 +910,8 @@ namespace HaulBuilder
         /// </summary>
         private static List<(Double X, Double Y)> GentleBend
             (
-            ExperimentalConnectorPlanner.Pose Start,
-            ExperimentalConnectorPlanner.Pose End,
+            ConnectorPlanner.Pose Start,
+            ConnectorPlanner.Pose End,
             Double MinimumRadiusM,
             Double SampleSpacingM,
             Grid Field
@@ -1047,8 +1047,8 @@ namespace HaulBuilder
         private static Result AlignmentResult
             (
             List<(Double X, Double Y)> Points,
-            ExperimentalConnectorPlanner.Pose Start,
-            ExperimentalConnectorPlanner.Pose End,
+            ConnectorPlanner.Pose Start,
+            ConnectorPlanner.Pose End,
             Double MinimumRadiusM,
             Double MaxManualAssistM,
             Double MinimumHybridLengthM,
@@ -1555,7 +1555,7 @@ namespace HaulBuilder
             (
             List<(Double X, Double Y)> Points,
             Grid Field,
-            ExperimentalFieldEdgePolicy? ExteriorPolicy
+            FieldEdgePolicy? ExteriorPolicy
             )
         {
             if (Points.Count == 0) return false;

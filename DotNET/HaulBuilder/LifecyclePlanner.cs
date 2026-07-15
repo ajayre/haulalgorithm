@@ -7,7 +7,7 @@ namespace HaulBuilder
     /// <summary>
     /// Builds the isolated cut, fill, optional grade, and next-cut guidance lifecycle.
     /// </summary>
-    public static class ExperimentalLifecyclePlanner
+    public static class LifecyclePlanner
     {
         private const Double CORRIDOR_HEADING_TOLERANCE_DEG = 20.0;
         private const Double CORRIDOR_BRIDGE_HEADING_TOLERANCE_DEG = 30.0;
@@ -22,7 +22,7 @@ namespace HaulBuilder
         private const Int32 CUT_CORRIDOR_EXACT_RUN_LIMIT = 7;
 
         /// <summary>
-        /// Strongly typed experimental guidance phases.
+        /// Strongly typed production guidance phases.
         /// </summary>
         public enum Phase
         {
@@ -66,8 +66,8 @@ namespace HaulBuilder
             /// <summary>Initializes one pass plan.</summary>
             public PassPlan
                 (
-                ExperimentalRunSequencer.Result Cut,
-                ExperimentalRunSequencer.Result Fill,
+                RunSequencer.Result Cut,
+                RunSequencer.Result Fill,
                 IReadOnlyList<((Int32 Bx, Int32 By) Cell, Double DepthM)>?
                     CutOmittedCells = null,
                 IReadOnlyList<((Int32 Bx, Int32 By) Cell, Double DepthM)>?
@@ -83,10 +83,10 @@ namespace HaulBuilder
             }
 
             /// <summary>Gets sequenced cut work.</summary>
-            public ExperimentalRunSequencer.Result Cut { get; }
+            public RunSequencer.Result Cut { get; }
 
             /// <summary>Gets sequenced fill work.</summary>
-            public ExperimentalRunSequencer.Result Fill { get; }
+            public RunSequencer.Result Fill { get; }
 
             /// <summary>Gets cut allocations explicitly omitted from guidance.</summary>
             public IReadOnlyList<((Int32 Bx, Int32 By) Cell, Double DepthM)>
@@ -150,7 +150,7 @@ namespace HaulBuilder
         }
 
         /// <summary>
-        /// Complete experimental lifecycle result.
+        /// Complete production lifecycle result.
         /// </summary>
         public sealed class Result
         {
@@ -205,7 +205,7 @@ namespace HaulBuilder
             if (Passes == null) throw new ArgumentNullException(nameof(Passes));
             List<Segment> Segments = new List<Segment>();
             Int32 ManualAssistCount = 0;
-            ExperimentalConnectorPlanner.Pose? Current = null;
+            ConnectorPlanner.Pose? Current = null;
             Progress?.Invoke(0, Passes.Count);
 
             for (Int32 PassIndex = 0; PassIndex < Passes.Count; PassIndex += 1)
@@ -220,7 +220,7 @@ namespace HaulBuilder
                             PassIndex + 1));
                 }
 
-                ExperimentalRunSequencer.Result LifecycleCut = Pass.Cut;
+                RunSequencer.Result LifecycleCut = Pass.Cut;
                 if (Pass.Cut.Runs.Count > 0)
                 {
                     LifecycleCut = BuildContinuousCutSequence(
@@ -232,7 +232,7 @@ namespace HaulBuilder
                         MinimumRadiusM,
                         SampleSpacingM,
                         Field);
-                    ExperimentalConnectorPlanner.Pose CutEntry =
+                    ConnectorPlanner.Pose CutEntry =
                         LifecycleCut.Runs[0].EntryPose;
                     if (Current.HasValue)
                     {
@@ -259,7 +259,7 @@ namespace HaulBuilder
                         LifecycleCut.Runs.Count - 1].ExitPose;
                 }
 
-                ExperimentalRunSequencer.Result LifecycleFill = Pass.Fill;
+                RunSequencer.Result LifecycleFill = Pass.Fill;
                 if (Pass.Fill.Runs.Count > 0)
                 {
                     LifecycleFill = GradeReturn && !FillSequencesPrepared
@@ -270,7 +270,7 @@ namespace HaulBuilder
                             SampleSpacingM,
                             Field)
                         : Pass.Fill;
-                    ExperimentalConnectorPlanner.Pose FillEntry =
+                    ConnectorPlanner.Pose FillEntry =
                         LifecycleFill.Runs[0].EntryPose;
                     if (Current.HasValue)
                     {
@@ -294,13 +294,13 @@ namespace HaulBuilder
 
                 if (GradeReturn && (Pass.Fill.Runs.Count > 0))
                 {
-                    List<ExperimentalRunSequencer.SequencedRun> GradeRuns = BuildGradeRuns(
+                    List<RunSequencer.SequencedRun> GradeRuns = BuildGradeRuns(
                         LifecycleFill.Runs,
                         PreferredLineupM,
                         MinimumRadiusM,
                         SampleSpacingM,
                         Field);
-                    ExperimentalConnectorPlanner.Pose GradeEntry = GradeRuns[0].EntryPose;
+                    ConnectorPlanner.Pose GradeEntry = GradeRuns[0].EntryPose;
                     if (Current.HasValue)
                     {
                         if (!AppendTransit(
@@ -396,7 +396,7 @@ namespace HaulBuilder
         private static void AppendWorkSequence
             (
             List<Segment> Output,
-            ExperimentalRunSequencer.Result Sequence,
+            RunSequencer.Result Sequence,
             Phase LineupPhase,
             Phase WorkPhase,
             Phase ExitPhase,
@@ -408,7 +408,7 @@ namespace HaulBuilder
             {
                 if (Index > 0)
                 {
-                    ExperimentalTransitPlanner.Result Connector = Sequence.Connectors[Index - 1];
+                    TransitPlanner.Result Connector = Sequence.Connectors[Index - 1];
                     AppendSequenceConnector(
                         Output,
                         ref ManualAssistCount,
@@ -427,11 +427,11 @@ namespace HaulBuilder
         /// entry lineup and final exit lineup remain unchanged; only the poses between
         /// nearby, similarly aligned cut fragments are compacted.
         /// </summary>
-        static public ExperimentalRunSequencer.Result BuildContinuousCutSequence
+        static public RunSequencer.Result BuildContinuousCutSequence
             (
-            ExperimentalRunSequencer.Result Sequence,
-            ExperimentalConnectorPlanner.Pose? Inbound,
-            ExperimentalConnectorPlanner.Pose? Outbound,
+            RunSequencer.Result Sequence,
+            ConnectorPlanner.Pose? Inbound,
+            ConnectorPlanner.Pose? Outbound,
             Double MinimumRadiusM,
             Double SampleSpacingM,
             Grid Field
@@ -445,16 +445,16 @@ namespace HaulBuilder
             }
 
             Int32 RunCount = Sequence.Runs.Count;
-            ExperimentalRunSequencer.SequencedRun[,] Options =
-                new ExperimentalRunSequencer.SequencedRun[RunCount, 2];
+            RunSequencer.SequencedRun[,] Options =
+                new RunSequencer.SequencedRun[RunCount, 2];
             for (Int32 RunIndex = 0; RunIndex < RunCount; RunIndex += 1)
             {
                 Options[RunIndex, 0] = Sequence.Runs[RunIndex];
                 Options[RunIndex, 1] = ReverseSequencedRun(Sequence.Runs[RunIndex]);
             }
 
-            ExperimentalTransitPlanner.Result?[,,,] Transitions =
-                new ExperimentalTransitPlanner.Result?[RunCount, 2, RunCount, 2];
+            TransitPlanner.Result?[,,,] Transitions =
+                new TransitPlanner.Result?[RunCount, 2, RunCount, 2];
             for (Int32 FirstIndex = 0; FirstIndex < RunCount; FirstIndex += 1)
             {
                 for (Int32 FirstOrientation = 0; FirstOrientation < 2; FirstOrientation += 1)
@@ -523,7 +523,7 @@ namespace HaulBuilder
                             if ((Mask & (1 << NextIndex)) != 0) continue;
                             for (Int32 NextOrientation = 0; NextOrientation < 2; NextOrientation += 1)
                             {
-                                ExperimentalTransitPlanner.Result? Connector = Transitions[
+                                TransitPlanner.Result? Connector = Transitions[
                                     LastIndex,
                                     LastOrientation,
                                     NextIndex,
@@ -588,14 +588,14 @@ namespace HaulBuilder
             }
             OrderedStates.Reverse();
 
-            List<ExperimentalTransitPlanner.Result> Connectors =
-                new List<ExperimentalTransitPlanner.Result>();
+            List<TransitPlanner.Result> Connectors =
+                new List<TransitPlanner.Result>();
             Boolean HasDirectBridge = false;
             for (Int32 Index = 1; Index < OrderedStates.Count; Index += 1)
             {
                 (Int32 Index, Int32 Orientation) Previous = OrderedStates[Index - 1];
                 (Int32 Index, Int32 Orientation) Next = OrderedStates[Index];
-                ExperimentalTransitPlanner.Result Connector = Transitions[
+                TransitPlanner.Result Connector = Transitions[
                     Previous.Index,
                     Previous.Orientation,
                     Next.Index,
@@ -608,12 +608,12 @@ namespace HaulBuilder
                 return CompactAdjacentCutRuns(Sequence, SampleSpacingM, Field);
             }
 
-            List<ExperimentalRunSequencer.SequencedRun> OrderedRuns =
-                new List<ExperimentalRunSequencer.SequencedRun>();
+            List<RunSequencer.SequencedRun> OrderedRuns =
+                new List<RunSequencer.SequencedRun>();
             for (Int32 Index = 0; Index < OrderedStates.Count; Index += 1)
             {
                 (Int32 Index, Int32 Orientation) State = OrderedStates[Index];
-                ExperimentalRunSequencer.SequencedRun Source =
+                RunSequencer.SequencedRun Source =
                     Options[State.Index, State.Orientation];
                 Boolean DirectEntry = (Index > 0) && IsCorridorBridge(Connectors[Index - 1]);
                 Boolean DirectExit = (Index < Connectors.Count) && IsCorridorBridge(Connectors[Index]);
@@ -623,23 +623,23 @@ namespace HaulBuilder
         }
 
         /// <summary>Compacts only already adjacent cut fragments without changing their order.</summary>
-        private static ExperimentalRunSequencer.Result CompactAdjacentCutRuns
+        private static RunSequencer.Result CompactAdjacentCutRuns
             (
-            ExperimentalRunSequencer.Result Sequence,
+            RunSequencer.Result Sequence,
             Double SampleSpacingM,
             Grid Field
             )
         {
 
             Int32 TransitionCount = Sequence.Runs.Count - 1;
-            ExperimentalTransitPlanner.Result?[] DirectBridges =
-                new ExperimentalTransitPlanner.Result?[TransitionCount];
+            TransitPlanner.Result?[] DirectBridges =
+                new TransitPlanner.Result?[TransitionCount];
             Boolean AnyBridge = false;
             for (Int32 Index = 0; Index < TransitionCount; Index += 1)
             {
-                ExperimentalCoveragePlanner.Run Previous = Sequence.Runs[Index].Run;
-                ExperimentalCoveragePlanner.Run Next = Sequence.Runs[Index + 1].Run;
-                ExperimentalTransitPlanner.Result? Bridge = TryBuildDirectCutBridge(
+                CoveragePlanner.Run Previous = Sequence.Runs[Index].Run;
+                CoveragePlanner.Run Next = Sequence.Runs[Index + 1].Run;
+                TransitPlanner.Result? Bridge = TryBuildDirectCutBridge(
                     Previous, Next, SampleSpacingM, Field);
                 if (Bridge == null) continue;
                 DirectBridges[Index] = Bridge;
@@ -647,40 +647,40 @@ namespace HaulBuilder
             }
             if (!AnyBridge) return Sequence;
 
-            List<ExperimentalRunSequencer.SequencedRun> Runs =
-                new List<ExperimentalRunSequencer.SequencedRun>();
+            List<RunSequencer.SequencedRun> Runs =
+                new List<RunSequencer.SequencedRun>();
             for (Int32 Index = 0; Index < Sequence.Runs.Count; Index += 1)
             {
-                ExperimentalRunSequencer.SequencedRun Source = Sequence.Runs[Index];
+                RunSequencer.SequencedRun Source = Sequence.Runs[Index];
                 Boolean DirectEntry = (Index > 0) && (DirectBridges[Index - 1] != null);
                 Boolean DirectExit = (Index < TransitionCount) && (DirectBridges[Index] != null);
                 Runs.Add(WithInternalCutPoses(Source, DirectEntry, DirectExit));
             }
 
-            List<ExperimentalTransitPlanner.Result> Connectors =
-                new List<ExperimentalTransitPlanner.Result>();
+            List<TransitPlanner.Result> Connectors =
+                new List<TransitPlanner.Result>();
             for (Int32 Index = 0; Index < TransitionCount; Index += 1)
             {
-                ExperimentalTransitPlanner.Result Connector =
+                TransitPlanner.Result Connector =
                     DirectBridges[Index] ?? Sequence.Connectors[Index];
                 Connectors.Add(Connector);
             }
             return BuildCutSequenceResult(Runs, Connectors);
         }
 
-        private static ExperimentalTransitPlanner.Result? BuildCutConnector
+        private static TransitPlanner.Result? BuildCutConnector
             (
-            ExperimentalRunSequencer.SequencedRun Previous,
-            ExperimentalRunSequencer.SequencedRun Next,
+            RunSequencer.SequencedRun Previous,
+            RunSequencer.SequencedRun Next,
             Double MinimumRadiusM,
             Double SampleSpacingM,
             Grid Field
             )
         {
-            ExperimentalTransitPlanner.Result? Direct = TryBuildDirectCutBridge(
+            TransitPlanner.Result? Direct = TryBuildDirectCutBridge(
                 Previous.Run, Next.Run, SampleSpacingM, Field);
             if (Direct != null) return Direct;
-            ExperimentalTransitPlanner.Result Strict = ExperimentalTransitPlanner.Connect(
+            TransitPlanner.Result Strict = TransitPlanner.Connect(
                 Previous.ExitPose,
                 Next.EntryPose,
                 MinimumRadiusM,
@@ -690,10 +690,10 @@ namespace HaulBuilder
             return Strict.Success ? Strict : null;
         }
 
-        private static ExperimentalTransitPlanner.Result? TryBuildDirectCutBridge
+        private static TransitPlanner.Result? TryBuildDirectCutBridge
             (
-            ExperimentalCoveragePlanner.Run Previous,
-            ExperimentalCoveragePlanner.Run Next,
+            CoveragePlanner.Run Previous,
+            CoveragePlanner.Run Next,
             Double SampleSpacingM,
             Grid Field
             )
@@ -712,12 +712,12 @@ namespace HaulBuilder
                 Previous.EndXy, Next.StartXy, SampleSpacingM, Field);
         }
 
-        private static ExperimentalRunSequencer.SequencedRun WithInternalCutPoses
+        private static RunSequencer.SequencedRun WithInternalCutPoses
             (
-            ExperimentalRunSequencer.SequencedRun Source,
+            RunSequencer.SequencedRun Source,
             Boolean DirectEntry,
             Boolean DirectExit
-            ) => new ExperimentalRunSequencer.SequencedRun(
+            ) => new RunSequencer.SequencedRun(
                 Source.Run,
                 DirectEntry ? WorkStartPose(Source.Run) : Source.EntryPose,
                 DirectExit ? WorkEndPose(Source.Run) : Source.ExitPose,
@@ -726,24 +726,24 @@ namespace HaulBuilder
                 Source.StartCoverageShortfallM,
                 Source.EndCoverageShortfallM);
 
-        private static ExperimentalRunSequencer.Result BuildCutSequenceResult
+        private static RunSequencer.Result BuildCutSequenceResult
             (
-            List<ExperimentalRunSequencer.SequencedRun> Runs,
-            List<ExperimentalTransitPlanner.Result> Connectors
+            List<RunSequencer.SequencedRun> Runs,
+            List<TransitPlanner.Result> Connectors
             )
         {
             Double ConnectorDistanceM = Connectors.Sum(Connector => Connector.LengthM);
             Double MinimumLineupM = Runs.Min(Run =>
                 Math.Min(Run.EntryLineupM, Run.ExitLineupM));
-            return new ExperimentalRunSequencer.Result(
+            return new RunSequencer.Result(
                 true, Runs, Connectors, ConnectorDistanceM,
                 MinimumLineupM, String.Empty);
         }
 
         private static Double AnchorConnectorCost
             (
-            ExperimentalConnectorPlanner.Pose? Anchor,
-            ExperimentalConnectorPlanner.Pose RunPose,
+            ConnectorPlanner.Pose? Anchor,
+            ConnectorPlanner.Pose RunPose,
             Double MinimumRadiusM,
             Double SampleSpacingM,
             Grid Field,
@@ -751,11 +751,11 @@ namespace HaulBuilder
             )
         {
             if (!Anchor.HasValue) return 0.0;
-            ExperimentalTransitPlanner.Result Connector = Reverse
-                ? ExperimentalTransitPlanner.Connect(
+            TransitPlanner.Result Connector = Reverse
+                ? TransitPlanner.Connect(
                     RunPose, Anchor.Value, MinimumRadiusM, SampleSpacingM, Field,
                     EdgeAllowanceM: Field.GridSizeM)
-                : ExperimentalTransitPlanner.Connect(
+                : TransitPlanner.Connect(
                     Anchor.Value, RunPose, MinimumRadiusM, SampleSpacingM, Field,
                     EdgeAllowanceM: Field.GridSizeM);
             return Connector.Success ? ConnectorScoreM(Connector) : Double.PositiveInfinity;
@@ -763,32 +763,32 @@ namespace HaulBuilder
 
         private static Double ConnectorScoreM
             (
-            ExperimentalTransitPlanner.Result Connector
+            TransitPlanner.Result Connector
             ) => Connector.LengthM + (Connector.OperatorAlignmentRequired
                 ? MANUAL_CONNECTOR_PENALTY_M
                 : 0.0);
 
         private static Boolean IsCorridorBridge
             (
-            ExperimentalTransitPlanner.Result Connector
+            TransitPlanner.Result Connector
             ) => Connector.Mode.Contains("CORRIDOR_BRIDGE", StringComparison.Ordinal);
 
         /// <summary>
         /// Stops the last fill at its already retreated work endpoint so a grade
         /// turnaround begins before an edge instead of consuming the exit lineup.
         /// </summary>
-        private static ExperimentalRunSequencer.Result StopFinalRunAtWorkEnd
+        private static RunSequencer.Result StopFinalRunAtWorkEnd
             (
-            ExperimentalRunSequencer.Result Sequence
+            RunSequencer.Result Sequence
             )
         {
-            List<ExperimentalRunSequencer.SequencedRun> Runs =
-                new List<ExperimentalRunSequencer.SequencedRun>(Sequence.Runs);
-            ExperimentalRunSequencer.SequencedRun Last = Runs[Runs.Count - 1];
-            Runs[Runs.Count - 1] = new ExperimentalRunSequencer.SequencedRun(
+            List<RunSequencer.SequencedRun> Runs =
+                new List<RunSequencer.SequencedRun>(Sequence.Runs);
+            RunSequencer.SequencedRun Last = Runs[Runs.Count - 1];
+            Runs[Runs.Count - 1] = new RunSequencer.SequencedRun(
                 Last.Run,
                 Last.EntryPose,
-                new ExperimentalConnectorPlanner.Pose(
+                new ConnectorPlanner.Pose(
                     Last.Run.EndXy.X,
                     Last.Run.EndXy.Y,
                     Last.Run.HeadingDeg),
@@ -796,7 +796,7 @@ namespace HaulBuilder
                 0.0,
                 Last.StartCoverageShortfallM,
                 Last.EndCoverageShortfallM);
-            return new ExperimentalRunSequencer.Result(
+            return new RunSequencer.Result(
                 Sequence.Success,
                 Runs,
                 Sequence.Connectors,
@@ -811,10 +811,10 @@ namespace HaulBuilder
         /// are connected directly at blade-up work endpoints and the final exit is
         /// reserved for the single fill-to-grade turnaround.
         /// </summary>
-        static public ExperimentalRunSequencer.Result BuildContinuousFillSequence
+        static public RunSequencer.Result BuildContinuousFillSequence
             (
-            ExperimentalRunSequencer.Result Sequence,
-            ExperimentalConnectorPlanner.Pose? Inbound,
+            RunSequencer.Result Sequence,
+            ConnectorPlanner.Pose? Inbound,
             Double MinimumRadiusM,
             Double SampleSpacingM,
             Grid Field
@@ -858,8 +858,8 @@ namespace HaulBuilder
 
             if (Inbound.HasValue)
             {
-                ExperimentalRunSequencer.Result LoadedAwareSequence =
-                    ExperimentalRunSequencer.Optimize(
+                RunSequencer.Result LoadedAwareSequence =
+                    RunSequencer.Optimize(
                         Sequence.Runs.Select(Run => Run.Run).ToList(),
                         Inbound,
                         null,
@@ -874,7 +874,7 @@ namespace HaulBuilder
                 }
             }
 
-            ExperimentalRunSequencer.Result? Best = null;
+            RunSequencer.Result? Best = null;
             Double BestScoreM = Double.PositiveInfinity;
             Double FirstHeadingDeg = Sequence.Runs[0].Run.HeadingDeg;
             for (Int32 DirectionIndex = 0; DirectionIndex < 2; DirectionIndex += 1)
@@ -887,7 +887,7 @@ namespace HaulBuilder
                     MinimumRadiusM,
                     SampleSpacingM,
                     Field,
-                    out ExperimentalRunSequencer.Result Candidate,
+                    out RunSequencer.Result Candidate,
                     out Double ScoreM))
                 {
                     continue;
@@ -909,18 +909,18 @@ namespace HaulBuilder
         /// Stops the final fill early only when needed to leave enough forward
         /// clearance for the mandatory turn into reverse-direction grading.
         /// </summary>
-        private static ExperimentalRunSequencer.Result RetreatFinalFillForGradeTurn
+        private static RunSequencer.Result RetreatFinalFillForGradeTurn
             (
-            ExperimentalRunSequencer.Result Sequence,
+            RunSequencer.Result Sequence,
             Double MinimumRadiusM,
             Double SampleSpacingM,
             Grid Field
             )
         {
             if (!Sequence.Success || (Sequence.Runs.Count == 0)) return Sequence;
-            List<ExperimentalRunSequencer.SequencedRun> Runs =
-                new List<ExperimentalRunSequencer.SequencedRun>(Sequence.Runs);
-            ExperimentalRunSequencer.SequencedRun Original =
+            List<RunSequencer.SequencedRun> Runs =
+                new List<RunSequencer.SequencedRun>(Sequence.Runs);
+            RunSequencer.SequencedRun Original =
                 Runs[Runs.Count - 1];
             Double MinimumWorkM = Math.Max(
                 0.5 * Field.GridSizeM,
@@ -940,18 +940,18 @@ namespace HaulBuilder
                 (Double X, Double Y) End = (
                     Original.Run.EndXy.X - (UnitX * CandidateRetreatM),
                     Original.Run.EndXy.Y - (UnitY * CandidateRetreatM));
-                ExperimentalConnectorPlanner.Pose FillExit =
-                    new ExperimentalConnectorPlanner.Pose(
+                ConnectorPlanner.Pose FillExit =
+                    new ConnectorPlanner.Pose(
                         End.X,
                         End.Y,
                         Original.Run.HeadingDeg);
-                ExperimentalConnectorPlanner.Pose GradeEntry =
-                    new ExperimentalConnectorPlanner.Pose(
+                ConnectorPlanner.Pose GradeEntry =
+                    new ConnectorPlanner.Pose(
                         End.X,
                         End.Y,
                         Original.Run.HeadingDeg + 180.0);
-                ExperimentalTransitPlanner.Result GradeTurn =
-                    ExperimentalTransitPlanner.Connect(
+                TransitPlanner.Result GradeTurn =
+                    TransitPlanner.Connect(
                         FillExit,
                         GradeEntry,
                         MinimumRadiusM,
@@ -964,15 +964,15 @@ namespace HaulBuilder
                     if (CandidateRetreatM >= MaximumRetreatM - 1e-9) break;
                     continue;
                 }
-                ExperimentalCoveragePlanner.Run RetreatedRun =
-                    new ExperimentalCoveragePlanner.Run(
+                CoveragePlanner.Run RetreatedRun =
+                    new CoveragePlanner.Run(
                         Original.Run.Cells,
                         Original.Run.StartXy,
                         End,
                         Original.Run.HeadingDeg,
                         Original.Run.MaximumLateralErrorM);
                 Runs[Runs.Count - 1] =
-                    new ExperimentalRunSequencer.SequencedRun(
+                    new RunSequencer.SequencedRun(
                         RetreatedRun,
                         Original.EntryPose,
                         FillExit,
@@ -980,7 +980,7 @@ namespace HaulBuilder
                         0.0,
                         Original.StartCoverageShortfallM,
                         Original.EndCoverageShortfallM + CandidateRetreatM);
-                return new ExperimentalRunSequencer.Result(
+                return new RunSequencer.Result(
                     true,
                     Runs,
                     Sequence.Connectors,
@@ -998,27 +998,27 @@ namespace HaulBuilder
         /// this prevents an embedded sliver from forcing a loop before fill and again
         /// before reverse grading.
         /// </summary>
-        private static ExperimentalRunSequencer.Result MergeNestedFillFragments
+        private static RunSequencer.Result MergeNestedFillFragments
             (
-            ExperimentalRunSequencer.Result Sequence,
-            ExperimentalConnectorPlanner.Pose? Inbound,
+            RunSequencer.Result Sequence,
+            ConnectorPlanner.Pose? Inbound,
             Double PreferredLineupM,
             Double MinimumRadiusM,
             Double SampleSpacingM,
             Grid Field
             )
         {
-            List<ExperimentalRunSequencer.SequencedRun> Runs =
-                new List<ExperimentalRunSequencer.SequencedRun>(Sequence.Runs);
+            List<RunSequencer.SequencedRun> Runs =
+                new List<RunSequencer.SequencedRun>(Sequence.Runs);
             Boolean Changed = false;
             while (true)
             {
                 Int32 FragmentIndex = -1;
                 Int32 HostIndex = -1;
-                ExperimentalRunSequencer.SequencedRun? Merged = null;
+                RunSequencer.SequencedRun? Merged = null;
                 for (Int32 ShortIndex = 0; ShortIndex < Runs.Count; ShortIndex += 1)
                 {
-                    ExperimentalRunSequencer.SequencedRun Fragment = Runs[ShortIndex];
+                    RunSequencer.SequencedRun Fragment = Runs[ShortIndex];
                     if (Fragment.Run.LengthM
                         > NESTED_FILL_FRAGMENT_MAX_LENGTH_CELLS * Field.GridSizeM)
                     {
@@ -1027,7 +1027,7 @@ namespace HaulBuilder
                     for (Int32 LongIndex = 0; LongIndex < Runs.Count; LongIndex += 1)
                     {
                         if (LongIndex == ShortIndex) continue;
-                        ExperimentalRunSequencer.SequencedRun Host = Runs[LongIndex];
+                        RunSequencer.SequencedRun Host = Runs[LongIndex];
                         if (Host.Run.LengthM
                             < Fragment.Run.LengthM + (2.0 * Field.GridSizeM))
                         {
@@ -1040,7 +1040,7 @@ namespace HaulBuilder
                             MinimumRadiusM,
                             SampleSpacingM,
                             Field,
-                            out ExperimentalRunSequencer.SequencedRun Candidate))
+                            out RunSequencer.SequencedRun Candidate))
                         {
                             continue;
                         }
@@ -1057,8 +1057,8 @@ namespace HaulBuilder
                 Changed = true;
             }
             if (!Changed) return Sequence;
-            ExperimentalRunSequencer.Result Optimized =
-                ExperimentalRunSequencer.Optimize(
+            RunSequencer.Result Optimized =
+                RunSequencer.Optimize(
                     Runs.Select(Run => Run.Run).ToList(),
                     Inbound,
                     null,
@@ -1073,13 +1073,13 @@ namespace HaulBuilder
         /// <summary>Builds one blade-width merge of a nested parallel fragment.</summary>
         private static Boolean TryMergeNestedFillFragment
             (
-            ExperimentalRunSequencer.SequencedRun Host,
-            ExperimentalRunSequencer.SequencedRun Fragment,
+            RunSequencer.SequencedRun Host,
+            RunSequencer.SequencedRun Fragment,
             Double PreferredLineupM,
             Double MinimumRadiusM,
             Double SampleSpacingM,
             Grid Field,
-            out ExperimentalRunSequencer.SequencedRun Merged
+            out RunSequencer.SequencedRun Merged
             )
         {
             Merged = Host;
@@ -1136,15 +1136,15 @@ namespace HaulBuilder
             {
                 if (!Cells.Any(Existing => Existing.Cell == Cell.Cell)) Cells.Add(Cell);
             }
-            ExperimentalCoveragePlanner.Run Combined =
-                new ExperimentalCoveragePlanner.Run(
+            CoveragePlanner.Run Combined =
+                new CoveragePlanner.Run(
                     Cells,
                     (Host.Run.StartXy.X + ShiftX, Host.Run.StartXy.Y + ShiftY),
                     (Host.Run.EndXy.X + ShiftX, Host.Run.EndXy.Y + ShiftY),
                     Host.Run.HeadingDeg,
                     Math.Max(Host.Run.MaximumLateralErrorM,
                         Fragment.Run.MaximumLateralErrorM));
-            Merged = ExperimentalRunSequencer.Prepare(
+            Merged = RunSequencer.Prepare(
                 Combined,
                 PreferredLineupM,
                 MinimumRadiusM,
@@ -1156,13 +1156,13 @@ namespace HaulBuilder
         /// <summary>Builds one consistently oriented, projection-ordered corridor candidate.</summary>
         private static Boolean TryBuildCorridorCandidate
             (
-            ExperimentalRunSequencer.Result Sequence,
-            ExperimentalConnectorPlanner.Pose? Inbound,
+            RunSequencer.Result Sequence,
+            ConnectorPlanner.Pose? Inbound,
             Double DirectionDeg,
             Double MinimumRadiusM,
             Double SampleSpacingM,
             Grid Field,
-            out ExperimentalRunSequencer.Result Candidate,
+            out RunSequencer.Result Candidate,
             out Double ScoreM
             )
         {
@@ -1173,11 +1173,11 @@ namespace HaulBuilder
             Double UnitY = Math.Cos(DirectionRad);
             Double PerpendicularX = UnitY;
             Double PerpendicularY = -UnitX;
-            List<ExperimentalRunSequencer.SequencedRun> Oriented =
-                new List<ExperimentalRunSequencer.SequencedRun>();
-            foreach (ExperimentalRunSequencer.SequencedRun Source in Sequence.Runs)
+            List<RunSequencer.SequencedRun> Oriented =
+                new List<RunSequencer.SequencedRun>();
+            foreach (RunSequencer.SequencedRun Source in Sequence.Runs)
             {
-                ExperimentalRunSequencer.SequencedRun Run =
+                RunSequencer.SequencedRun Run =
                     HeadingDifferenceDeg(Source.Run.HeadingDeg, DirectionDeg) <= 90.0
                         ? Source
                         : ReverseSequencedRun(Source);
@@ -1192,13 +1192,13 @@ namespace HaulBuilder
                 Left.Run.StartXy, UnitX, UnitY).CompareTo(Projection(
                     Right.Run.StartXy, UnitX, UnitY)));
 
-            ExperimentalCoveragePlanner.Run Reference = Oriented[0].Run;
+            CoveragePlanner.Run Reference = Oriented[0].Run;
             Double ReferenceLateralM = Projection((
                 0.5 * (Reference.StartXy.X + Reference.EndXy.X),
                 0.5 * (Reference.StartXy.Y + Reference.EndXy.Y)),
                 PerpendicularX,
                 PerpendicularY);
-            foreach (ExperimentalRunSequencer.SequencedRun Run in Oriented)
+            foreach (RunSequencer.SequencedRun Run in Oriented)
             {
                 Double LateralM = Projection((
                     0.5 * (Run.Run.StartXy.X + Run.Run.EndXy.X),
@@ -1212,15 +1212,15 @@ namespace HaulBuilder
                 }
             }
 
-            List<ExperimentalRunSequencer.SequencedRun> ContinuousRuns =
-                new List<ExperimentalRunSequencer.SequencedRun>(Oriented);
-            List<ExperimentalTransitPlanner.Result> Connectors =
-                new List<ExperimentalTransitPlanner.Result>();
+            List<RunSequencer.SequencedRun> ContinuousRuns =
+                new List<RunSequencer.SequencedRun>(Oriented);
+            List<TransitPlanner.Result> Connectors =
+                new List<TransitPlanner.Result>();
             Double ConnectorDistanceM = 0.0;
             for (Int32 Index = 1; Index < ContinuousRuns.Count; Index += 1)
             {
-                ExperimentalRunSequencer.SequencedRun Previous = ContinuousRuns[Index - 1];
-                ExperimentalRunSequencer.SequencedRun Next = ContinuousRuns[Index];
+                RunSequencer.SequencedRun Previous = ContinuousRuns[Index - 1];
+                RunSequencer.SequencedRun Next = ContinuousRuns[Index];
                 Double DirectM = Distance(Previous.Run.EndXy, Next.Run.StartXy);
                 if ((DirectM > CORRIDOR_GAP_TOLERANCE_CELLS * Field.GridSizeM)
                     || (DirectM <= 1e-9))
@@ -1235,7 +1235,7 @@ namespace HaulBuilder
                     && (HeadingDifferenceDeg(
                         BridgeHeadingDeg, Next.Run.HeadingDeg)
                             <= CORRIDOR_BRIDGE_HEADING_TOLERANCE_DEG);
-                ExperimentalTransitPlanner.Result? Connector;
+                TransitPlanner.Result? Connector;
                 if (DirectBridge)
                 {
                     Connector = BuildDirectCorridorBridge(
@@ -1250,8 +1250,8 @@ namespace HaulBuilder
                     MinimumRadiusM,
                     SampleSpacingM,
                     Field,
-                    out ExperimentalRunSequencer.SequencedRun AdjustedPrevious,
-                    out ExperimentalTransitPlanner.Result WorkConnector))
+                    out RunSequencer.SequencedRun AdjustedPrevious,
+                    out TransitPlanner.Result WorkConnector))
                 {
                     ContinuousRuns[Index - 1] = AdjustedPrevious;
                     Connector = WorkConnector;
@@ -1265,12 +1265,12 @@ namespace HaulBuilder
                 ConnectorDistanceM += Connector.LengthM;
             }
 
-            List<ExperimentalRunSequencer.SequencedRun> Runs =
-                new List<ExperimentalRunSequencer.SequencedRun>();
+            List<RunSequencer.SequencedRun> Runs =
+                new List<RunSequencer.SequencedRun>();
             for (Int32 Index = 0; Index < ContinuousRuns.Count; Index += 1)
             {
-                ExperimentalRunSequencer.SequencedRun Source = ContinuousRuns[Index];
-                Runs.Add(new ExperimentalRunSequencer.SequencedRun(
+                RunSequencer.SequencedRun Source = ContinuousRuns[Index];
+                Runs.Add(new RunSequencer.SequencedRun(
                     Source.Run,
                     Index == 0 ? Source.EntryPose : WorkStartPose(Source.Run),
                     WorkEndPose(Source.Run),
@@ -1284,8 +1284,8 @@ namespace HaulBuilder
             Double LoadedFillOverlapM = 0.0;
             if (Inbound.HasValue)
             {
-                ExperimentalTransitPlanner.Result Incoming =
-                    ExperimentalTransitPlanner.Connect(
+                TransitPlanner.Result Incoming =
+                    TransitPlanner.Connect(
                         Inbound.Value,
                         Runs[0].EntryPose,
                         MinimumRadiusM,
@@ -1301,14 +1301,14 @@ namespace HaulBuilder
                 LoadedFillOverlapM = AlignedLoadedOverlapM(
                     Incoming.Points, Runs, Field.GridSizeM);
             }
-            ExperimentalRunSequencer.SequencedRun LastRun = Runs[Runs.Count - 1];
-            ExperimentalConnectorPlanner.Pose GradeEntry =
-                new ExperimentalConnectorPlanner.Pose(
+            RunSequencer.SequencedRun LastRun = Runs[Runs.Count - 1];
+            ConnectorPlanner.Pose GradeEntry =
+                new ConnectorPlanner.Pose(
                     LastRun.Run.EndXy.X,
                     LastRun.Run.EndXy.Y,
                     LastRun.Run.HeadingDeg + 180.0);
-            ExperimentalTransitPlanner.Result GradeTurn =
-                ExperimentalTransitPlanner.Connect(
+            TransitPlanner.Result GradeTurn =
+                TransitPlanner.Connect(
                     LastRun.ExitPose,
                     GradeEntry,
                     MinimumRadiusM,
@@ -1329,7 +1329,7 @@ namespace HaulBuilder
                 + (2.0 * ConnectorDistanceM)
                 + GradeTurnM
                 + LoadedOverlapPenaltyM;
-            Candidate = new ExperimentalRunSequencer.Result(
+            Candidate = new RunSequencer.Result(
                 true,
                 Runs,
                 Connectors,
@@ -1345,7 +1345,7 @@ namespace HaulBuilder
         /// differences were already limited above and represent a slight correction,
         /// not a request for a full-radius loop.
         /// </summary>
-        private static ExperimentalTransitPlanner.Result? BuildDirectCorridorBridge
+        private static TransitPlanner.Result? BuildDirectCorridorBridge
             (
             (Double X, Double Y) Start,
             (Double X, Double Y) End,
@@ -1355,8 +1355,8 @@ namespace HaulBuilder
         {
             List<(Double X, Double Y)> Points = SampleStraight(
                 Start, End, SampleSpacingM);
-            ExperimentalFieldEdgePolicy Policy =
-                new ExperimentalFieldEdgePolicy(Field, Field.GridSizeM);
+            FieldEdgePolicy Policy =
+                new FieldEdgePolicy(Field, Field.GridSizeM);
             if (!Points.TrueForAll(Point =>
                 Policy.ContainsWithExteriorAllowance(Point.X, Point.Y)))
             {
@@ -1368,14 +1368,14 @@ namespace HaulBuilder
             String Mode = LeavesField
                 ? "MANUAL_EDGE_CORRIDOR_BRIDGE"
                 : "AUTO_CORRIDOR_BRIDGE";
-            return new ExperimentalTransitPlanner.Result(
+            return new TransitPlanner.Result(
                 true,
                 LeavesField,
                 Points,
                 LengthM,
-                new List<ExperimentalTransitPlanner.Leg>
+                new List<TransitPlanner.Leg>
                 {
-                    new ExperimentalTransitPlanner.Leg(LeavesField, Points),
+                    new TransitPlanner.Leg(LeavesField, Points),
                 },
                 LeavesField ? LengthM : 0.0,
                 Mode,
@@ -1390,22 +1390,22 @@ namespace HaulBuilder
         /// </summary>
         private static Boolean TryBuildWorkLaneShift
             (
-            ExperimentalRunSequencer.SequencedRun Previous,
-            ExperimentalRunSequencer.SequencedRun Next,
+            RunSequencer.SequencedRun Previous,
+            RunSequencer.SequencedRun Next,
             Double MinimumRadiusM,
             Double SampleSpacingM,
             Grid Field,
-            out ExperimentalRunSequencer.SequencedRun AdjustedPrevious,
-            out ExperimentalTransitPlanner.Result Connector
+            out RunSequencer.SequencedRun AdjustedPrevious,
+            out TransitPlanner.Result Connector
             )
         {
             AdjustedPrevious = Previous;
-            Connector = new ExperimentalTransitPlanner.Result(
+            Connector = new TransitPlanner.Result(
                 false,
                 false,
                 new List<(Double X, Double Y)>(),
                 0.0,
-                new List<ExperimentalTransitPlanner.Leg>(),
+                new List<TransitPlanner.Leg>(),
                 0.0,
                 "FAILED",
                 "No bounded work lane shift exists.");
@@ -1447,13 +1447,13 @@ namespace HaulBuilder
                 (Double X, Double Y) ShiftStart = (
                     Previous.Run.EndXy.X - (UnitX * CandidateBorrowM),
                     Previous.Run.EndXy.Y - (UnitY * CandidateBorrowM));
-                ExperimentalTransitPlanner.Result Candidate =
-                    ExperimentalTransitPlanner.Connect(
-                        new ExperimentalConnectorPlanner.Pose(
+                TransitPlanner.Result Candidate =
+                    TransitPlanner.Connect(
+                        new ConnectorPlanner.Pose(
                             ShiftStart.X,
                             ShiftStart.Y,
                             Previous.Run.HeadingDeg),
-                        new ExperimentalConnectorPlanner.Pose(
+                        new ConnectorPlanner.Pose(
                             Next.Run.StartXy.X,
                             Next.Run.StartXy.Y,
                             Next.Run.HeadingDeg),
@@ -1472,14 +1472,14 @@ namespace HaulBuilder
                     continue;
                 }
 
-                ExperimentalCoveragePlanner.Run AdjustedRun =
-                    new ExperimentalCoveragePlanner.Run(
+                CoveragePlanner.Run AdjustedRun =
+                    new CoveragePlanner.Run(
                         Previous.Run.Cells,
                         Previous.Run.StartXy,
                         ShiftStart,
                         Previous.Run.HeadingDeg,
                         Previous.Run.MaximumLateralErrorM);
-                AdjustedPrevious = new ExperimentalRunSequencer.SequencedRun(
+                AdjustedPrevious = new RunSequencer.SequencedRun(
                     AdjustedRun,
                     Previous.EntryPose,
                     WorkEndPose(AdjustedRun),
@@ -1487,7 +1487,7 @@ namespace HaulBuilder
                     0.0,
                     Previous.StartCoverageShortfallM,
                     Previous.EndCoverageShortfallM);
-                Connector = new ExperimentalTransitPlanner.Result(
+                Connector = new TransitPlanner.Result(
                     true,
                     false,
                     Candidate.Points,
@@ -1524,21 +1524,21 @@ namespace HaulBuilder
         }
 
         /// <summary>Reverses one sequenced run while retaining its available lineups.</summary>
-        private static ExperimentalRunSequencer.SequencedRun ReverseSequencedRun
+        private static RunSequencer.SequencedRun ReverseSequencedRun
             (
-            ExperimentalRunSequencer.SequencedRun Source
+            RunSequencer.SequencedRun Source
             )
         {
             List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Cells =
                 new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>(Source.Run.Cells);
             Cells.Reverse();
-            ExperimentalCoveragePlanner.Run Reversed = new ExperimentalCoveragePlanner.Run(
+            CoveragePlanner.Run Reversed = new CoveragePlanner.Run(
                 Cells,
                 Source.Run.EndXy,
                 Source.Run.StartXy,
                 (Source.Run.HeadingDeg + 180.0) % 360.0,
                 Source.Run.MaximumLateralErrorM);
-            return new ExperimentalRunSequencer.SequencedRun(
+            return new RunSequencer.SequencedRun(
                 Reversed,
                 ReversePose(Source.ExitPose),
                 ReversePose(Source.EntryPose),
@@ -1549,24 +1549,24 @@ namespace HaulBuilder
         }
 
         /// <summary>Creates a work-start pose with no preceding lineup.</summary>
-        private static ExperimentalConnectorPlanner.Pose WorkStartPose
+        private static ConnectorPlanner.Pose WorkStartPose
             (
-            ExperimentalCoveragePlanner.Run Run
-            ) => new ExperimentalConnectorPlanner.Pose(
+            CoveragePlanner.Run Run
+            ) => new ConnectorPlanner.Pose(
                 Run.StartXy.X, Run.StartXy.Y, Run.HeadingDeg);
 
         /// <summary>Creates a work-end pose with no following exit lineup.</summary>
-        private static ExperimentalConnectorPlanner.Pose WorkEndPose
+        private static ConnectorPlanner.Pose WorkEndPose
             (
-            ExperimentalCoveragePlanner.Run Run
-            ) => new ExperimentalConnectorPlanner.Pose(
+            CoveragePlanner.Run Run
+            ) => new ConnectorPlanner.Pose(
                 Run.EndXy.X, Run.EndXy.Y, Run.HeadingDeg);
 
         /// <summary>Reverses a pose heading without moving its position.</summary>
-        private static ExperimentalConnectorPlanner.Pose ReversePose
+        private static ConnectorPlanner.Pose ReversePose
             (
-            ExperimentalConnectorPlanner.Pose Pose
-            ) => new ExperimentalConnectorPlanner.Pose(
+            ConnectorPlanner.Pose Pose
+            ) => new ConnectorPlanner.Pose(
                 Pose.X, Pose.Y, (Pose.HeadingDeg + 180.0) % 360.0);
 
         /// <summary>Projects one point onto a unit direction.</summary>
@@ -1618,7 +1618,7 @@ namespace HaulBuilder
         private static Double AlignedLoadedOverlapM
             (
             List<(Double X, Double Y)> IncomingPoints,
-            List<ExperimentalRunSequencer.SequencedRun> FillRuns,
+            List<RunSequencer.SequencedRun> FillRuns,
             Double CorridorWidthM
             )
         {
@@ -1635,7 +1635,7 @@ namespace HaulBuilder
                 (Double X, Double Y) Midpoint = (
                     0.5 * (Start.X + End.X),
                     0.5 * (Start.Y + End.Y));
-                foreach (ExperimentalRunSequencer.SequencedRun FillRun in FillRuns)
+                foreach (RunSequencer.SequencedRun FillRun in FillRuns)
                 {
                     Double AlignmentDeg = HeadingDifferenceDeg(
                         SegmentHeadingDeg, FillRun.Run.HeadingDeg);
@@ -1682,7 +1682,7 @@ namespace HaulBuilder
         private static Boolean AppendPreparedRuns
             (
             List<Segment> Output,
-            List<ExperimentalRunSequencer.SequencedRun> Runs,
+            List<RunSequencer.SequencedRun> Runs,
             Phase LineupPhase,
             Phase WorkPhase,
             Phase ExitPhase,
@@ -1711,7 +1711,7 @@ namespace HaulBuilder
         /// <summary>Returns true when every internal fill transition is a direct corridor bridge.</summary>
         private static Boolean UsesCorridorBridges
             (
-            ExperimentalRunSequencer.Result Sequence
+            RunSequencer.Result Sequence
             )
         {
             if ((Sequence.Runs.Count <= 1)
@@ -1719,7 +1719,7 @@ namespace HaulBuilder
             {
                 return false;
             }
-            foreach (ExperimentalTransitPlanner.Result Connector in Sequence.Connectors)
+            foreach (TransitPlanner.Result Connector in Sequence.Connectors)
             {
                 if (!Connector.Mode.EndsWith(
                     "CORRIDOR_BRIDGE", StringComparison.Ordinal)) return false;
@@ -1734,7 +1734,7 @@ namespace HaulBuilder
         /// </summary>
         private static Boolean CanRetraceFillConnectors
             (
-            ExperimentalRunSequencer.Result Sequence
+            RunSequencer.Result Sequence
             )
         {
             if ((Sequence.Runs.Count <= 1)
@@ -1742,7 +1742,7 @@ namespace HaulBuilder
             {
                 return false;
             }
-            foreach (ExperimentalTransitPlanner.Result Connector in Sequence.Connectors)
+            foreach (TransitPlanner.Result Connector in Sequence.Connectors)
             {
                 if (!Connector.Success || Connector.OperatorAlignmentRequired) return false;
             }
@@ -1756,8 +1756,8 @@ namespace HaulBuilder
         private static Boolean AppendPreparedRunsWithReversedConnectors
             (
             List<Segment> Output,
-            List<ExperimentalRunSequencer.SequencedRun> Runs,
-            List<ExperimentalTransitPlanner.Result> FillConnectors,
+            List<RunSequencer.SequencedRun> Runs,
+            List<TransitPlanner.Result> FillConnectors,
             Phase LineupPhase,
             Phase WorkPhase,
             Phase ExitPhase,
@@ -1769,7 +1769,7 @@ namespace HaulBuilder
             {
                 if (Index > 0)
                 {
-                    ExperimentalTransitPlanner.Result Connector = ReverseTransit(
+                    TransitPlanner.Result Connector = ReverseTransit(
                         FillConnectors[FillConnectors.Count - Index]);
                     AppendSequenceConnector(
                         Output,
@@ -1786,26 +1786,26 @@ namespace HaulBuilder
         }
 
         /// <summary>Reverses one fully sampled transit and all of its action legs.</summary>
-        private static ExperimentalTransitPlanner.Result ReverseTransit
+        private static TransitPlanner.Result ReverseTransit
             (
-            ExperimentalTransitPlanner.Result Source
+            TransitPlanner.Result Source
             )
         {
             List<(Double X, Double Y)> Points =
                 new List<(Double X, Double Y)>(Source.Points);
             Points.Reverse();
-            List<ExperimentalTransitPlanner.Leg> Legs =
-                new List<ExperimentalTransitPlanner.Leg>();
+            List<TransitPlanner.Leg> Legs =
+                new List<TransitPlanner.Leg>();
             for (Int32 Index = Source.Legs.Count - 1; Index >= 0; Index -= 1)
             {
-                ExperimentalTransitPlanner.Leg SourceLeg = Source.Legs[Index];
+                TransitPlanner.Leg SourceLeg = Source.Legs[Index];
                 List<(Double X, Double Y)> LegPoints =
                     new List<(Double X, Double Y)>(SourceLeg.Points);
                 LegPoints.Reverse();
-                Legs.Add(new ExperimentalTransitPlanner.Leg(
+                Legs.Add(new TransitPlanner.Leg(
                     SourceLeg.OperatorAlignmentRequired, LegPoints));
             }
-            return new ExperimentalTransitPlanner.Result(
+            return new TransitPlanner.Result(
                 Source.Success,
                 Source.OperatorAlignmentRequired,
                 Points,
@@ -1821,7 +1821,7 @@ namespace HaulBuilder
         private static void AppendPreparedRun
             (
             List<Segment> Output,
-            ExperimentalRunSequencer.SequencedRun Run,
+            RunSequencer.SequencedRun Run,
             Phase LineupPhase,
             Phase WorkPhase,
             Phase ExitPhase
@@ -1845,17 +1845,17 @@ namespace HaulBuilder
         }
 
         /// <summary>Builds reverse-drive-order grade runs over completed fill work.</summary>
-        static public List<ExperimentalRunSequencer.SequencedRun> BuildGradeRuns
+        static public List<RunSequencer.SequencedRun> BuildGradeRuns
             (
-            List<ExperimentalRunSequencer.SequencedRun> FillRuns,
+            List<RunSequencer.SequencedRun> FillRuns,
             Double PreferredLineupM,
             Double MinimumRadiusM,
             Double SampleSpacingM,
             Grid Field
             )
         {
-            List<ExperimentalRunSequencer.SequencedRun> Output =
-                new List<ExperimentalRunSequencer.SequencedRun>();
+            List<RunSequencer.SequencedRun> Output =
+                new List<RunSequencer.SequencedRun>();
             for (Int32 Index = FillRuns.Count - 1; Index >= 0; Index -= 1)
             {
                 Output.Add(ReverseSequencedRun(FillRuns[Index]));
@@ -1871,7 +1871,7 @@ namespace HaulBuilder
         /// </summary>
         static public Boolean SupportsPreparedGradeReturn
             (
-            ExperimentalRunSequencer.Result FillSequence,
+            RunSequencer.Result FillSequence,
             Double MinimumRadiusM,
             Double SampleSpacingM,
             Grid Field,
@@ -1887,14 +1887,14 @@ namespace HaulBuilder
             }
             if (FillSequence.Runs.Count == 0) return true;
 
-            List<ExperimentalRunSequencer.SequencedRun> GradeRuns = BuildGradeRuns(
+            List<RunSequencer.SequencedRun> GradeRuns = BuildGradeRuns(
                 FillSequence.Runs,
                 0.0,
                 MinimumRadiusM,
                 SampleSpacingM,
                 Field);
-            ExperimentalTransitPlanner.Result TurnToGrade =
-                ExperimentalTransitPlanner.Connect(
+            TransitPlanner.Result TurnToGrade =
+                TransitPlanner.Connect(
                     FillSequence.Runs[FillSequence.Runs.Count - 1].ExitPose,
                     GradeRuns[0].EntryPose,
                     MinimumRadiusM,
@@ -1912,8 +1912,8 @@ namespace HaulBuilder
             if (CanRetraceFillConnectors(FillSequence)) return true;
             for (Int32 Index = 1; Index < GradeRuns.Count; Index += 1)
             {
-                ExperimentalTransitPlanner.Result Connector =
-                    ExperimentalTransitPlanner.Connect(
+                TransitPlanner.Result Connector =
+                    TransitPlanner.Connect(
                         GradeRuns[Index - 1].ExitPose,
                         GradeRuns[Index].EntryPose,
                         MinimumRadiusM,
@@ -1934,8 +1934,8 @@ namespace HaulBuilder
             (
             List<Segment> Output,
             ref Int32 ManualAssistCount,
-            ExperimentalConnectorPlanner.Pose Start,
-            ExperimentalConnectorPlanner.Pose End,
+            ConnectorPlanner.Pose Start,
+            ConnectorPlanner.Pose End,
             Phase TransitPhase,
             Double MinimumRadiusM,
             Double SampleSpacingM,
@@ -1943,7 +1943,7 @@ namespace HaulBuilder
             out String FailureReason
             )
         {
-            ExperimentalTransitPlanner.Result Transit = ExperimentalTransitPlanner.Connect(
+            TransitPlanner.Result Transit = TransitPlanner.Connect(
                 Start,
                 End,
                 MinimumRadiusM,
@@ -1962,11 +1962,11 @@ namespace HaulBuilder
             (
             List<Segment> Output,
             ref Int32 ManualAssistCount,
-            ExperimentalTransitPlanner.Result Transit,
+            TransitPlanner.Result Transit,
             Phase TransitPhase
             )
         {
-            foreach (ExperimentalTransitPlanner.Leg Leg in Transit.Legs)
+            foreach (TransitPlanner.Leg Leg in Transit.Legs)
             {
                 Phase SelectedPhase = Leg.OperatorAlignmentRequired
                     ? Phase.ManualAssist
@@ -1984,7 +1984,7 @@ namespace HaulBuilder
             (
             List<Segment> Output,
             ref Int32 ManualAssistCount,
-            ExperimentalTransitPlanner.Result Connector,
+            TransitPlanner.Result Connector,
             Phase TransitPhase,
             Phase WorkPhase,
             Double PreviousEndWorkM = 0.0,
@@ -1995,7 +1995,7 @@ namespace HaulBuilder
                 "WORK_CORRIDOR_BRIDGE",
                 StringComparison.Ordinal))
             {
-                foreach (ExperimentalTransitPlanner.Leg Leg in Connector.Legs)
+                foreach (TransitPlanner.Leg Leg in Connector.Legs)
                 {
                     if (Leg.OperatorAlignmentRequired)
                     {

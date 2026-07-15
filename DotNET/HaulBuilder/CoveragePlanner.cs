@@ -5,9 +5,9 @@ using System.Linq;
 namespace HaulBuilder
 {
     /// <summary>
-    /// Builds experimental straight coverage runs without modifying passes or production guidance.
+    /// Builds straight coverage runs without modifying passes or production guidance.
     /// </summary>
-    public static class ExperimentalCoveragePlanner
+    public static class CoveragePlanner
     {
         private const Double HEADING_STEP_DEG = 5.0;
         private const Double MAX_ALONG_GAP_GRID_MULTIPLIER = 1.75;
@@ -25,7 +25,7 @@ namespace HaulBuilder
         public sealed class Run
         {
             /// <summary>
-            /// Initializes a straight experimental coverage run.
+            /// Initializes a straight guidance coverage run.
             /// </summary>
             /// <param name="Cells">Allocated material cells covered by the run.</param>
             /// <param name="StartXy">Centerline start coordinate.</param>
@@ -82,7 +82,7 @@ namespace HaulBuilder
         public sealed class PlanResult
         {
             /// <summary>
-            /// Initializes an experimental coverage result.
+            /// Initializes an guidance coverage result.
             /// </summary>
             /// <param name="HeadingDeg">Selected common sweep heading.</param>
             /// <param name="Runs">Drive-ordered straight coverage runs.</param>
@@ -246,8 +246,8 @@ namespace HaulBuilder
                 };
             }
 
-            ExperimentalFieldEdgePolicy EdgePolicy =
-                new ExperimentalFieldEdgePolicy(Grid, Grid.GridSizeM);
+            FieldEdgePolicy EdgePolicy =
+                new FieldEdgePolicy(Grid, Grid.GridSizeM);
             List<PlanResult> Candidates = new List<PlanResult>();
             for (Double HeadingDeg = 0.0; HeadingDeg < 180.0; HeadingDeg += HEADING_STEP_DEG)
             {
@@ -275,7 +275,7 @@ namespace HaulBuilder
                         OmittedCells);
                     if (!ConservesAllocation(Cells, Candidate.AccountedCells))
                         throw new InvalidOperationException(
-                            "Experimental coverage planning failed to account for the cell/depth multiset.");
+                            " coverage planning failed to account for the cell/depth multiset.");
                     Candidates.Add(Candidate);
                 }
             }

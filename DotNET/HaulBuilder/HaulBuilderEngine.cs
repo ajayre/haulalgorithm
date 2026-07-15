@@ -523,35 +523,19 @@ namespace HaulBuilder
                 return;
             }
 
-            GuidanceResult Guidance = Swaths.BuildGuidance(
+            GuidancePlanner.BuildResult Plan = GuidancePlanner.Build(
+                route,
                 grid,
                 field,
-                route,
-                options.BladeWidthMm,
                 headingDeg,
-                options.LaneOverlap,
-                !options.NoGradeReturn,
-                options.TurnThresholdDeg,
-                !options.NoRouteSmoothing,
-                (options.TurningCircleFt * 0.5 * Constants.FEET_TO_METERS),
-                0.7,
-                obstacles,
-                null,
-                (options.EquipmentLengthFt * Constants.FEET_TO_METERS));
+                options,
+                Diagnostic: Message => result.Messages.Add(Message));
+            GuidanceResult Guidance = Plan.Guidance;
             result.Guidance = Guidance;
             result.GuidancePoints.AddRange(Guidance.Points);
-            result.GuidanceTime = Swaths.EstimateGuidanceTime(
-                Guidance,
-                options.LoadingSpeedMph,
-                options.HaulSpeedMph,
-                options.DumpingSpeedMph,
-                options.ReturnSpeedMph,
-                options.GradeSpeedMph,
-                options.TurnSpeedMph,
-                options.TurningCircleFt,
-                options.AccelTimeS,
-                options.DecelTimeS,
-                options.FieldEfficiency);
+            result.GuidanceTime = Plan.SummaryTime;
+            result.LifecycleGuidance = Plan.Lifecycle;
+            result.DetailedGuidanceTime = Plan.Timing;
 
             result.CsvTextByName["guidance"] = BuildGuidanceCsv(Guidance.Points);
             if (options.GuidancePngPath is not null)

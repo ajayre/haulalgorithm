@@ -6,7 +6,7 @@ namespace HaulBuilder
     /// <summary>
     /// Describes the outer field boundary, edge-parallel work headings, and the permitted one-cell exterior strip.
     /// </summary>
-    public sealed class ExperimentalFieldEdgePolicy
+    public sealed class FieldEdgePolicy
     {
         private const Double NUMERIC_TOLERANCE = 1e-9;
         private readonly Grid Field;
@@ -14,7 +14,7 @@ namespace HaulBuilder
         private readonly Double HaulGridSizeM;
 
         /// <summary>Builds one immutable boundary classification for a field grid.</summary>
-        public ExperimentalFieldEdgePolicy
+        public FieldEdgePolicy
             (
             Grid Field,
             Double HaulGridSizeM = Constants.DEFAULT_BLADE_WIDTH_MM / 1000.0

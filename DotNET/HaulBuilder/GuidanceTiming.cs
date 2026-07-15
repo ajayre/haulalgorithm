@@ -4,9 +4,9 @@ using System.Collections.Generic;
 namespace HaulBuilder
 {
     /// <summary>
-    /// Estimates experimental lifecycle time from the final driven segment geometry.
+    /// Estimates production lifecycle time from the final driven segment geometry.
     /// </summary>
-    static public class ExperimentalGuidanceTiming
+    static public class GuidanceTiming
     {
         private const Double ANGLE_TOLERANCE_RAD = 1e-6;
         private const Double AREA_TOLERANCE_M2 = 1e-12;
@@ -28,8 +28,8 @@ namespace HaulBuilder
             public CurveViolation
                 (
                 Int32 RouteNumber,
-                ExperimentalLifecyclePlanner.Phase PreviousPhase,
-                ExperimentalLifecyclePlanner.Phase NextPhase,
+                LifecyclePlanner.Phase PreviousPhase,
+                LifecyclePlanner.Phase NextPhase,
                 (Double X, Double Y) PreviousPoint,
                 Double X,
                 Double Y,
@@ -51,10 +51,10 @@ namespace HaulBuilder
             public Int32 RouteNumber { get; }
 
             /// <summary>Gets the incoming lifecycle phase.</summary>
-            public ExperimentalLifecyclePlanner.Phase PreviousPhase { get; }
+            public LifecyclePlanner.Phase PreviousPhase { get; }
 
             /// <summary>Gets the outgoing lifecycle phase.</summary>
-            public ExperimentalLifecyclePlanner.Phase NextPhase { get; }
+            public LifecyclePlanner.Phase NextPhase { get; }
 
             /// <summary>Gets the point immediately before the violating vertex.</summary>
             public (Double X, Double Y) PreviousPoint { get; }
@@ -175,8 +175,8 @@ namespace HaulBuilder
             /// <summary>Initializes one timing result.</summary>
             public Result
                 (
-                Dictionary<ExperimentalLifecyclePlanner.Phase, Double> PhaseSeconds,
-                Dictionary<ExperimentalLifecyclePlanner.Phase, Double> PhaseDistanceM,
+                Dictionary<LifecyclePlanner.Phase, Double> PhaseSeconds,
+                Dictionary<LifecyclePlanner.Phase, Double> PhaseDistanceM,
                 Dictionary<Int32, Double> RouteSeconds,
                 Dictionary<Int32, Double> RouteDistanceM,
                 Double MotionSeconds,
@@ -218,10 +218,10 @@ namespace HaulBuilder
             }
 
             /// <summary>Gets motion and phase-owned event seconds.</summary>
-            public Dictionary<ExperimentalLifecyclePlanner.Phase, Double> PhaseSeconds { get; }
+            public Dictionary<LifecyclePlanner.Phase, Double> PhaseSeconds { get; }
 
             /// <summary>Gets final centerline distance by lifecycle phase.</summary>
-            public Dictionary<ExperimentalLifecyclePlanner.Phase, Double> PhaseDistanceM { get; }
+            public Dictionary<LifecyclePlanner.Phase, Double> PhaseDistanceM { get; }
 
             /// <summary>Gets motion and route-owned event seconds by one-based route.</summary>
             public Dictionary<Int32, Double> RouteSeconds { get; }
@@ -293,7 +293,7 @@ namespace HaulBuilder
         /// </summary>
         static public Result Estimate
             (
-            ExperimentalLifecyclePlanner.Result Guidance,
+            LifecyclePlanner.Result Guidance,
             Options Settings
             )
         {
@@ -327,10 +327,10 @@ namespace HaulBuilder
                 throw new ArgumentOutOfRangeException(nameof(Settings.FieldEfficiency));
             }
 
-            Dictionary<ExperimentalLifecyclePlanner.Phase, Double> PhaseSeconds =
-                new Dictionary<ExperimentalLifecyclePlanner.Phase, Double>();
-            Dictionary<ExperimentalLifecyclePlanner.Phase, Double> PhaseDistanceM =
-                new Dictionary<ExperimentalLifecyclePlanner.Phase, Double>();
+            Dictionary<LifecyclePlanner.Phase, Double> PhaseSeconds =
+                new Dictionary<LifecyclePlanner.Phase, Double>();
+            Dictionary<LifecyclePlanner.Phase, Double> PhaseDistanceM =
+                new Dictionary<LifecyclePlanner.Phase, Double>();
             Dictionary<Int32, Double> RouteSeconds = new Dictionary<Int32, Double>();
             Dictionary<Int32, Double> RouteDistanceM = new Dictionary<Int32, Double>();
             // Flatten phase polylines once so speed stays continuous across every
@@ -396,7 +396,7 @@ namespace HaulBuilder
             Boolean PreviousManualAssist = false;
             // Operational events belong to state transitions, not sampled points
             // or repeated segment fragments inside the same state.
-            foreach (ExperimentalLifecyclePlanner.Segment Segment in Guidance.Segments)
+            foreach (LifecyclePlanner.Segment Segment in Guidance.Segments)
             {
                 if ((Segment.BladeDown) && (!PreviousBladeDown))
                 {
@@ -411,7 +411,7 @@ namespace HaulBuilder
                     Add(RouteSeconds, Segment.RouteNumber, Settings.BladeRaiseS);
                 }
                 Boolean IsManualAssist =
-                    Segment.Phase == ExperimentalLifecyclePlanner.Phase.ManualAssist;
+                    Segment.Phase == LifecyclePlanner.Phase.ManualAssist;
                 if ((IsManualAssist) && (!PreviousManualAssist))
                 {
                     EventSeconds += Settings.ManualAssistOverheadS;
@@ -476,9 +476,9 @@ namespace HaulBuilder
         /// <summary>Rejects any internal loss or duplication of distance or time.</summary>
         private static void ValidateReconciliation
             (
-            ExperimentalLifecyclePlanner.Result Guidance,
-            Dictionary<ExperimentalLifecyclePlanner.Phase, Double> PhaseSeconds,
-            Dictionary<ExperimentalLifecyclePlanner.Phase, Double> PhaseDistanceM,
+            LifecyclePlanner.Result Guidance,
+            Dictionary<LifecyclePlanner.Phase, Double> PhaseSeconds,
+            Dictionary<LifecyclePlanner.Phase, Double> PhaseDistanceM,
             Dictionary<Int32, Double> RouteSeconds,
             Dictionary<Int32, Double> RouteDistanceM,
             Double MotionSeconds,
@@ -531,7 +531,7 @@ namespace HaulBuilder
             /// <summary>Initializes one motion edge.</summary>
             public MotionEdge
                 (
-                ExperimentalLifecyclePlanner.Phase Phase,
+                LifecyclePlanner.Phase Phase,
                 Int32 RouteNumber,
                 Boolean Loaded,
                 (Double X, Double Y) Start,
@@ -553,7 +553,7 @@ namespace HaulBuilder
             }
 
             /// <summary>Gets the lifecycle phase.</summary>
-            public ExperimentalLifecyclePlanner.Phase Phase { get; }
+            public LifecyclePlanner.Phase Phase { get; }
 
             /// <summary>Gets the one-based owning route.</summary>
             public Int32 RouteNumber { get; }
@@ -589,7 +589,7 @@ namespace HaulBuilder
             /// <summary>Initializes one motion block.</summary>
             public MotionBlock
                 (
-                ExperimentalLifecyclePlanner.Phase Phase,
+                LifecyclePlanner.Phase Phase,
                 Int32 RouteNumber,
                 Boolean Loaded,
                 Double LengthM,
@@ -606,7 +606,7 @@ namespace HaulBuilder
             }
 
             /// <summary>Gets the lifecycle phase.</summary>
-            public ExperimentalLifecyclePlanner.Phase Phase { get; }
+            public LifecyclePlanner.Phase Phase { get; }
 
             /// <summary>Gets the one-based owning route.</summary>
             public Int32 RouteNumber { get; }
@@ -627,12 +627,12 @@ namespace HaulBuilder
         /// <summary>Flattens lifecycle polylines into nonzero motion edges.</summary>
         private static List<MotionEdge> BuildEdges
             (
-            ExperimentalLifecyclePlanner.Result Guidance,
+            LifecyclePlanner.Result Guidance,
             Options Settings
             )
         {
             List<MotionEdge> Edges = new List<MotionEdge>();
-            foreach (ExperimentalLifecyclePlanner.Segment Segment in Guidance.Segments)
+            foreach (LifecyclePlanner.Segment Segment in Guidance.Segments)
             {
                 Double FullTravelSpeedMps = (Segment.Loaded
                     ? Settings.LoadedTravelSpeedMph
@@ -1051,7 +1051,7 @@ namespace HaulBuilder
         /// <summary>Maps each lifecycle phase to its configured maximum speed.</summary>
         private static Double PhaseSpeedMph
             (
-            ExperimentalLifecyclePlanner.Phase Phase,
+            LifecyclePlanner.Phase Phase,
             Boolean Loaded,
             Options Settings
             )
@@ -1061,9 +1061,9 @@ namespace HaulBuilder
                 : Settings.UnloadedTravelSpeedMph;
             return Phase switch
             {
-                ExperimentalLifecyclePlanner.Phase.Cut => Settings.CutSpeedMph,
-                ExperimentalLifecyclePlanner.Phase.Fill => Settings.FillSpeedMph,
-                ExperimentalLifecyclePlanner.Phase.Grade => Settings.GradeSpeedMph,
+                LifecyclePlanner.Phase.Cut => Settings.CutSpeedMph,
+                LifecyclePlanner.Phase.Fill => Settings.FillSpeedMph,
+                LifecyclePlanner.Phase.Grade => Settings.GradeSpeedMph,
                 _ => TravelSpeedMph,
             };
         }
@@ -1119,8 +1119,8 @@ namespace HaulBuilder
         /// <summary>Adds seconds to one phase bucket.</summary>
         private static void Add
             (
-            Dictionary<ExperimentalLifecyclePlanner.Phase, Double> Output,
-            ExperimentalLifecyclePlanner.Phase Phase,
+            Dictionary<LifecyclePlanner.Phase, Double> Output,
+            LifecyclePlanner.Phase Phase,
             Double Seconds
             )
         {

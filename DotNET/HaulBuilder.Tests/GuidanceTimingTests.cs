@@ -9,7 +9,7 @@ namespace HaulBuilder.Tests
     /// <summary>
     /// Verifies timing derives from final geometry and explicit lifecycle events.
     /// </summary>
-    public sealed class ExperimentalGuidanceTimingTests
+    public sealed class GuidanceTimingTests
     {
         /// <summary>Verifies user-facing speeds feed the guidance timing model.</summary>
         [Fact]
@@ -24,8 +24,8 @@ namespace HaulBuilder.Tests
                 TurnSpeedMph = 3.0,
             };
 
-            ExperimentalGuidanceTiming.Options Options =
-                new ExperimentalGuidanceTiming.Options(Source);
+            GuidanceTiming.Options Options =
+                new GuidanceTiming.Options(Source);
 
             Assert.Equal(9.0, Options.LoadedTravelSpeedMph, 9);
             Assert.Equal(12.0, Options.UnloadedTravelSpeedMph, 9);
@@ -40,19 +40,19 @@ namespace HaulBuilder.Tests
             (
             )
         {
-            ExperimentalLifecyclePlanner.Result Sparse = MakeGuidance(
-                ExperimentalLifecyclePlanner.Phase.Transit,
+            LifecyclePlanner.Result Sparse = MakeGuidance(
+                LifecyclePlanner.Phase.Transit,
                 new List<(Double X, Double Y)> { (0.0, 0.0), (100.0, 0.0) });
             List<(Double X, Double Y)> DensePoints = Enumerable.Range(0, 101)
                 .Select(Index => ((Double)Index, 0.0)).ToList();
-            ExperimentalLifecyclePlanner.Result Dense = MakeGuidance(
-                ExperimentalLifecyclePlanner.Phase.Transit, DensePoints);
-            ExperimentalGuidanceTiming.Options Options = new ExperimentalGuidanceTiming.Options();
+            LifecyclePlanner.Result Dense = MakeGuidance(
+                LifecyclePlanner.Phase.Transit, DensePoints);
+            GuidanceTiming.Options Options = new GuidanceTiming.Options();
 
-            ExperimentalGuidanceTiming.Result SparseTime =
-                ExperimentalGuidanceTiming.Estimate(Sparse, Options);
-            ExperimentalGuidanceTiming.Result DenseTime =
-                ExperimentalGuidanceTiming.Estimate(Dense, Options);
+            GuidanceTiming.Result SparseTime =
+                GuidanceTiming.Estimate(Sparse, Options);
+            GuidanceTiming.Result DenseTime =
+                GuidanceTiming.Estimate(Dense, Options);
 
             Assert.Equal(SparseTime.TotalSeconds, DenseTime.TotalSeconds, 9);
         }
@@ -65,23 +65,23 @@ namespace HaulBuilder.Tests
             (
             )
         {
-            ExperimentalLifecyclePlanner.Result Combined = MakeGuidance(
-                ExperimentalLifecyclePlanner.Phase.Transit,
+            LifecyclePlanner.Result Combined = MakeGuidance(
+                LifecyclePlanner.Phase.Transit,
                 new List<(Double X, Double Y)> { (0.0, 0.0), (100.0, 0.0) });
-            ExperimentalLifecyclePlanner.Result Partitioned = MakeGuidance(
-                new List<ExperimentalLifecyclePlanner.Segment>
+            LifecyclePlanner.Result Partitioned = MakeGuidance(
+                new List<LifecyclePlanner.Segment>
                 {
-                    MakeSegment(ExperimentalLifecyclePlanner.Phase.Transit,
+                    MakeSegment(LifecyclePlanner.Phase.Transit,
                         (0.0, 0.0), (40.0, 0.0)),
-                    MakeSegment(ExperimentalLifecyclePlanner.Phase.Transit,
+                    MakeSegment(LifecyclePlanner.Phase.Transit,
                         (40.0, 0.0), (100.0, 0.0)),
                 });
-            ExperimentalGuidanceTiming.Options Options = new ExperimentalGuidanceTiming.Options();
+            GuidanceTiming.Options Options = new GuidanceTiming.Options();
 
-            ExperimentalGuidanceTiming.Result CombinedTime =
-                ExperimentalGuidanceTiming.Estimate(Combined, Options);
-            ExperimentalGuidanceTiming.Result PartitionedTime =
-                ExperimentalGuidanceTiming.Estimate(Partitioned, Options);
+            GuidanceTiming.Result CombinedTime =
+                GuidanceTiming.Estimate(Combined, Options);
+            GuidanceTiming.Result PartitionedTime =
+                GuidanceTiming.Estimate(Partitioned, Options);
 
             Assert.Equal(CombinedTime.TotalSeconds, PartitionedTime.TotalSeconds, 9);
             Assert.Equal(0, PartitionedTime.ForcedStopCount);
@@ -93,18 +93,18 @@ namespace HaulBuilder.Tests
             (
             )
         {
-            ExperimentalLifecyclePlanner.Result Guidance = MakeGuidance(
-                ExperimentalLifecyclePlanner.Phase.Transit,
+            LifecyclePlanner.Result Guidance = MakeGuidance(
+                LifecyclePlanner.Phase.Transit,
                 new List<(Double X, Double Y)> { (0.0, 0.0), (100.0, 0.0) });
-            ExperimentalGuidanceTiming.Options Options = new ExperimentalGuidanceTiming.Options
+            GuidanceTiming.Options Options = new GuidanceTiming.Options
             {
                 UnloadedTravelSpeedMph = 10.0 / Constants.MPH_TO_MPS,
                 AccelerationMps2 = 2.0,
                 DecelerationMps2 = 2.0,
             };
 
-            ExperimentalGuidanceTiming.Result Time =
-                ExperimentalGuidanceTiming.Estimate(Guidance, Options);
+            GuidanceTiming.Result Time =
+                GuidanceTiming.Estimate(Guidance, Options);
 
             Assert.Equal(15.0, Time.MotionSeconds, 9);
             Assert.Equal(10.0, Time.ConstantSpeedSeconds, 9);
@@ -117,21 +117,21 @@ namespace HaulBuilder.Tests
             (
             )
         {
-            ExperimentalLifecyclePlanner.Segment Transit = MakeSegment(
-                ExperimentalLifecyclePlanner.Phase.Transit,
+            LifecyclePlanner.Segment Transit = MakeSegment(
+                LifecyclePlanner.Phase.Transit,
                 (0.0, 0.0), (100.0, 0.0));
-            ExperimentalLifecyclePlanner.Segment Cut = MakeSegment(
-                ExperimentalLifecyclePlanner.Phase.Cut,
+            LifecyclePlanner.Segment Cut = MakeSegment(
+                LifecyclePlanner.Phase.Cut,
                 (100.0, 0.0), (200.0, 0.0));
-            ExperimentalGuidanceTiming.Options Options = new ExperimentalGuidanceTiming.Options();
-            ExperimentalGuidanceTiming.Result Chained = ExperimentalGuidanceTiming.Estimate(
-                MakeGuidance(new List<ExperimentalLifecyclePlanner.Segment> { Transit, Cut }),
+            GuidanceTiming.Options Options = new GuidanceTiming.Options();
+            GuidanceTiming.Result Chained = GuidanceTiming.Estimate(
+                MakeGuidance(new List<LifecyclePlanner.Segment> { Transit, Cut }),
                 Options);
-            Double SeparatelyStopped = ExperimentalGuidanceTiming.Estimate(
-                MakeGuidance(new List<ExperimentalLifecyclePlanner.Segment> { Transit }),
+            Double SeparatelyStopped = GuidanceTiming.Estimate(
+                MakeGuidance(new List<LifecyclePlanner.Segment> { Transit }),
                 Options).MotionSeconds
-                + ExperimentalGuidanceTiming.Estimate(
-                    MakeGuidance(new List<ExperimentalLifecyclePlanner.Segment> { Cut }),
+                + GuidanceTiming.Estimate(
+                    MakeGuidance(new List<LifecyclePlanner.Segment> { Cut }),
                     Options).MotionSeconds;
 
             Assert.True(Chained.MotionSeconds < SeparatelyStopped);
@@ -148,17 +148,17 @@ namespace HaulBuilder.Tests
             )
         {
             const Double MINIMUM_RADIUS_M = 10.0;
-            ExperimentalGuidanceTiming.Options Options = new ExperimentalGuidanceTiming.Options
+            GuidanceTiming.Options Options = new GuidanceTiming.Options
             {
                 MinimumTurningRadiusM = MINIMUM_RADIUS_M,
                 LoadedTravelSpeedMph = 10.0,
                 TurnSpeedMph = 4.0,
             };
-            ExperimentalGuidanceTiming.Result Tight = ExperimentalGuidanceTiming.Estimate(
-                MakeGuidance(ExperimentalLifecyclePlanner.Phase.Transit,
+            GuidanceTiming.Result Tight = GuidanceTiming.Estimate(
+                MakeGuidance(LifecyclePlanner.Phase.Transit,
                     MakeSemicircle(MINIMUM_RADIUS_M, 1001), true), Options);
-            ExperimentalGuidanceTiming.Result Gentle = ExperimentalGuidanceTiming.Estimate(
-                MakeGuidance(ExperimentalLifecyclePlanner.Phase.Transit,
+            GuidanceTiming.Result Gentle = GuidanceTiming.Estimate(
+                MakeGuidance(LifecyclePlanner.Phase.Transit,
                     MakeSemicircle(2.0 * MINIMUM_RADIUS_M, 1001), true), Options);
             Double TightAverageLimitMph = Tight.DistanceM / Tight.ConstantSpeedSeconds
                 / Constants.MPH_TO_MPS;
@@ -179,15 +179,15 @@ namespace HaulBuilder.Tests
         {
             List<(Double X, Double Y)> Points =
                 new List<(Double X, Double Y)> { (0.0, 0.0), (1000.0, 0.0) };
-            ExperimentalGuidanceTiming.Options Options = new ExperimentalGuidanceTiming.Options
+            GuidanceTiming.Options Options = new GuidanceTiming.Options
             {
                 LoadedTravelSpeedMph = 10.0,
                 UnloadedTravelSpeedMph = 13.0,
             };
-            ExperimentalGuidanceTiming.Result Loaded = ExperimentalGuidanceTiming.Estimate(
-                MakeGuidance(ExperimentalLifecyclePlanner.Phase.Transit, Points, true), Options);
-            ExperimentalGuidanceTiming.Result Unloaded = ExperimentalGuidanceTiming.Estimate(
-                MakeGuidance(ExperimentalLifecyclePlanner.Phase.Transit, Points, false), Options);
+            GuidanceTiming.Result Loaded = GuidanceTiming.Estimate(
+                MakeGuidance(LifecyclePlanner.Phase.Transit, Points, true), Options);
+            GuidanceTiming.Result Unloaded = GuidanceTiming.Estimate(
+                MakeGuidance(LifecyclePlanner.Phase.Transit, Points, false), Options);
 
             Assert.Equal(10.0, Loaded.DistanceM / Loaded.ConstantSpeedSeconds
                 / Constants.MPH_TO_MPS, 9);
@@ -205,13 +205,13 @@ namespace HaulBuilder.Tests
             (
             )
         {
-            ExperimentalGuidanceTiming.Options Options = new ExperimentalGuidanceTiming.Options
+            GuidanceTiming.Options Options = new GuidanceTiming.Options
             {
                 UnloadedTravelSpeedMph = 13.0,
                 TurnSpeedMph = 4.0,
             };
-            ExperimentalGuidanceTiming.Result Lineup = ExperimentalGuidanceTiming.Estimate(
-                MakeGuidance(ExperimentalLifecyclePlanner.Phase.LineupCut,
+            GuidanceTiming.Result Lineup = GuidanceTiming.Estimate(
+                MakeGuidance(LifecyclePlanner.Phase.LineupCut,
                     new List<(Double X, Double Y)> { (0.0, 0.0), (1000.0, 0.0) }),
                 Options);
 
@@ -225,12 +225,12 @@ namespace HaulBuilder.Tests
             (
             )
         {
-            ExperimentalGuidanceTiming.Options Options = new ExperimentalGuidanceTiming.Options();
-            ExperimentalGuidanceTiming.Result Sparse = ExperimentalGuidanceTiming.Estimate(
-                MakeGuidance(ExperimentalLifecyclePlanner.Phase.Transit,
+            GuidanceTiming.Options Options = new GuidanceTiming.Options();
+            GuidanceTiming.Result Sparse = GuidanceTiming.Estimate(
+                MakeGuidance(LifecyclePlanner.Phase.Transit,
                     MakeSemicircle(25.0, 159)), Options);
-            ExperimentalGuidanceTiming.Result Dense = ExperimentalGuidanceTiming.Estimate(
-                MakeGuidance(ExperimentalLifecyclePlanner.Phase.Transit,
+            GuidanceTiming.Result Dense = GuidanceTiming.Estimate(
+                MakeGuidance(LifecyclePlanner.Phase.Transit,
                     MakeSemicircle(25.0, 317)), Options);
             Double SparseSecondsPerM = Sparse.MotionSeconds / Sparse.DistanceM;
             Double DenseSecondsPerM = Dense.MotionSeconds / Dense.DistanceM;
@@ -250,11 +250,11 @@ namespace HaulBuilder.Tests
         {
             List<(Double X, Double Y)> Points =
                 new List<(Double X, Double Y)> { (0.0, 0.0), (100.0, 0.0) };
-            ExperimentalGuidanceTiming.Options Options = new ExperimentalGuidanceTiming.Options();
-            ExperimentalGuidanceTiming.Result Manual = ExperimentalGuidanceTiming.Estimate(
-                MakeGuidance(ExperimentalLifecyclePlanner.Phase.ManualAssist, Points), Options);
-            ExperimentalGuidanceTiming.Result Transit = ExperimentalGuidanceTiming.Estimate(
-                MakeGuidance(ExperimentalLifecyclePlanner.Phase.Transit, Points), Options);
+            GuidanceTiming.Options Options = new GuidanceTiming.Options();
+            GuidanceTiming.Result Manual = GuidanceTiming.Estimate(
+                MakeGuidance(LifecyclePlanner.Phase.ManualAssist, Points), Options);
+            GuidanceTiming.Result Transit = GuidanceTiming.Estimate(
+                MakeGuidance(LifecyclePlanner.Phase.Transit, Points), Options);
 
             Assert.Equal(Transit.MotionSeconds, Manual.MotionSeconds, 9);
         }
@@ -265,17 +265,17 @@ namespace HaulBuilder.Tests
             (
             )
         {
-            ExperimentalLifecyclePlanner.Result Guidance = MakeGuidance(
-                new List<ExperimentalLifecyclePlanner.Segment>
+            LifecyclePlanner.Result Guidance = MakeGuidance(
+                new List<LifecyclePlanner.Segment>
                 {
-                    MakeSegment(ExperimentalLifecyclePlanner.Phase.Transit,
+                    MakeSegment(LifecyclePlanner.Phase.Transit,
                         (0.0, 0.0), (50.0, 0.0)),
-                    MakeSegment(ExperimentalLifecyclePlanner.Phase.Transit,
+                    MakeSegment(LifecyclePlanner.Phase.Transit,
                         (100.0, 0.0), (150.0, 0.0)),
                 });
 
-            ExperimentalGuidanceTiming.Result Time = ExperimentalGuidanceTiming.Estimate(
-                Guidance, new ExperimentalGuidanceTiming.Options());
+            GuidanceTiming.Result Time = GuidanceTiming.Estimate(
+                Guidance, new GuidanceTiming.Options());
 
             Assert.Equal(1, Time.ForcedStopCount);
             Assert.Equal(100.0, Time.DistanceM, 9);
@@ -289,21 +289,21 @@ namespace HaulBuilder.Tests
             (
             )
         {
-            ExperimentalLifecyclePlanner.Result Guidance = MakeGuidance(
-                ExperimentalLifecyclePlanner.Phase.ManualAssist,
+            LifecyclePlanner.Result Guidance = MakeGuidance(
+                LifecyclePlanner.Phase.ManualAssist,
                 new List<(Double X, Double Y)> { (0.0, 0.0), (10.0, 0.0) });
-            ExperimentalGuidanceTiming.Options Without = new ExperimentalGuidanceTiming.Options
+            GuidanceTiming.Options Without = new GuidanceTiming.Options
             {
                 ManualAssistOverheadS = 0.0,
             };
-            ExperimentalGuidanceTiming.Options With = new ExperimentalGuidanceTiming.Options
+            GuidanceTiming.Options With = new GuidanceTiming.Options
             {
                 ManualAssistOverheadS = 17.0,
             };
 
-            Double WithoutSeconds = ExperimentalGuidanceTiming.Estimate(Guidance, Without).TotalSeconds;
-            ExperimentalGuidanceTiming.Result WithTime =
-                ExperimentalGuidanceTiming.Estimate(Guidance, With);
+            Double WithoutSeconds = GuidanceTiming.Estimate(Guidance, Without).TotalSeconds;
+            GuidanceTiming.Result WithTime =
+                GuidanceTiming.Estimate(Guidance, With);
 
             Assert.Equal(WithoutSeconds + 17.0, WithTime.TotalSeconds, 9);
             Assert.Equal(17.0, WithTime.EventSeconds, 9);
@@ -317,17 +317,17 @@ namespace HaulBuilder.Tests
             (
             )
         {
-            ExperimentalLifecyclePlanner.Result Guidance = MakeGuidance(
-                ExperimentalLifecyclePlanner.Phase.Cut,
+            LifecyclePlanner.Result Guidance = MakeGuidance(
+                LifecyclePlanner.Phase.Cut,
                 new List<(Double X, Double Y)> { (0.0, 0.0), (20.0, 0.0) });
-            ExperimentalGuidanceTiming.Options Options = new ExperimentalGuidanceTiming.Options
+            GuidanceTiming.Options Options = new GuidanceTiming.Options
             {
                 FieldEfficiency = 0.8,
                 BladeLowerS = 3.0,
             };
 
-            ExperimentalGuidanceTiming.Result Time =
-                ExperimentalGuidanceTiming.Estimate(Guidance, Options);
+            GuidanceTiming.Result Time =
+                GuidanceTiming.Estimate(Guidance, Options);
 
             Assert.Equal((Time.MotionSeconds + Time.EventSeconds) / 0.8,
                 Time.TotalSeconds, 9);
@@ -336,9 +336,9 @@ namespace HaulBuilder.Tests
         }
 
         /// <summary>Creates a one-segment successful lifecycle result.</summary>
-        private static ExperimentalLifecyclePlanner.Result MakeGuidance
+        private static LifecyclePlanner.Result MakeGuidance
             (
-            ExperimentalLifecyclePlanner.Phase Phase,
+            LifecyclePlanner.Phase Phase,
             List<(Double X, Double Y)> Points
             )
         {
@@ -346,47 +346,47 @@ namespace HaulBuilder.Tests
         }
 
         /// <summary>Creates a one-segment lifecycle with explicit payload state.</summary>
-        private static ExperimentalLifecyclePlanner.Result MakeGuidance
+        private static LifecyclePlanner.Result MakeGuidance
             (
-            ExperimentalLifecyclePlanner.Phase Phase,
+            LifecyclePlanner.Phase Phase,
             List<(Double X, Double Y)> Points,
             Boolean Loaded
             )
         {
-            Boolean BladeDown = (Phase == ExperimentalLifecyclePlanner.Phase.Cut)
-                || (Phase == ExperimentalLifecyclePlanner.Phase.Fill)
-                || (Phase == ExperimentalLifecyclePlanner.Phase.Grade);
-            List<ExperimentalLifecyclePlanner.Segment> Segments =
-                new List<ExperimentalLifecyclePlanner.Segment>
+            Boolean BladeDown = (Phase == LifecyclePlanner.Phase.Cut)
+                || (Phase == LifecyclePlanner.Phase.Fill)
+                || (Phase == LifecyclePlanner.Phase.Grade);
+            List<LifecyclePlanner.Segment> Segments =
+                new List<LifecyclePlanner.Segment>
                 {
-                    new ExperimentalLifecyclePlanner.Segment(
+                    new LifecyclePlanner.Segment(
                         Phase, BladeDown, Points, Loaded),
                 };
-            return new ExperimentalLifecyclePlanner.Result(true, Segments, 0, 0.0, String.Empty);
+            return new LifecyclePlanner.Result(true, Segments, 0, 0.0, String.Empty);
         }
 
         /// <summary>Creates a successful lifecycle result from explicit segments.</summary>
-        private static ExperimentalLifecyclePlanner.Result MakeGuidance
+        private static LifecyclePlanner.Result MakeGuidance
             (
-            List<ExperimentalLifecyclePlanner.Segment> Segments
+            List<LifecyclePlanner.Segment> Segments
             )
         {
-            return new ExperimentalLifecyclePlanner.Result(
+            return new LifecyclePlanner.Result(
                 true, Segments, 0, 0.0, String.Empty);
         }
 
         /// <summary>Creates one straight test segment.</summary>
-        private static ExperimentalLifecyclePlanner.Segment MakeSegment
+        private static LifecyclePlanner.Segment MakeSegment
             (
-            ExperimentalLifecyclePlanner.Phase Phase,
+            LifecyclePlanner.Phase Phase,
             (Double X, Double Y) Start,
             (Double X, Double Y) End
             )
         {
-            Boolean BladeDown = (Phase == ExperimentalLifecyclePlanner.Phase.Cut)
-                || (Phase == ExperimentalLifecyclePlanner.Phase.Fill)
-                || (Phase == ExperimentalLifecyclePlanner.Phase.Grade);
-            return new ExperimentalLifecyclePlanner.Segment(
+            Boolean BladeDown = (Phase == LifecyclePlanner.Phase.Cut)
+                || (Phase == LifecyclePlanner.Phase.Fill)
+                || (Phase == LifecyclePlanner.Phase.Grade);
+            return new LifecyclePlanner.Segment(
                 Phase, BladeDown,
                 new List<(Double X, Double Y)> { Start, End });
         }

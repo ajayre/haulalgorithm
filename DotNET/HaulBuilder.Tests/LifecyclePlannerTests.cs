@@ -9,7 +9,7 @@ namespace HaulBuilder.Tests
     /// <summary>
     /// Verifies explicit post-fill routing with grade return disabled and enabled.
     /// </summary>
-    public sealed class ExperimentalLifecyclePlannerTests
+    public sealed class LifecyclePlannerTests
     {
         private const Double LINEUP_M = 3.0;
         private const Double RADIUS_M = 4.0;
@@ -24,22 +24,22 @@ namespace HaulBuilder.Tests
             )
         {
             Grid Grid = MakeGrid();
-            List<ExperimentalLifecyclePlanner.PassPlan> Passes = MakePasses(Grid);
+            List<LifecyclePlanner.PassPlan> Passes = MakePasses(Grid);
 
-            ExperimentalLifecyclePlanner.Result Result = ExperimentalLifecyclePlanner.Build(
+            LifecyclePlanner.Result Result = LifecyclePlanner.Build(
                 Passes, false, LINEUP_M, RADIUS_M, SAMPLE_M, Grid);
 
             Assert.True(Result.Success, Result.FailureReason);
             Assert.DoesNotContain(Result.Segments,
-                Segment => Segment.Phase == ExperimentalLifecyclePlanner.Phase.Grade);
+                Segment => Segment.Phase == LifecyclePlanner.Phase.Grade);
             Int32 FirstFillExit = Result.Segments.FindIndex(Segment =>
-                Segment.Phase == ExperimentalLifecyclePlanner.Phase.ExitFill);
+                Segment.Phase == LifecyclePlanner.Phase.ExitFill);
             Int32 SecondCutLineup = Result.Segments.FindIndex(FirstFillExit + 1, Segment =>
-                Segment.Phase == ExperimentalLifecyclePlanner.Phase.LineupCut);
+                Segment.Phase == LifecyclePlanner.Phase.LineupCut);
             Assert.True(SecondCutLineup > FirstFillExit);
             Assert.Contains(Result.Segments.Skip(FirstFillExit + 1).Take(SecondCutLineup - FirstFillExit - 1),
-                Segment => (Segment.Phase == ExperimentalLifecyclePlanner.Phase.TransitToNextCut)
-                    || (Segment.Phase == ExperimentalLifecyclePlanner.Phase.ManualAssist));
+                Segment => (Segment.Phase == LifecyclePlanner.Phase.TransitToNextCut)
+                    || (Segment.Phase == LifecyclePlanner.Phase.ManualAssist));
         }
 
         /// <summary>
@@ -51,39 +51,39 @@ namespace HaulBuilder.Tests
             )
         {
             Grid Grid = MakeGrid();
-            List<ExperimentalLifecyclePlanner.PassPlan> Passes = MakePasses(Grid);
+            List<LifecyclePlanner.PassPlan> Passes = MakePasses(Grid);
 
-            ExperimentalLifecyclePlanner.Result Result = ExperimentalLifecyclePlanner.Build(
+            LifecyclePlanner.Result Result = LifecyclePlanner.Build(
                 Passes, true, LINEUP_M, RADIUS_M, SAMPLE_M, Grid);
 
             Assert.True(Result.Success, Result.FailureReason);
             Int32 FirstFill = Result.Segments.FindIndex(Segment =>
-                Segment.Phase == ExperimentalLifecyclePlanner.Phase.Fill);
+                Segment.Phase == LifecyclePlanner.Phase.Fill);
             Int32 FirstGrade = Result.Segments.FindIndex(Segment =>
-                Segment.Phase == ExperimentalLifecyclePlanner.Phase.Grade);
+                Segment.Phase == LifecyclePlanner.Phase.Grade);
             Int32 SecondCut = Result.Segments.FindIndex(FirstGrade + 1, Segment =>
-                Segment.Phase == ExperimentalLifecyclePlanner.Phase.Cut);
+                Segment.Phase == LifecyclePlanner.Phase.Cut);
             Assert.True(FirstFill >= 0);
             Assert.True(FirstGrade > FirstFill);
             Assert.True(SecondCut > FirstGrade);
-            ExperimentalLifecyclePlanner.Segment Fill = Result.Segments[FirstFill];
-            ExperimentalLifecyclePlanner.Segment Grade = Result.Segments[FirstGrade];
-            ExperimentalLifecyclePlanner.Segment FirstCut = Result.Segments[Result.Segments
-                .FindIndex(Segment => Segment.Phase == ExperimentalLifecyclePlanner.Phase.Cut)];
+            LifecyclePlanner.Segment Fill = Result.Segments[FirstFill];
+            LifecyclePlanner.Segment Grade = Result.Segments[FirstGrade];
+            LifecyclePlanner.Segment FirstCut = Result.Segments[Result.Segments
+                .FindIndex(Segment => Segment.Phase == LifecyclePlanner.Phase.Cut)];
             Assert.Equal(Fill.Points[0], Grade.Points[Grade.Points.Count - 1]);
             Assert.Equal(Fill.Points[Fill.Points.Count - 1], Grade.Points[0]);
             Assert.False(FirstCut.Loaded);
             Assert.True(Fill.Loaded);
             Assert.False(Grade.Loaded);
             Assert.All(Result.Segments.Where(Segment => Segment.Phase ==
-                ExperimentalLifecyclePlanner.Phase.TransitToNextCut),
+                LifecyclePlanner.Phase.TransitToNextCut),
                 Segment => Assert.False(Segment.Loaded));
             Assert.All(Result.Segments.Where(Segment => Segment.Phase ==
-                ExperimentalLifecyclePlanner.Phase.Grade), Segment => Assert.True(Segment.BladeDown));
+                LifecyclePlanner.Phase.Grade), Segment => Assert.True(Segment.BladeDown));
             for (Int32 Index = 1; Index < Result.Segments.Count; Index += 1)
             {
-                ExperimentalLifecyclePlanner.Segment Previous = Result.Segments[Index - 1];
-                ExperimentalLifecyclePlanner.Segment Current = Result.Segments[Index];
+                LifecyclePlanner.Segment Previous = Result.Segments[Index - 1];
+                LifecyclePlanner.Segment Current = Result.Segments[Index];
                 Assert.Equal(
                     Previous.Points[Previous.Points.Count - 1],
                     Current.Points[0]);
@@ -100,22 +100,22 @@ namespace HaulBuilder.Tests
             )
         {
             Grid Grid = MakeGrid();
-            ExperimentalCoveragePlanner.Run FirstRun = MakeRun(4.0, 8.0, 10.0, 90.0);
-            ExperimentalCoveragePlanner.Run SecondRun = MakeRun(16.0, 20.0, 12.0, 90.0);
-            ExperimentalRunSequencer.SequencedRun First =
-                new ExperimentalRunSequencer.SequencedRun(
+            CoveragePlanner.Run FirstRun = MakeRun(4.0, 8.0, 10.0, 90.0);
+            CoveragePlanner.Run SecondRun = MakeRun(16.0, 20.0, 12.0, 90.0);
+            RunSequencer.SequencedRun First =
+                new RunSequencer.SequencedRun(
                     FirstRun,
-                    new ExperimentalConnectorPlanner.Pose(4.0, 10.0, 90.0),
-                    new ExperimentalConnectorPlanner.Pose(8.0, 10.0, 90.0),
+                    new ConnectorPlanner.Pose(4.0, 10.0, 90.0),
+                    new ConnectorPlanner.Pose(8.0, 10.0, 90.0),
                     0.0,
                     0.0,
                     0.0,
                     2.0);
-            ExperimentalRunSequencer.SequencedRun Second =
-                new ExperimentalRunSequencer.SequencedRun(
+            RunSequencer.SequencedRun Second =
+                new RunSequencer.SequencedRun(
                     SecondRun,
-                    new ExperimentalConnectorPlanner.Pose(16.0, 12.0, 90.0),
-                    new ExperimentalConnectorPlanner.Pose(20.0, 12.0, 90.0),
+                    new ConnectorPlanner.Pose(16.0, 12.0, 90.0),
+                    new ConnectorPlanner.Pose(20.0, 12.0, 90.0),
                     0.0,
                     0.0,
                     3.0,
@@ -136,38 +136,38 @@ namespace HaulBuilder.Tests
                 Double Dy = ConnectorPoints[Index].Y - ConnectorPoints[Index - 1].Y;
                 ConnectorLengthM += Math.Sqrt((Dx * Dx) + (Dy * Dy));
             }
-            ExperimentalTransitPlanner.Result Connector =
-                new ExperimentalTransitPlanner.Result(
+            TransitPlanner.Result Connector =
+                new TransitPlanner.Result(
                     true,
                     false,
                     ConnectorPoints,
                     ConnectorLengthM,
-                    new List<ExperimentalTransitPlanner.Leg>
+                    new List<TransitPlanner.Leg>
                     {
-                        new ExperimentalTransitPlanner.Leg(false, ConnectorPoints),
+                        new TransitPlanner.Leg(false, ConnectorPoints),
                     },
                     0.0,
                     "AUTO_CURVE",
                     String.Empty);
-            ExperimentalRunSequencer.Result Fill = new ExperimentalRunSequencer.Result(
+            RunSequencer.Result Fill = new RunSequencer.Result(
                 true,
-                new List<ExperimentalRunSequencer.SequencedRun> { First, Second },
-                new List<ExperimentalTransitPlanner.Result> { Connector },
+                new List<RunSequencer.SequencedRun> { First, Second },
+                new List<TransitPlanner.Result> { Connector },
                 ConnectorLengthM,
                 0.0,
                 String.Empty);
-            ExperimentalRunSequencer.Result Empty = new ExperimentalRunSequencer.Result(
+            RunSequencer.Result Empty = new RunSequencer.Result(
                 true,
-                new List<ExperimentalRunSequencer.SequencedRun>(),
-                new List<ExperimentalTransitPlanner.Result>(),
+                new List<RunSequencer.SequencedRun>(),
+                new List<TransitPlanner.Result>(),
                 0.0,
                 0.0,
                 String.Empty);
 
-            ExperimentalLifecyclePlanner.Result Result = ExperimentalLifecyclePlanner.Build(
-                new List<ExperimentalLifecyclePlanner.PassPlan>
+            LifecyclePlanner.Result Result = LifecyclePlanner.Build(
+                new List<LifecyclePlanner.PassPlan>
                 {
-                    new ExperimentalLifecyclePlanner.PassPlan(Empty, Fill),
+                    new LifecyclePlanner.PassPlan(Empty, Fill),
                 },
                 false,
                 LINEUP_M,
@@ -176,8 +176,8 @@ namespace HaulBuilder.Tests
                 Grid);
 
             Assert.True(Result.Success, Result.FailureReason);
-            List<ExperimentalLifecyclePlanner.Segment> FillSegments = Result.Segments
-                .Where(Segment => Segment.Phase == ExperimentalLifecyclePlanner.Phase.Fill)
+            List<LifecyclePlanner.Segment> FillSegments = Result.Segments
+                .Where(Segment => Segment.Phase == LifecyclePlanner.Phase.Fill)
                 .ToList();
             Assert.Equal(4, FillSegments.Count);
             Assert.All(FillSegments, Segment => Assert.True(Segment.BladeDown));
@@ -185,7 +185,7 @@ namespace HaulBuilder.Tests
             Assert.Equal(
                 ConnectorLengthM - 5.0,
                 Result.Segments
-                    .Where(Segment => Segment.Phase == ExperimentalLifecyclePlanner.Phase.Transit)
+                    .Where(Segment => Segment.Phase == LifecyclePlanner.Phase.Transit)
                     .Sum(SegmentLength),
                 6);
         }
@@ -205,46 +205,46 @@ namespace HaulBuilder.Tests
             const Double TURN_RADIUS_M = 0.5 * Constants.DEFAULT_TURNING_CIRCLE_FT
                 * Constants.FEET_TO_METERS;
             Grid Grid = MakeGrid(HAUL_GRID_M);
-            ExperimentalRunSequencer.SequencedRun Main =
-                ExperimentalRunSequencer.Prepare(
+            RunSequencer.SequencedRun Main =
+                RunSequencer.Prepare(
                     MakeRun(21.1, 29.4, 48.2, 120.0, 43.4),
                     EQUIPMENT_M,
                     TURN_RADIUS_M,
                     SAMPLE_M,
                     Grid);
-            ExperimentalRunSequencer.SequencedRun Fragment =
-                ExperimentalRunSequencer.Prepare(
+            RunSequencer.SequencedRun Fragment =
+                RunSequencer.Prepare(
                     MakeRun(18.6, 16.4, 50.4, 300.0, 51.6),
                     EQUIPMENT_M,
                     TURN_RADIUS_M,
                     SAMPLE_M,
                     Grid);
-            ExperimentalTransitPlanner.Result LegacyConnector =
-                ExperimentalTransitPlanner.Connect(
+            TransitPlanner.Result LegacyConnector =
+                TransitPlanner.Connect(
                     Main.ExitPose,
                     Fragment.EntryPose,
                     TURN_RADIUS_M,
                     SAMPLE_M,
                     Grid);
-            ExperimentalRunSequencer.Result Fill = new ExperimentalRunSequencer.Result(
+            RunSequencer.Result Fill = new RunSequencer.Result(
                 true,
-                new List<ExperimentalRunSequencer.SequencedRun> { Main, Fragment },
-                new List<ExperimentalTransitPlanner.Result> { LegacyConnector },
+                new List<RunSequencer.SequencedRun> { Main, Fragment },
+                new List<TransitPlanner.Result> { LegacyConnector },
                 LegacyConnector.LengthM,
                 Math.Min(Main.EntryLineupM, Fragment.EntryLineupM),
                 String.Empty);
-            ExperimentalRunSequencer.Result Empty = new ExperimentalRunSequencer.Result(
+            RunSequencer.Result Empty = new RunSequencer.Result(
                 true,
-                new List<ExperimentalRunSequencer.SequencedRun>(),
-                new List<ExperimentalTransitPlanner.Result>(),
+                new List<RunSequencer.SequencedRun>(),
+                new List<TransitPlanner.Result>(),
                 0.0,
                 0.0,
                 String.Empty);
 
-            ExperimentalLifecyclePlanner.Result Result = ExperimentalLifecyclePlanner.Build(
-                new List<ExperimentalLifecyclePlanner.PassPlan>
+            LifecyclePlanner.Result Result = LifecyclePlanner.Build(
+                new List<LifecyclePlanner.PassPlan>
                 {
-                    new ExperimentalLifecyclePlanner.PassPlan(Empty, Fill),
+                    new LifecyclePlanner.PassPlan(Empty, Fill),
                 },
                 true,
                 EQUIPMENT_M,
@@ -253,10 +253,10 @@ namespace HaulBuilder.Tests
                 Grid);
 
             Assert.True(Result.Success, Result.FailureReason);
-            List<ExperimentalLifecyclePlanner.Segment> Fills = Result.Segments.Where(
-                Segment => Segment.Phase == ExperimentalLifecyclePlanner.Phase.Fill).ToList();
-            List<ExperimentalLifecyclePlanner.Segment> Grades = Result.Segments.Where(
-                Segment => Segment.Phase == ExperimentalLifecyclePlanner.Phase.Grade).ToList();
+            List<LifecyclePlanner.Segment> Fills = Result.Segments.Where(
+                Segment => Segment.Phase == LifecyclePlanner.Phase.Fill).ToList();
+            List<LifecyclePlanner.Segment> Grades = Result.Segments.Where(
+                Segment => Segment.Phase == LifecyclePlanner.Phase.Grade).ToList();
             Assert.Equal(2, Fills.Count);
             Assert.Equal(2, Grades.Count);
             Assert.Equal((16.4, 51.6), Fills[0].Points[0]);
@@ -268,21 +268,21 @@ namespace HaulBuilder.Tests
             Assert.Equal((18.6, 50.4), Grades[1].Points[0]);
             Assert.Equal((16.4, 51.6), Grades[1].Points[Grades[1].Points.Count - 1]);
             Int32 LastFillIndex = Result.Segments.FindLastIndex(
-                Segment => Segment.Phase == ExperimentalLifecyclePlanner.Phase.Fill);
+                Segment => Segment.Phase == LifecyclePlanner.Phase.Fill);
             Int32 FirstGradeIndex = Result.Segments.FindIndex(
-                Segment => Segment.Phase == ExperimentalLifecyclePlanner.Phase.Grade);
-            List<ExperimentalLifecyclePlanner.Segment> Turnaround = Result.Segments
+                Segment => Segment.Phase == LifecyclePlanner.Phase.Grade);
+            List<LifecyclePlanner.Segment> Turnaround = Result.Segments
                 .Skip(LastFillIndex + 1)
                 .Take(FirstGradeIndex - LastFillIndex - 1)
                 .Where(Segment => SegmentLength(Segment) > 1e-9)
                 .ToList();
             Assert.Single(Turnaround);
             Assert.Equal(
-                ExperimentalLifecyclePlanner.Phase.TurnToGrade,
+                LifecyclePlanner.Phase.TurnToGrade,
                 Turnaround[0].Phase);
             Assert.True(MaximumInteriorDeflectionDeg(Turnaround[0].Points) < 90.0);
             Assert.All(Result.Segments.Where(Segment => Segment.Phase
-                == ExperimentalLifecyclePlanner.Phase.Transit),
+                == LifecyclePlanner.Phase.Transit),
                 Segment => Assert.InRange(SegmentLength(Segment), 3.0, 4.0));
         }
 
@@ -296,29 +296,29 @@ namespace HaulBuilder.Tests
             )
         {
             Grid Grid = MakeGrid();
-            ExperimentalRunSequencer.Result Fill = MakePass(
+            RunSequencer.Result Fill = MakePass(
                 Grid, 5.5, 15.5, 15.5).Fill;
-            ExperimentalRunSequencer.Result Empty =
-                new ExperimentalRunSequencer.Result(
+            RunSequencer.Result Empty =
+                new RunSequencer.Result(
                     true,
-                    new List<ExperimentalRunSequencer.SequencedRun>(),
-                    new List<ExperimentalTransitPlanner.Result>(),
+                    new List<RunSequencer.SequencedRun>(),
+                    new List<TransitPlanner.Result>(),
                     0.0,
                     0.0,
                     String.Empty);
 
             Boolean Supported =
-                ExperimentalLifecyclePlanner.SupportsPreparedGradeReturn(
+                LifecyclePlanner.SupportsPreparedGradeReturn(
                     Fill,
                     RADIUS_M,
                     SAMPLE_M,
                     Grid,
                     out String FailureReason);
-            ExperimentalLifecyclePlanner.Result Lifecycle =
-                ExperimentalLifecyclePlanner.Build(
-                    new List<ExperimentalLifecyclePlanner.PassPlan>
+            LifecyclePlanner.Result Lifecycle =
+                LifecyclePlanner.Build(
+                    new List<LifecyclePlanner.PassPlan>
                     {
-                        new ExperimentalLifecyclePlanner.PassPlan(Empty, Fill),
+                        new LifecyclePlanner.PassPlan(Empty, Fill),
                     },
                     true,
                     LINEUP_M,
@@ -341,45 +341,45 @@ namespace HaulBuilder.Tests
             )
         {
             Grid Grid = MakeGrid();
-            ExperimentalRunSequencer.SequencedRun WestFragment =
-                ExperimentalRunSequencer.Prepare(
+            RunSequencer.SequencedRun WestFragment =
+                RunSequencer.Prepare(
                     MakeRun(12.0, 20.0, 15.0, 90.0),
                     LINEUP_M,
                     RADIUS_M,
                     SAMPLE_M,
                     Grid);
-            ExperimentalRunSequencer.SequencedRun EastFragment =
-                ExperimentalRunSequencer.Prepare(
+            RunSequencer.SequencedRun EastFragment =
+                RunSequencer.Prepare(
                     MakeRun(21.0, 29.0, 15.0, 90.0),
                     LINEUP_M,
                     RADIUS_M,
                     SAMPLE_M,
                     Grid);
-            ExperimentalTransitPlanner.Result LegacyConnector =
-                ExperimentalTransitPlanner.Connect(
+            TransitPlanner.Result LegacyConnector =
+                TransitPlanner.Connect(
                     WestFragment.ExitPose,
                     EastFragment.EntryPose,
                     RADIUS_M,
                     SAMPLE_M,
                     Grid);
             Assert.True(LegacyConnector.Success, LegacyConnector.FailureReason);
-            ExperimentalRunSequencer.Result Original =
-                new ExperimentalRunSequencer.Result(
+            RunSequencer.Result Original =
+                new RunSequencer.Result(
                     true,
-                    new List<ExperimentalRunSequencer.SequencedRun>
+                    new List<RunSequencer.SequencedRun>
                     {
                         WestFragment,
                         EastFragment,
                     },
-                    new List<ExperimentalTransitPlanner.Result> { LegacyConnector },
+                    new List<TransitPlanner.Result> { LegacyConnector },
                     LegacyConnector.LengthM,
                     LINEUP_M,
                     String.Empty);
-            ExperimentalConnectorPlanner.Pose LoadedInbound =
-                new ExperimentalConnectorPlanner.Pose(35.0, 15.0, 270.0);
+            ConnectorPlanner.Pose LoadedInbound =
+                new ConnectorPlanner.Pose(35.0, 15.0, 270.0);
 
-            ExperimentalRunSequencer.Result Result =
-                ExperimentalLifecyclePlanner.BuildContinuousFillSequence(
+            RunSequencer.Result Result =
+                LifecyclePlanner.BuildContinuousFillSequence(
                     Original,
                     LoadedInbound,
                     RADIUS_M,
@@ -407,29 +407,29 @@ namespace HaulBuilder.Tests
             )
         {
             Grid Grid = MakeGrid();
-            ExperimentalCoveragePlanner.Run EdgeFill =
+            CoveragePlanner.Run EdgeFill =
                 MakeRun(20.0, 0.5, 12.0, 270.0);
-            ExperimentalRunSequencer.SequencedRun Prepared =
-                ExperimentalRunSequencer.Prepare(
+            RunSequencer.SequencedRun Prepared =
+                RunSequencer.Prepare(
                     EdgeFill,
                     LINEUP_M,
                     RADIUS_M,
                     SAMPLE_M,
                     Grid);
-            ExperimentalRunSequencer.Result Original =
-                new ExperimentalRunSequencer.Result(
+            RunSequencer.Result Original =
+                new RunSequencer.Result(
                     true,
-                    new List<ExperimentalRunSequencer.SequencedRun>
+                    new List<RunSequencer.SequencedRun>
                     {
                         Prepared,
                     },
-                    new List<ExperimentalTransitPlanner.Result>(),
+                    new List<TransitPlanner.Result>(),
                     0.0,
                     LINEUP_M,
                     String.Empty);
 
-            ExperimentalRunSequencer.Result Result =
-                ExperimentalLifecyclePlanner.BuildContinuousFillSequence(
+            RunSequencer.Result Result =
+                LifecyclePlanner.BuildContinuousFillSequence(
                     Original,
                     null,
                     RADIUS_M,
@@ -441,19 +441,19 @@ namespace HaulBuilder.Tests
             Assert.True(Result.Runs[0].Run.EndXy.X > EdgeFill.EndXy.X);
             Assert.True(Result.Runs[0].EndCoverageShortfallM > 0.0);
 
-            ExperimentalRunSequencer.Result Empty =
-                new ExperimentalRunSequencer.Result(
+            RunSequencer.Result Empty =
+                new RunSequencer.Result(
                     true,
-                    new List<ExperimentalRunSequencer.SequencedRun>(),
-                    new List<ExperimentalTransitPlanner.Result>(),
+                    new List<RunSequencer.SequencedRun>(),
+                    new List<TransitPlanner.Result>(),
                     0.0,
                     0.0,
                     String.Empty);
-            ExperimentalLifecyclePlanner.Result Lifecycle =
-                ExperimentalLifecyclePlanner.Build(
-                    new List<ExperimentalLifecyclePlanner.PassPlan>
+            LifecyclePlanner.Result Lifecycle =
+                LifecyclePlanner.Build(
+                    new List<LifecyclePlanner.PassPlan>
                     {
-                        new ExperimentalLifecyclePlanner.PassPlan(Empty, Result),
+                        new LifecyclePlanner.PassPlan(Empty, Result),
                     },
                     true,
                     LINEUP_M,
@@ -463,7 +463,7 @@ namespace HaulBuilder.Tests
 
             Assert.True(Lifecycle.Success, Lifecycle.FailureReason);
             Assert.Contains(Lifecycle.Segments, Segment =>
-                Segment.Phase == ExperimentalLifecyclePlanner.Phase.TurnToGrade);
+                Segment.Phase == LifecyclePlanner.Phase.TurnToGrade);
         }
 
         /// <summary>
@@ -476,45 +476,45 @@ namespace HaulBuilder.Tests
             )
         {
             Grid Grid = MakeGrid();
-            ExperimentalRunSequencer.SequencedRun LongRun =
-                ExperimentalRunSequencer.Prepare(
+            RunSequencer.SequencedRun LongRun =
+                RunSequencer.Prepare(
                     MakeRun(30.0, 10.0, 15.0, 270.0),
                     LINEUP_M,
                     RADIUS_M,
                     SAMPLE_M,
                     Grid);
-            ExperimentalRunSequencer.SequencedRun ShortRun =
-                ExperimentalRunSequencer.Prepare(
+            RunSequencer.SequencedRun ShortRun =
+                RunSequencer.Prepare(
                     MakeRun(10.0, 8.0, 16.5, 270.0),
                     LINEUP_M,
                     RADIUS_M,
                     SAMPLE_M,
                     Grid);
-            ExperimentalTransitPlanner.Result LegacyConnector =
-                ExperimentalTransitPlanner.Connect(
+            TransitPlanner.Result LegacyConnector =
+                TransitPlanner.Connect(
                     LongRun.ExitPose,
                     ShortRun.EntryPose,
                     RADIUS_M,
                     SAMPLE_M,
                     Grid);
             Assert.True(LegacyConnector.Success, LegacyConnector.FailureReason);
-            ExperimentalRunSequencer.Result Original =
-                new ExperimentalRunSequencer.Result(
+            RunSequencer.Result Original =
+                new RunSequencer.Result(
                     true,
-                    new List<ExperimentalRunSequencer.SequencedRun>
+                    new List<RunSequencer.SequencedRun>
                     {
                         LongRun,
                         ShortRun,
                     },
-                    new List<ExperimentalTransitPlanner.Result> { LegacyConnector },
+                    new List<TransitPlanner.Result> { LegacyConnector },
                     LegacyConnector.LengthM,
                     LINEUP_M,
                     String.Empty);
 
-            ExperimentalRunSequencer.Result Continuous =
-                ExperimentalLifecyclePlanner.BuildContinuousFillSequence(
+            RunSequencer.Result Continuous =
+                LifecyclePlanner.BuildContinuousFillSequence(
                     Original,
-                    new ExperimentalConnectorPlanner.Pose(35.0, 15.0, 270.0),
+                    new ConnectorPlanner.Pose(35.0, 15.0, 270.0),
                     RADIUS_M,
                     SAMPLE_M,
                     Grid);
@@ -527,19 +527,19 @@ namespace HaulBuilder.Tests
             Assert.True(Continuous.Connectors[0].LengthM < 4.0 * RADIUS_M);
             Assert.True(Continuous.Runs[0].Run.EndXy.X > 10.0);
 
-            ExperimentalRunSequencer.Result Empty =
-                new ExperimentalRunSequencer.Result(
+            RunSequencer.Result Empty =
+                new RunSequencer.Result(
                     true,
-                    new List<ExperimentalRunSequencer.SequencedRun>(),
-                    new List<ExperimentalTransitPlanner.Result>(),
+                    new List<RunSequencer.SequencedRun>(),
+                    new List<TransitPlanner.Result>(),
                     0.0,
                     0.0,
                     String.Empty);
-            ExperimentalLifecyclePlanner.Result Lifecycle =
-                ExperimentalLifecyclePlanner.Build(
-                    new List<ExperimentalLifecyclePlanner.PassPlan>
+            LifecyclePlanner.Result Lifecycle =
+                LifecyclePlanner.Build(
+                    new List<LifecyclePlanner.PassPlan>
                     {
-                        new ExperimentalLifecyclePlanner.PassPlan(Empty, Continuous),
+                        new LifecyclePlanner.PassPlan(Empty, Continuous),
                     },
                     true,
                     LINEUP_M,
@@ -549,13 +549,13 @@ namespace HaulBuilder.Tests
 
             Assert.True(Lifecycle.Success, Lifecycle.FailureReason);
             Assert.Equal(3, Lifecycle.Segments.Count(Segment =>
-                Segment.Phase == ExperimentalLifecyclePlanner.Phase.Fill));
+                Segment.Phase == LifecyclePlanner.Phase.Fill));
             Assert.Equal(3, Lifecycle.Segments.Count(Segment =>
-                Segment.Phase == ExperimentalLifecyclePlanner.Phase.Grade));
+                Segment.Phase == LifecyclePlanner.Phase.Grade));
             Assert.Single(Lifecycle.Segments, Segment =>
-                Segment.Phase == ExperimentalLifecyclePlanner.Phase.TurnToGrade);
+                Segment.Phase == LifecyclePlanner.Phase.TurnToGrade);
             Assert.DoesNotContain(Lifecycle.Segments, Segment =>
-                Segment.Phase == ExperimentalLifecyclePlanner.Phase.Transit
+                Segment.Phase == LifecyclePlanner.Phase.Transit
                 && SegmentLength(Segment) > 4.0 * RADIUS_M);
         }
 
@@ -574,38 +574,38 @@ namespace HaulBuilder.Tests
             const Double TURN_RADIUS_M = 0.5 * Constants.DEFAULT_TURNING_CIRCLE_FT
                 * Constants.FEET_TO_METERS;
             Grid Grid = MakeGrid(HAUL_GRID_M);
-            ExperimentalRunSequencer.SequencedRun First =
-                ExperimentalRunSequencer.Prepare(
+            RunSequencer.SequencedRun First =
+                RunSequencer.Prepare(
                     MakeRun(74.3, 58.9, 24.4, 275.0, 25.8),
                     EQUIPMENT_M, TURN_RADIUS_M, SAMPLE_M, Grid);
-            ExperimentalRunSequencer.SequencedRun Long =
-                ExperimentalRunSequencer.Prepare(
+            RunSequencer.SequencedRun Long =
+                RunSequencer.Prepare(
                     MakeRun(56.3, 19.4, 22.6, 275.0, 25.8),
                     EQUIPMENT_M, TURN_RADIUS_M, SAMPLE_M, Grid);
-            ExperimentalRunSequencer.SequencedRun Nested =
-                ExperimentalRunSequencer.Prepare(
+            RunSequencer.SequencedRun Nested =
+                RunSequencer.Prepare(
                     MakeRun(43.3, 45.9, 25.2, 95.0, 25.0),
                     EQUIPMENT_M, TURN_RADIUS_M, SAMPLE_M, Grid);
-            ExperimentalTransitPlanner.Result FirstConnector =
-                ExperimentalTransitPlanner.Connect(
+            TransitPlanner.Result FirstConnector =
+                TransitPlanner.Connect(
                     First.ExitPose, Long.EntryPose,
                     TURN_RADIUS_M, SAMPLE_M, Grid);
-            ExperimentalTransitPlanner.Result SecondConnector =
-                ExperimentalTransitPlanner.Connect(
+            TransitPlanner.Result SecondConnector =
+                TransitPlanner.Connect(
                     Long.ExitPose, Nested.EntryPose,
                     TURN_RADIUS_M, SAMPLE_M, Grid);
             Assert.True(FirstConnector.Success, FirstConnector.FailureReason);
             Assert.True(SecondConnector.Success, SecondConnector.FailureReason);
-            ExperimentalRunSequencer.Result Original =
-                new ExperimentalRunSequencer.Result(
+            RunSequencer.Result Original =
+                new RunSequencer.Result(
                     true,
-                    new List<ExperimentalRunSequencer.SequencedRun>
+                    new List<RunSequencer.SequencedRun>
                     {
                         First,
                         Long,
                         Nested,
                     },
-                    new List<ExperimentalTransitPlanner.Result>
+                    new List<TransitPlanner.Result>
                     {
                         FirstConnector,
                         SecondConnector,
@@ -614,10 +614,10 @@ namespace HaulBuilder.Tests
                     EQUIPMENT_M,
                     String.Empty);
 
-            ExperimentalRunSequencer.Result Continuous =
-                ExperimentalLifecyclePlanner.BuildContinuousFillSequence(
+            RunSequencer.Result Continuous =
+                LifecyclePlanner.BuildContinuousFillSequence(
                     Original,
-                    new ExperimentalConnectorPlanner.Pose(76.9, 23.8, 270.0),
+                    new ConnectorPlanner.Pose(76.9, 23.8, 270.0),
                     TURN_RADIUS_M,
                     SAMPLE_M,
                     Grid);
@@ -630,19 +630,19 @@ namespace HaulBuilder.Tests
                 Continuous.Connectors[0].Mode);
             Assert.Contains(Continuous.Runs, Run => Run.Run.Cells.Count == 2);
 
-            ExperimentalRunSequencer.Result Empty =
-                new ExperimentalRunSequencer.Result(
+            RunSequencer.Result Empty =
+                new RunSequencer.Result(
                     true,
-                    new List<ExperimentalRunSequencer.SequencedRun>(),
-                    new List<ExperimentalTransitPlanner.Result>(),
+                    new List<RunSequencer.SequencedRun>(),
+                    new List<TransitPlanner.Result>(),
                     0.0,
                     0.0,
                     String.Empty);
-            ExperimentalLifecyclePlanner.Result Lifecycle =
-                ExperimentalLifecyclePlanner.Build(
-                    new List<ExperimentalLifecyclePlanner.PassPlan>
+            LifecyclePlanner.Result Lifecycle =
+                LifecyclePlanner.Build(
+                    new List<LifecyclePlanner.PassPlan>
                     {
-                        new ExperimentalLifecyclePlanner.PassPlan(Empty, Continuous),
+                        new LifecyclePlanner.PassPlan(Empty, Continuous),
                     },
                     true,
                     EQUIPMENT_M,
@@ -652,9 +652,9 @@ namespace HaulBuilder.Tests
 
             Assert.True(Lifecycle.Success, Lifecycle.FailureReason);
             Assert.Single(Lifecycle.Segments, Segment =>
-                Segment.Phase == ExperimentalLifecyclePlanner.Phase.TurnToGrade);
+                Segment.Phase == LifecyclePlanner.Phase.TurnToGrade);
             Assert.DoesNotContain(Lifecycle.Segments, Segment =>
-                Segment.Phase == ExperimentalLifecyclePlanner.Phase.Transit);
+                Segment.Phase == LifecyclePlanner.Phase.Transit);
         }
 
         /// <summary>
@@ -667,39 +667,39 @@ namespace HaulBuilder.Tests
             )
         {
             Grid Grid = MakeGrid();
-            ExperimentalRunSequencer.SequencedRun First =
-                ExperimentalRunSequencer.Prepare(
+            RunSequencer.SequencedRun First =
+                RunSequencer.Prepare(
                     MakeRun(10.0, 14.0, 15.0, 90.0),
                     LINEUP_M,
                     RADIUS_M,
                     SAMPLE_M,
                     Grid);
-            ExperimentalRunSequencer.SequencedRun Second =
-                ExperimentalRunSequencer.Prepare(
+            RunSequencer.SequencedRun Second =
+                RunSequencer.Prepare(
                     MakeRun(15.0, 19.0, 15.3, 90.0, 15.3),
                     LINEUP_M,
                     RADIUS_M,
                     SAMPLE_M,
                     Grid);
-            ExperimentalTransitPlanner.Result LegacyConnector =
-                ExperimentalTransitPlanner.Connect(
+            TransitPlanner.Result LegacyConnector =
+                TransitPlanner.Connect(
                     First.ExitPose,
                     Second.EntryPose,
                     RADIUS_M,
                     SAMPLE_M,
                     Grid);
             Assert.True(LegacyConnector.Success, LegacyConnector.FailureReason);
-            ExperimentalRunSequencer.Result Original =
-                new ExperimentalRunSequencer.Result(
+            RunSequencer.Result Original =
+                new RunSequencer.Result(
                     true,
-                    new List<ExperimentalRunSequencer.SequencedRun> { First, Second },
-                    new List<ExperimentalTransitPlanner.Result> { LegacyConnector },
+                    new List<RunSequencer.SequencedRun> { First, Second },
+                    new List<TransitPlanner.Result> { LegacyConnector },
                     LegacyConnector.LengthM,
                     Math.Min(First.EntryLineupM, Second.EntryLineupM),
                     String.Empty);
 
-            ExperimentalRunSequencer.Result Result =
-                ExperimentalLifecyclePlanner.BuildContinuousCutSequence(
+            RunSequencer.Result Result =
+                LifecyclePlanner.BuildContinuousCutSequence(
                     Original,
                     null,
                     null,
@@ -728,32 +728,32 @@ namespace HaulBuilder.Tests
             )
         {
             Grid Grid = MakeGrid();
-            ExperimentalRunSequencer.SequencedRun First =
-                ExperimentalRunSequencer.Prepare(
+            RunSequencer.SequencedRun First =
+                RunSequencer.Prepare(
                     MakeRun(20.0, 16.0, 10.0, 270.0),
                     LINEUP_M, RADIUS_M, SAMPLE_M, Grid);
-            ExperimentalRunSequencer.SequencedRun Middle =
-                ExperimentalRunSequencer.Prepare(
+            RunSequencer.SequencedRun Middle =
+                RunSequencer.Prepare(
                     MakeRun(10.0, 20.0, 15.0, 90.0),
                     LINEUP_M, RADIUS_M, SAMPLE_M, Grid);
-            ExperimentalRunSequencer.SequencedRun Last =
-                ExperimentalRunSequencer.Prepare(
+            RunSequencer.SequencedRun Last =
+                RunSequencer.Prepare(
                     MakeRun(23.0, 21.0, 10.5, 270.0, 10.5),
                     LINEUP_M, RADIUS_M, SAMPLE_M, Grid);
-            ExperimentalTransitPlanner.Result FirstConnector =
-                ExperimentalTransitPlanner.Connect(
+            TransitPlanner.Result FirstConnector =
+                TransitPlanner.Connect(
                     First.ExitPose, Middle.EntryPose,
                     RADIUS_M, SAMPLE_M, Grid);
-            ExperimentalTransitPlanner.Result SecondConnector =
-                ExperimentalTransitPlanner.Connect(
+            TransitPlanner.Result SecondConnector =
+                TransitPlanner.Connect(
                     Middle.ExitPose, Last.EntryPose,
                     RADIUS_M, SAMPLE_M, Grid);
             Assert.True(FirstConnector.Success, FirstConnector.FailureReason);
             Assert.True(SecondConnector.Success, SecondConnector.FailureReason);
-            ExperimentalRunSequencer.Result Original = new ExperimentalRunSequencer.Result(
+            RunSequencer.Result Original = new RunSequencer.Result(
                 true,
-                new List<ExperimentalRunSequencer.SequencedRun> { First, Middle, Last },
-                new List<ExperimentalTransitPlanner.Result>
+                new List<RunSequencer.SequencedRun> { First, Middle, Last },
+                new List<TransitPlanner.Result>
                 {
                     FirstConnector,
                     SecondConnector,
@@ -762,8 +762,8 @@ namespace HaulBuilder.Tests
                 LINEUP_M,
                 String.Empty);
 
-            ExperimentalRunSequencer.Result Result =
-                ExperimentalLifecyclePlanner.BuildContinuousCutSequence(
+            RunSequencer.Result Result =
+                LifecyclePlanner.BuildContinuousCutSequence(
                     Original,
                     null,
                     null,
@@ -784,7 +784,7 @@ namespace HaulBuilder.Tests
         /// <summary>Returns one lifecycle segment's polyline length.</summary>
         private static Double SegmentLength
             (
-            ExperimentalLifecyclePlanner.Segment Segment
+            LifecyclePlanner.Segment Segment
             )
         {
             Double LengthM = 0.0;
@@ -826,12 +826,12 @@ namespace HaulBuilder.Tests
         }
 
         /// <summary>Creates two simple cut/fill pass plans.</summary>
-        private static List<ExperimentalLifecyclePlanner.PassPlan> MakePasses
+        private static List<LifecyclePlanner.PassPlan> MakePasses
             (
             Grid Grid
             )
         {
-            return new List<ExperimentalLifecyclePlanner.PassPlan>
+            return new List<LifecyclePlanner.PassPlan>
             {
                 MakePass(Grid, 5.5, 15.5, 15.5),
                 MakePass(Grid, 22.5, 32.5, 22.5),
@@ -839,7 +839,7 @@ namespace HaulBuilder.Tests
         }
 
         /// <summary>Creates and sequences one cut and fill pair.</summary>
-        private static ExperimentalLifecyclePlanner.PassPlan MakePass
+        private static LifecyclePlanner.PassPlan MakePass
             (
             Grid Grid,
             Double CutX,
@@ -847,19 +847,19 @@ namespace HaulBuilder.Tests
             Double Y
             )
         {
-            ExperimentalCoveragePlanner.Run Cut = MakeRun(CutX, CutX + 6.0, Y, 90.0);
-            ExperimentalCoveragePlanner.Run Fill = MakeRun(FillX, FillX + 6.0, Y, 90.0);
-            ExperimentalRunSequencer.Result CutResult = ExperimentalRunSequencer.Optimize(
-                new List<ExperimentalCoveragePlanner.Run> { Cut },
+            CoveragePlanner.Run Cut = MakeRun(CutX, CutX + 6.0, Y, 90.0);
+            CoveragePlanner.Run Fill = MakeRun(FillX, FillX + 6.0, Y, 90.0);
+            RunSequencer.Result CutResult = RunSequencer.Optimize(
+                new List<CoveragePlanner.Run> { Cut },
                 null, null, LINEUP_M, RADIUS_M, SAMPLE_M, Grid);
-            ExperimentalRunSequencer.Result FillResult = ExperimentalRunSequencer.Optimize(
-                new List<ExperimentalCoveragePlanner.Run> { Fill },
+            RunSequencer.Result FillResult = RunSequencer.Optimize(
+                new List<CoveragePlanner.Run> { Fill },
                 null, null, LINEUP_M, RADIUS_M, SAMPLE_M, Grid);
-            return new ExperimentalLifecyclePlanner.PassPlan(CutResult, FillResult);
+            return new LifecyclePlanner.PassPlan(CutResult, FillResult);
         }
 
         /// <summary>Creates one allocated eastbound run.</summary>
-        private static ExperimentalCoveragePlanner.Run MakeRun
+        private static CoveragePlanner.Run MakeRun
             (
             Double StartX,
             Double EndX,
@@ -871,7 +871,7 @@ namespace HaulBuilder.Tests
         }
 
         /// <summary>Creates one allocated run with explicit endpoint ordinates.</summary>
-        private static ExperimentalCoveragePlanner.Run MakeRun
+        private static CoveragePlanner.Run MakeRun
             (
             Double StartX,
             Double EndX,
@@ -880,7 +880,7 @@ namespace HaulBuilder.Tests
             Double EndY
             )
         {
-            return new ExperimentalCoveragePlanner.Run(
+            return new CoveragePlanner.Run(
                 new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>
                 {
                     (((Int32)StartX, (Int32)StartY), 0.02),

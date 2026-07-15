@@ -67,49 +67,49 @@ internal static class Program
             return;
         }
 
-        if ((args.Length > 0) && (args[0] == "--compare-experimental-coverage"))
+        if ((args.Length > 0) && (args[0] == "--compare-guidance-coverage"))
         {
-            Environment.Exit(CompareExperimentalCoverage.Run(args.Skip(1).ToArray()));
+            Environment.Exit(GuidancePlanner.Run(args.Skip(1).ToArray()));
             return;
         }
 
         if ((args.Length > 0) && (args[0] == "--report-whole-guidance"))
         {
-            Environment.Exit(CompareExperimentalCoverage.ReportWholeField(
+            Environment.Exit(GuidancePlanner.ReportWholeField(
                 args.Skip(1).ToArray()));
             return;
         }
 
         if ((args.Length > 0) && (args[0] == "--profile-guidance-coverage"))
         {
-            Environment.Exit(CompareExperimentalCoverage.ProfileGuidanceCoverage(
+            Environment.Exit(GuidancePlanner.ProfileGuidanceCoverage(
                 args.Skip(1).ToArray()));
             return;
         }
 
         if ((args.Length > 0) && (args[0] == "--diagnose-guidance-connector"))
         {
-            Environment.Exit(CompareExperimentalCoverage.DiagnoseGuidanceConnector(
+            Environment.Exit(GuidancePlanner.DiagnoseGuidanceConnector(
                 args.Skip(1).ToArray()));
             return;
         }
 
         if ((args.Length > 0) && (args[0] == "--export-routes-1-3"))
         {
-            Environment.Exit(CompareExperimentalCoverage.ExportFirstThree(args.Skip(1).ToArray()));
+            Environment.Exit(GuidancePlanner.ExportFirstThree(args.Skip(1).ToArray()));
             return;
         }
 
         if ((args.Length > 0) && (args[0] == "--export-routes-3-5"))
         {
-            Environment.Exit(CompareExperimentalCoverage.ExportRoutesThreeToFive(
+            Environment.Exit(GuidancePlanner.ExportRoutesThreeToFive(
                 args.Skip(1).ToArray()));
             return;
         }
 
         if ((args.Length > 0) && (args[0] == "--export-route-range"))
         {
-            Environment.Exit(CompareExperimentalCoverage.ExportRouteRange(
+            Environment.Exit(GuidancePlanner.ExportRouteRange(
                 args.Skip(1).ToArray()));
             return;
         }

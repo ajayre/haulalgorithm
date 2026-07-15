@@ -9,7 +9,7 @@ namespace HaulBuilder.Tests
     /// <summary>
     /// Verifies forward-only detours and explicit operator-alignment transit fallback.
     /// </summary>
-    public sealed class ExperimentalTransitPlannerTests
+    public sealed class TransitPlannerTests
     {
         /// <summary>
         /// Verifies an opposing endpoint heading is reached without a cusp or reverse maneuver.
@@ -20,12 +20,12 @@ namespace HaulBuilder.Tests
             )
         {
             Grid Grid = MakeGrid(30, 20, null);
-            ExperimentalConnectorPlanner.Pose Start =
-                new ExperimentalConnectorPlanner.Pose(5.5, 10.5, 90.0);
-            ExperimentalConnectorPlanner.Pose End =
-                new ExperimentalConnectorPlanner.Pose(20.5, 10.5, 270.0);
+            ConnectorPlanner.Pose Start =
+                new ConnectorPlanner.Pose(5.5, 10.5, 90.0);
+            ConnectorPlanner.Pose End =
+                new ConnectorPlanner.Pose(20.5, 10.5, 270.0);
 
-            ExperimentalTransitPlanner.Result Result = ExperimentalTransitPlanner.Connect(
+            TransitPlanner.Result Result = TransitPlanner.Connect(
                 Start, End, 5.0, 0.5, Grid, true, 30.0, 1.0, true);
 
             Assert.True(Result.Success, Result.FailureReason);
@@ -50,12 +50,12 @@ namespace HaulBuilder.Tests
             )
         {
             Grid Grid = MakeGrid(50, 30, null);
-            ExperimentalConnectorPlanner.Pose Start =
-                new ExperimentalConnectorPlanner.Pose(12.5, 1.5, 90.0);
-            ExperimentalConnectorPlanner.Pose End =
-                new ExperimentalConnectorPlanner.Pose(12.5, 1.5, 270.0);
+            ConnectorPlanner.Pose Start =
+                new ConnectorPlanner.Pose(12.5, 1.5, 90.0);
+            ConnectorPlanner.Pose End =
+                new ConnectorPlanner.Pose(12.5, 1.5, 270.0);
 
-            ExperimentalTransitPlanner.Result Result = ExperimentalTransitPlanner.Connect(
+            TransitPlanner.Result Result = TransitPlanner.Connect(
                 Start, End, 5.0, 0.25, Grid, true, 14.0, 1.0, true);
 
             Assert.True(Result.Success, Result.FailureReason);
@@ -80,16 +80,16 @@ namespace HaulBuilder.Tests
             )
         {
             Grid Grid = MakeGrid(30, 20, null);
-            ExperimentalConnectorPlanner.Pose Start =
-                new ExperimentalConnectorPlanner.Pose(5.5, 10.5, 90.0);
-            ExperimentalConnectorPlanner.Pose End =
-                new ExperimentalConnectorPlanner.Pose(20.5, 10.5, 90.0);
+            ConnectorPlanner.Pose Start =
+                new ConnectorPlanner.Pose(5.5, 10.5, 90.0);
+            ConnectorPlanner.Pose End =
+                new ConnectorPlanner.Pose(20.5, 10.5, 90.0);
 
-            ExperimentalTransitPlanner.Result First =
-                ExperimentalTransitPlanner.Connect(
+            TransitPlanner.Result First =
+                TransitPlanner.Connect(
                     Start, End, 5.0, 0.5, Grid, true, 30.0, 1.0, true);
-            ExperimentalTransitPlanner.Result Second =
-                ExperimentalTransitPlanner.Connect(
+            TransitPlanner.Result Second =
+                TransitPlanner.Connect(
                     Start, End, 5.0, 0.5, Grid, true, 30.0, 1.0, true);
 
             // A reference match proves the second call came from the field cache.
@@ -168,12 +168,12 @@ namespace HaulBuilder.Tests
             )
         {
             Grid Grid = MakeGrid(50, 10, null);
-            ExperimentalConnectorPlanner.Pose Start =
-                new ExperimentalConnectorPlanner.Pose(5.5, 5.5, 90.0);
-            ExperimentalConnectorPlanner.Pose End =
-                new ExperimentalConnectorPlanner.Pose(35.5, 5.5, 270.0);
+            ConnectorPlanner.Pose Start =
+                new ConnectorPlanner.Pose(5.5, 5.5, 90.0);
+            ConnectorPlanner.Pose End =
+                new ConnectorPlanner.Pose(35.5, 5.5, 270.0);
 
-            ExperimentalTransitPlanner.Result Result = ExperimentalTransitPlanner.Connect(
+            TransitPlanner.Result Result = TransitPlanner.Connect(
                 Start, End, 5.0, 0.5, Grid, true, 20.0);
 
             Assert.False(Result.Success);
@@ -190,12 +190,12 @@ namespace HaulBuilder.Tests
             )
         {
             Grid Grid = MakeGrid(40, 20, null);
-            ExperimentalConnectorPlanner.Pose Start =
-                new ExperimentalConnectorPlanner.Pose(5.5, 8.5, 90.0);
-            ExperimentalConnectorPlanner.Pose End =
-                new ExperimentalConnectorPlanner.Pose(30.5, 10.5, 85.0);
+            ConnectorPlanner.Pose Start =
+                new ConnectorPlanner.Pose(5.5, 8.5, 90.0);
+            ConnectorPlanner.Pose End =
+                new ConnectorPlanner.Pose(30.5, 10.5, 85.0);
 
-            ExperimentalTransitPlanner.Result Result = ExperimentalTransitPlanner.Connect(
+            TransitPlanner.Result Result = TransitPlanner.Connect(
                 Start, End, 5.0, 0.25, Grid, true, 8.0);
 
             Assert.True(Result.Success, Result.FailureReason);
@@ -216,12 +216,12 @@ namespace HaulBuilder.Tests
             )
         {
             Grid Grid = MakeGrid(40, 30, null);
-            ExperimentalConnectorPlanner.Pose Start =
-                new ExperimentalConnectorPlanner.Pose(20.0, 15.0, 270.0);
-            ExperimentalConnectorPlanner.Pose End =
-                new ExperimentalConnectorPlanner.Pose(19.0, 15.23, 275.0);
+            ConnectorPlanner.Pose Start =
+                new ConnectorPlanner.Pose(20.0, 15.0, 270.0);
+            ConnectorPlanner.Pose End =
+                new ConnectorPlanner.Pose(19.0, 15.23, 275.0);
 
-            ExperimentalTransitPlanner.Result Result = ExperimentalTransitPlanner.Connect(
+            TransitPlanner.Result Result = TransitPlanner.Connect(
                 Start, End, 3.4, 0.1, Grid, true, 8.0);
 
             Assert.True(Result.Success, Result.FailureReason);
@@ -255,26 +255,26 @@ namespace HaulBuilder.Tests
                 Double TravelRad = TravelHeadingDeg * Math.PI / 180.0;
                 foreach (Double DistanceM in DistancesM)
                 {
-                    ExperimentalConnectorPlanner.Pose StartPosition =
-                        new ExperimentalConnectorPlanner.Pose(50.0, 50.0, 0.0);
+                    ConnectorPlanner.Pose StartPosition =
+                        new ConnectorPlanner.Pose(50.0, 50.0, 0.0);
                     Double EndX = StartPosition.X + (Math.Sin(TravelRad) * DistanceM);
                     Double EndY = StartPosition.Y + (Math.Cos(TravelRad) * DistanceM);
                     foreach (Double StartOffsetDeg in HeadingOffsetsDeg)
                     {
                         foreach (Double EndOffsetDeg in HeadingOffsetsDeg)
                         {
-                            ExperimentalConnectorPlanner.Pose Start =
-                                new ExperimentalConnectorPlanner.Pose(
+                            ConnectorPlanner.Pose Start =
+                                new ConnectorPlanner.Pose(
                                     StartPosition.X,
                                     StartPosition.Y,
                                     TravelHeadingDeg + StartOffsetDeg);
-                            ExperimentalConnectorPlanner.Pose End =
-                                new ExperimentalConnectorPlanner.Pose(
+                            ConnectorPlanner.Pose End =
+                                new ConnectorPlanner.Pose(
                                     EndX,
                                     EndY,
                                     TravelHeadingDeg + EndOffsetDeg);
-                            ExperimentalTransitPlanner.Result Result =
-                                ExperimentalTransitPlanner.Connect(
+                            TransitPlanner.Result Result =
+                                TransitPlanner.Connect(
                                     Start, End, RADIUS_M, 0.1, Grid, true, 8.0);
                             Double MaximumReasonableM = Math.Max(
                                 4.0 * DistanceM,
@@ -314,12 +314,12 @@ namespace HaulBuilder.Tests
                 if (By != 6) Invalid.Add((10, By));
             }
             Grid Grid = MakeGrid(25, 10, Invalid);
-            ExperimentalConnectorPlanner.Pose Start =
-                new ExperimentalConnectorPlanner.Pose(3.5, 3.5, 90.0);
-            ExperimentalConnectorPlanner.Pose End =
-                new ExperimentalConnectorPlanner.Pose(20.5, 3.5, 90.0);
+            ConnectorPlanner.Pose Start =
+                new ConnectorPlanner.Pose(3.5, 3.5, 90.0);
+            ConnectorPlanner.Pose End =
+                new ConnectorPlanner.Pose(20.5, 3.5, 90.0);
 
-            ExperimentalTransitPlanner.Result Result = ExperimentalTransitPlanner.Connect(
+            TransitPlanner.Result Result = TransitPlanner.Connect(
                 Start, End, 3.0, 0.25, Grid, true, 8.0);
 
             Assert.True(Result.Success, Result.FailureReason);
@@ -348,12 +348,12 @@ namespace HaulBuilder.Tests
                 if ((By < 3) || (By > 5)) Invalid.Add((10, By));
             }
             Grid Grid = MakeGrid(25, 10, Invalid);
-            ExperimentalConnectorPlanner.Pose Start =
-                new ExperimentalConnectorPlanner.Pose(3.5, 3.5, 90.0);
-            ExperimentalConnectorPlanner.Pose End =
-                new ExperimentalConnectorPlanner.Pose(20.5, 3.5, 90.0);
+            ConnectorPlanner.Pose Start =
+                new ConnectorPlanner.Pose(3.5, 3.5, 90.0);
+            ConnectorPlanner.Pose End =
+                new ConnectorPlanner.Pose(20.5, 3.5, 90.0);
 
-            ExperimentalTransitPlanner.Result Result = ExperimentalTransitPlanner.Connect(
+            TransitPlanner.Result Result = TransitPlanner.Connect(
                 Start, End, 3.0, 0.25, Grid, true, 8.0);
 
             Assert.True(Result.Success, Result.FailureReason);
@@ -389,12 +389,12 @@ namespace HaulBuilder.Tests
             )
         {
             Grid Grid = MakeGrid(30, 10, null);
-            ExperimentalConnectorPlanner.Pose Start =
-                new ExperimentalConnectorPlanner.Pose(5.5, 5.5, 90.0);
-            ExperimentalConnectorPlanner.Pose End =
-                new ExperimentalConnectorPlanner.Pose(15.5, 5.5, 270.0);
+            ConnectorPlanner.Pose Start =
+                new ConnectorPlanner.Pose(5.5, 5.5, 90.0);
+            ConnectorPlanner.Pose End =
+                new ConnectorPlanner.Pose(15.5, 5.5, 270.0);
 
-            ExperimentalTransitPlanner.Result Result = ExperimentalTransitPlanner.Connect(
+            TransitPlanner.Result Result = TransitPlanner.Connect(
                 Start, End, 5.0, 0.5, Grid, true, 8.0);
 
             Assert.False(Result.Success);
@@ -419,12 +419,12 @@ namespace HaulBuilder.Tests
                 }
             }
             Grid Grid = MakeGrid(30, 5, Invalid);
-            ExperimentalConnectorPlanner.Pose Start =
-                new ExperimentalConnectorPlanner.Pose(5.5, 0.5, 270.0);
-            ExperimentalConnectorPlanner.Pose End =
-                new ExperimentalConnectorPlanner.Pose(15.5, 0.5, 90.0);
+            ConnectorPlanner.Pose Start =
+                new ConnectorPlanner.Pose(5.5, 0.5, 270.0);
+            ConnectorPlanner.Pose End =
+                new ConnectorPlanner.Pose(15.5, 0.5, 90.0);
 
-            ExperimentalTransitPlanner.Result Result = ExperimentalTransitPlanner.Connect(
+            TransitPlanner.Result Result = TransitPlanner.Connect(
                 Start, End, 0.75, 0.10, Grid, true, 2.0, 1.0);
 
             Assert.True(Result.Success, Result.FailureReason);
@@ -433,7 +433,7 @@ namespace HaulBuilder.Tests
             Assert.Equal("EXTERIOR_MANUAL_CURVE", Result.Mode);
             Assert.Single(Result.Legs);
             Assert.True(Result.Legs[0].OperatorAlignmentRequired);
-            ExperimentalFieldEdgePolicy Policy = new ExperimentalFieldEdgePolicy(Grid, 1.0);
+            FieldEdgePolicy Policy = new FieldEdgePolicy(Grid, 1.0);
             Assert.Contains(Result.Points,
                 Point => Policy.IsPermittedExterior(Point.X, Point.Y));
             Assert.All(Result.Points, Point => Assert.True(

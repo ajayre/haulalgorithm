@@ -6,9 +6,9 @@ using HaulBuilder;
 namespace HaulBuilder.Tests
 {
     /// <summary>
-    /// Verifies strict field-bounded minimum-radius experimental connectors.
+    /// Verifies strict field-bounded minimum-radius connectors.
     /// </summary>
-    public sealed class ExperimentalConnectorPlannerTests
+    public sealed class ConnectorPlannerTests
     {
         private const Double TURN_RADIUS_M = 10.0;
         private const Double SAMPLE_SPACING_M = 0.5;
@@ -22,12 +22,12 @@ namespace HaulBuilder.Tests
             )
         {
             Grid Grid = MakeGrid(100, 100);
-            ExperimentalConnectorPlanner.Pose Start =
-                new ExperimentalConnectorPlanner.Pose(20.5, 20.5, 90.0);
-            ExperimentalConnectorPlanner.Pose End =
-                new ExperimentalConnectorPlanner.Pose(60.5, 40.5, 90.0);
+            ConnectorPlanner.Pose Start =
+                new ConnectorPlanner.Pose(20.5, 20.5, 90.0);
+            ConnectorPlanner.Pose End =
+                new ConnectorPlanner.Pose(60.5, 40.5, 90.0);
 
-            ExperimentalConnectorPlanner.Result Result = ExperimentalConnectorPlanner.Connect(
+            ConnectorPlanner.Result Result = ConnectorPlanner.Connect(
                 Start, End, TURN_RADIUS_M, SAMPLE_SPACING_M, Grid);
 
             Assert.True(Result.Success, Result.FailureReason);
@@ -47,12 +47,12 @@ namespace HaulBuilder.Tests
             )
         {
             Grid Grid = MakeGrid(20, 5);
-            ExperimentalConnectorPlanner.Pose Start =
-                new ExperimentalConnectorPlanner.Pose(2.5, 2.5, 90.0);
-            ExperimentalConnectorPlanner.Pose End =
-                new ExperimentalConnectorPlanner.Pose(17.5, 2.5, 270.0);
+            ConnectorPlanner.Pose Start =
+                new ConnectorPlanner.Pose(2.5, 2.5, 90.0);
+            ConnectorPlanner.Pose End =
+                new ConnectorPlanner.Pose(17.5, 2.5, 270.0);
 
-            ExperimentalConnectorPlanner.Result Result = ExperimentalConnectorPlanner.Connect(
+            ConnectorPlanner.Result Result = ConnectorPlanner.Connect(
                 Start, End, 5.0, SAMPLE_SPACING_M, Grid);
 
             Assert.False(Result.Success);
@@ -69,12 +69,12 @@ namespace HaulBuilder.Tests
             )
         {
             Grid Grid = MakeGrid(100, 100);
-            ExperimentalConnectorPlanner.Pose Start =
-                new ExperimentalConnectorPlanner.Pose(20.5, 20.5, 90.0);
-            ExperimentalConnectorPlanner.Pose End =
-                new ExperimentalConnectorPlanner.Pose(60.5, 20.5, 90.0);
+            ConnectorPlanner.Pose Start =
+                new ConnectorPlanner.Pose(20.5, 20.5, 90.0);
+            ConnectorPlanner.Pose End =
+                new ConnectorPlanner.Pose(60.5, 20.5, 90.0);
 
-            ExperimentalConnectorPlanner.Result Result = ExperimentalConnectorPlanner.Connect(
+            ConnectorPlanner.Result Result = ConnectorPlanner.Connect(
                 Start, End, TURN_RADIUS_M, SAMPLE_SPACING_M, Grid);
 
             Assert.True(Result.Success, Result.FailureReason);
@@ -89,12 +89,12 @@ namespace HaulBuilder.Tests
             )
         {
             Grid Grid = MakeGrid(50, 30);
-            ExperimentalConnectorPlanner.Pose Start =
-                new ExperimentalConnectorPlanner.Pose(24.5, 12.5, 90.0);
-            ExperimentalConnectorPlanner.Pose End =
-                new ExperimentalConnectorPlanner.Pose(24.5, 12.5, 270.0);
+            ConnectorPlanner.Pose Start =
+                new ConnectorPlanner.Pose(24.5, 12.5, 90.0);
+            ConnectorPlanner.Pose End =
+                new ConnectorPlanner.Pose(24.5, 12.5, 270.0);
 
-            ExperimentalConnectorPlanner.Result Result = ExperimentalConnectorPlanner.Connect(
+            ConnectorPlanner.Result Result = ConnectorPlanner.Connect(
                 Start, End, 4.0, SAMPLE_SPACING_M, Grid);
 
             Assert.True(Result.Success, Result.FailureReason);
