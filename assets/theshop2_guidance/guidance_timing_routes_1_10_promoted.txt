@@ -1,0 +1,105 @@
+WHOLE FIELD GUIDANCE REPORT
+agd=C:\Users\andy\OneDrive\Documents\Haul Algorithm\DotNET\TheShop2_2ft.agd
+routes=10 grade_return=true lifecycle_success=True
+manual_interventions=2 manual_segments=2 manual_distance_m=116.8 manual_distance_mi=0.07 manual_percent_distance=1.621
+manual_exterior=2 manual_in_field_alignment=0 manual_beyond_allowance=0
+manual_length_m_min=49.7 median=58.4 p90=65.4 max=67.1
+total_segments=344 total_distance_m=7206.6 total_distance_mi=4.48 deterministic_drive_hours=0.906 scheduled_hours_at_80_percent_operational_availability=1.133
+timing_distance_m=7206.637 distance_reconciliation_m=0.000000 constant_limit_hours=0.778 acceleration_and_speed_transition_overhead_hours=0.128 explicit_event_hours=0.000 operational_availability_allowance_hours=0.227
+timing_motion_blocks=1783 curvature_vertices=5982 curvature_limited_m=2919.0 curvature_limited_percent=40.505 forced_geometry_stops=0 minimum_curve_radius_m=1.107 operator_rounded_tight_vertices=14
+timing_assumptions_mph cut=4.00 fill=5.00 grade=8.00 loaded_full=10.00 unloaded_full=13.00 maximum_steering=4.00
+timing_dynamics acceleration_mps2=0.484293 deceleration_mps2=0.484293 turn_speed_rule=linear_heading_change minimum_turn_radius_m=7.6200 curvature_sample_spacing_m=0.500 radius_tolerance_fraction=0.020 schedule_operational_availability=0.800
+timing_by_payload loaded_distance_m=4117.2 loaded_hours=0.532 unloaded_distance_m=3089.4 unloaded_hours=0.374
+timing_sensitivity:
+  all_operating_speeds_minus_10_percent: drive_hours=0.999 scheduled_hours_at_baseline_availability=1.249
+  all_operating_speeds_plus_10_percent: drive_hours=0.830 scheduled_hours_at_baseline_availability=1.037
+  longitudinal_acceleration_half: drive_hours=0.953 delta_hours=0.059
+  longitudinal_acceleration_double: drive_hours=0.862 delta_hours=-0.055
+  schedule_operational_availability_70_percent_hours=1.294 schedule_operational_availability_80_percent_hours=1.133 schedule_operational_availability_90_percent_hours=1.007
+timing_by_phase:
+  Transit: distance_m=2811.5 distance_mi=1.747 hours=0.3846 average_mph=4.542
+  ManualAssist: distance_m=116.8 distance_mi=0.073 hours=0.0157 average_mph=4.634
+  LineupCut: distance_m=393.2 distance_mi=0.244 hours=0.0450 average_mph=5.425
+  Cut: distance_m=470.2 distance_mi=0.292 hours=0.0730 average_mph=4.000
+  ExitCut: distance_m=372.0 distance_mi=0.231 hours=0.0422 average_mph=5.480
+  LineupFill: distance_m=272.1 distance_mi=0.169 hours=0.0290 average_mph=5.833
+  Fill: distance_m=475.0 distance_mi=0.295 hours=0.0607 average_mph=4.861
+  ExitFill: distance_m=170.4 distance_mi=0.106 hours=0.0182 average_mph=5.819
+  TurnToGrade: distance_m=681.4 distance_mi=0.423 hours=0.1050 average_mph=4.031
+  LineupGrade: distance_m=170.4 distance_mi=0.106 hours=0.0165 average_mph=6.426
+  Grade: distance_m=475.0 distance_mi=0.295 hours=0.0423 average_mph=6.979
+  ExitGrade: distance_m=272.1 distance_mi=0.169 hours=0.0273 average_mph=6.205
+  TransitToNextCut: distance_m=526.5 distance_mi=0.327 hours=0.0466 average_mph=7.016
+timing_by_route:
+  summary: min_hours=0.0386 median_hours=0.0973 p90_hours=0.1332 p99_hours=0.1398 max_hours=0.1406
+  route=1 distance_m=368.5 distance_mi=0.229 drive_hours=0.0498 average_mph=4.598
+  route=2 distance_m=366.8 distance_mi=0.228 drive_hours=0.0493 average_mph=4.621
+  route=3 distance_m=294.7 distance_mi=0.183 drive_hours=0.0386 average_mph=4.740
+  route=4 distance_m=874.7 distance_mi=0.543 drive_hours=0.1098 average_mph=4.948
+  route=5 distance_m=619.1 distance_mi=0.385 drive_hours=0.0711 average_mph=5.411
+  route=6 distance_m=928.9 distance_mi=0.577 drive_hours=0.1152 average_mph=5.009
+  route=7 distance_m=1096.8 distance_mi=0.682 drive_hours=0.1406 average_mph=4.848
+  route=8 distance_m=711.3 distance_mi=0.442 drive_hours=0.0848 average_mph=5.209
+  route=9 distance_m=1096.6 distance_mi=0.681 drive_hours=0.1324 average_mph=5.148
+  route=10 distance_m=849.3 distance_mi=0.528 drive_hours=0.1144 average_mph=4.614
+longest_routes_by_drive_time:
+  route=7 drive_hours=0.1406 distance_m=1096.8 average_mph=4.848 rounded_tight_vertices=2
+  route=9 drive_hours=0.1324 distance_m=1096.6 average_mph=5.148 rounded_tight_vertices=0
+  route=6 drive_hours=0.1152 distance_m=928.9 average_mph=5.009 rounded_tight_vertices=2
+  route=10 drive_hours=0.1144 distance_m=849.3 average_mph=4.614 rounded_tight_vertices=0
+  route=4 drive_hours=0.1098 distance_m=874.7 average_mph=4.948 rounded_tight_vertices=0
+  route=8 drive_hours=0.0848 distance_m=711.3 average_mph=5.209 rounded_tight_vertices=2
+  route=5 drive_hours=0.0711 distance_m=619.1 average_mph=5.411 rounded_tight_vertices=0
+  route=1 drive_hours=0.0498 distance_m=368.5 average_mph=4.598 rounded_tight_vertices=2
+  route=2 drive_hours=0.0493 distance_m=366.8 average_mph=4.621 rounded_tight_vertices=2
+  route=3 drive_hours=0.0386 distance_m=294.7 average_mph=4.740 rounded_tight_vertices=4
+max_segment_gap_m=0.000000 segments_beyond_one_cell_allowance=0
+operator_rounded_tight_vertices:
+  route=1 Transit->Cut radius_m=1.107 radius_ft=3.63 previous=(703949.23,4035840.85) point=(703948.79,4035840.63) next=(703948.29,4035840.63)
+  route=6 Cut->Transit radius_m=1.107 radius_ft=3.63 previous=(703962.29,4035827.67) point=(703961.79,4035827.67) next=(703961.34,4035827.89)
+  route=6 Transit->Cut radius_m=1.107 radius_ft=3.63 previous=(703959.60,4035828.75) point=(703959.15,4035828.97) next=(703958.65,4035828.97)
+  route=7 Cut->Transit radius_m=1.107 radius_ft=3.63 previous=(703958.65,4035828.97) point=(703959.15,4035828.97) next=(703959.60,4035828.75)
+  route=7 Transit->Cut radius_m=1.107 radius_ft=3.63 previous=(703961.34,4035827.89) point=(703961.79,4035827.67) next=(703962.29,4035827.67)
+  route=8 Cut->Transit radius_m=1.107 radius_ft=3.63 previous=(703965.65,4035846.58) point=(703965.65,4035847.08) next=(703965.87,4035847.53)
+  route=1 Cut->Transit radius_m=1.107 radius_ft=3.63 previous=(703951.93,4035841.92) point=(703951.43,4035841.92) next=(703950.98,4035841.70)
+  route=8 Transit->Cut radius_m=1.107 radius_ft=3.63 previous=(703966.73,4035849.27) point=(703966.95,4035849.72) next=(703966.95,4035850.22)
+  route=2 ExitCut->Transit radius_m=2.089 radius_ft=6.85 previous=(703897.37,4035823.79) point=(703896.87,4035823.79) next=(703896.38,4035823.91)
+  route=3 Fill->Transit radius_m=2.732 radius_ft=8.96 previous=(704018.13,4035850.61) point=(704018.57,4035850.36) next=(704018.95,4035850.03)
+  route=3 Grade->Transit radius_m=2.732 radius_ft=8.96 previous=(704021.51,4035847.96) point=(704021.08,4035848.21) next=(704020.69,4035848.54)
+  route=3 Transit->Fill radius_m=2.732 radius_ft=8.96 previous=(704020.69,4035848.54) point=(704021.08,4035848.21) next=(704021.51,4035847.96)
+  route=3 Transit->Grade radius_m=2.732 radius_ft=8.96 previous=(704018.95,4035850.03) point=(704018.57,4035850.36) next=(704018.13,4035850.61)
+  route=2 Transit->Fill radius_m=3.279 radius_ft=10.76 previous=(703894.81,4035824.29) point=(703894.32,4035824.41) next=(703893.83,4035824.45)
+guidance_omitted_allocations=8 guidance_omitted_unique_cells=4 guidance_affected_area_m2=26.8 guidance_percent_field=0.018 guidance_percent_active_work=0.018
+valid_field_cells=22357 active_work_cells=22140 all_omission_affected_unique_cells=20 all_omission_percent_field=0.089 nominal_straight_coverage_shortfall_m=28.0
+edge_patch_omitted_cut_cells=6 edge_patch_omitted_cut_bcy=1.97
+elapsed_minutes=0.66 failure=
+transit_cache_hits=155536 transit_cache_misses=6682 transit_cache_entries=6682 retained_entries=29 clears=0 hit_percent=95.9
+forward_detour_calls=26 successes=10 expansion_limit_hits=0 expansions=421 max_success_expansions=47 elapsed_seconds=0.07 avg_expansions=16.2
+planning_diagnostics:
+  whole_plan building_passes=10
+  whole_plan pass=1 cut_runs=3 fill_runs=2 cut_omitted=0 fill_omitted=0
+  whole_plan pair_candidates pass=1 fills=57 cuts=60
+  whole_plan pair_result pass=1 attempts=1 selected=True fill_index=0 cut_index=0 truncated=False
+  whole_plan pass=2 cut_runs=2 fill_runs=3 cut_omitted=0 fill_omitted=0
+  whole_plan pair_candidates pass=2 fills=59 cuts=4
+  whole_plan pair_result pass=2 attempts=1 selected=True fill_index=0 cut_index=0 truncated=False
+  whole_plan pass=3 cut_runs=2 fill_runs=2 cut_omitted=1 fill_omitted=0
+  whole_plan pass=4 cut_runs=5 fill_runs=2 cut_omitted=0 fill_omitted=0
+  whole_plan pair_candidates pass=4 fills=55 cuts=66
+  whole_plan pair_result pass=4 attempts=1 selected=True fill_index=0 cut_index=0 truncated=False
+  whole_plan pass=5 cut_runs=3 fill_runs=1 cut_omitted=0 fill_omitted=1
+  whole_plan pass=6 cut_runs=4 fill_runs=3 cut_omitted=3 fill_omitted=0
+  whole_plan pair_candidates pass=6 fills=6 cuts=5
+  whole_plan pair_result pass=6 attempts=30 selected=False fill_index=-1 cut_index=-1 truncated=False
+  whole_plan pass_stage pass=6 stage=alternative_cut_coverage_recovery elapsed_s=0.506
+  whole_plan pass=7 cut_runs=4 fill_runs=5 cut_omitted=3 fill_omitted=0
+  whole_plan pass=8 cut_runs=5 fill_runs=1 cut_omitted=0 fill_omitted=0
+  whole_plan pass=9 cut_runs=4 fill_runs=5 cut_omitted=0 fill_omitted=0
+  whole_plan pass=10 cut_runs=3 fill_runs=3 cut_omitted=0 fill_omitted=0
+  whole_plan pair_candidates pass=10 fills=71 cuts=67
+  whole_plan pair_result pass=10 attempts=1 selected=True fill_index=0 cut_index=0 truncated=False
+manual_phase_pairs:
+  ExitCut->LineupCut: count=2 distance_m=116.8
+longest_manual_interventions:
+  segment=178 ExitCut->LineupCut length_m=67.1 exterior=True beyond_allowance=False start=(703948.7,4035822.5) end=(703987.8,4035825.1)
+  segment=56 ExitCut->LineupCut length_m=49.7 exterior=True beyond_allowance=False start=(703948.7,4035822.8) end=(703950.2,4035823.8)
