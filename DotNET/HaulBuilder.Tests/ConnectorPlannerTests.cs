@@ -10,6 +10,19 @@ namespace HaulBuilder.Tests
     /// </summary>
     public sealed class ConnectorPlannerTests
     {
+        [Fact]
+        public void UnconstrainedDistanceIsExactForStraightAlignedPoses
+            (
+            )
+        {
+            Double LengthM = ConnectorPlanner.ShortestPathLengthM(
+                new ConnectorPlanner.Pose(5.0, 5.0, 0.0),
+                new ConnectorPlanner.Pose(5.0, 25.0, 0.0),
+                7.62);
+
+            Assert.Equal(20.0, LengthM, 9);
+        }
+
         private const Double TURN_RADIUS_M = 10.0;
         private const Double SAMPLE_SPACING_M = 0.5;
 

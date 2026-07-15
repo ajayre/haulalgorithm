@@ -56,6 +56,17 @@ namespace HaulBuilder
             PivotPixelsPerBin = 6;
             PivotAnimationStride = 15;
             EquipmentWidthFt = 14.0;
+            HaulOptimizationAxis = HaulLaneBuilder.LaneAxis.NorthSouth;
+            HaulOptimizationMaxRunsPerKind = 6;
+            HaulOptimizationFlowPenaltyWeight = 1.0;
+            HaulOptimizationDeferEdgeWork = true;
+            HaulOptimizationPairRefinementRounds = 8;
+            HaulOptimizationPairMetric =
+                HaulPairDistanceRefiner.PairMetric.Centroid;
+            HaulOptimizationReorderWindow = 200;
+            HaulOptimizationCompactOmissionPriority =
+                HaulDifficultCycleFilter.OmissionPriority
+                    .MostFragmentedFirst;
             OmitIsolatedEdgePatches = true;
             MaxIsolatedEdgePatchCells = 1;
             MaxIsolatedEdgePatchVolumeBcy = 0.6;
@@ -374,6 +385,40 @@ namespace HaulBuilder
         /// Gets or sets machine width in feet for obstacle buffering.
         /// </summary>
         public Double EquipmentWidthFt { get; set; }
+
+        /// <summary>Gets or sets whether the experimental global lane optimizer is enabled.</summary>
+        public Boolean EnableHaulOptimization { get; set; }
+
+        /// <summary>Gets or sets the optimizer lane-cover profile.</summary>
+        public HaulLaneBuilder.LaneAxis HaulOptimizationAxis { get; set; }
+
+        /// <summary>Gets or sets the maximum same-kind lane runs packed in one cycle.</summary>
+        public Int32 HaulOptimizationMaxRunsPerKind { get; set; }
+
+        /// <summary>Gets or sets the weight applied to unchanged Poisson-flow deviation.</summary>
+        public Double HaulOptimizationFlowPenaltyWeight { get; set; }
+
+        /// <summary>Gets or sets whether field-edge work is explicitly deferred for later analysis.</summary>
+        public Boolean HaulOptimizationDeferEdgeWork { get; set; }
+
+        /// <summary>Gets or sets equal-load fill-pair refinement rounds; zero disables refinement.</summary>
+        public Int32 HaulOptimizationPairRefinementRounds { get; set; }
+
+        /// <summary>Gets or sets the geometry proxy used for equal-load pair refinement.</summary>
+        public HaulPairDistanceRefiner.PairMetric HaulOptimizationPairMetric { get; set; }
+
+        /// <summary>Gets or sets the route-refinement window used by optimized plans.</summary>
+        public Int32 HaulOptimizationReorderWindow { get; set; }
+
+        /// <summary>
+        /// Gets or sets the maximum compact-preflight-failing cycles explicitly
+        /// deferred for later analysis; zero keeps every optimized cycle.
+        /// </summary>
+        public Int32 HaulOptimizationMaximumCompactOmissions { get; set; }
+
+        /// <summary>Gets or sets how compact-preflight failures are ranked for omission.</summary>
+        public HaulDifficultCycleFilter.OmissionPriority
+            HaulOptimizationCompactOmissionPriority { get; set; }
 
         /// <summary>
         /// Gets or sets a value indicating whether isolated, uneconomic edge patches

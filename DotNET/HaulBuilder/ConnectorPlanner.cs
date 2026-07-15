@@ -184,6 +184,29 @@ namespace HaulBuilder
         }
 
         /// <summary>
+        /// Returns the unconstrained forward-only minimum-radius distance between
+        /// two poses. This is a lower bound; field containment remains owned by
+        /// <see cref="Connect"/> and <see cref="TransitPlanner"/>.
+        /// </summary>
+        static public Double ShortestPathLengthM
+            (
+            Pose Start,
+            Pose End,
+            Double MinimumRadiusM
+            )
+        {
+            if (MinimumRadiusM <= 0.0)
+            {
+                throw new ArgumentOutOfRangeException(nameof(MinimumRadiusM));
+            }
+            List<Candidate> Candidates = BuildCandidates(
+                Start, End, MinimumRadiusM);
+            return Candidates.Count == 0
+                ? Double.PositiveInfinity
+                : Candidates.Min(Candidate => Candidate.LengthM);
+        }
+
+        /// <summary>
         /// Builds all mathematically feasible Dubins words between two poses.
         /// </summary>
         private static List<Candidate> BuildCandidates

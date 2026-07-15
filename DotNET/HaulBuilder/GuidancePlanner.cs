@@ -70,6 +70,42 @@ public static class GuidancePlanner
         CurrentGeometry.Value?.PreferredLineupM
         ?? Constants.DEFAULT_EQUIPMENT_LENGTH_FT * Constants.FEET_TO_METERS;
 
+    /// <summary>Compact isolated-cycle feasibility used by haul allocation refinement.</summary>
+    public sealed class CompactCycleResult
+    {
+        /// <summary>Initializes one compact-cycle feasibility result.</summary>
+        public CompactCycleResult
+            (
+            Boolean Success,
+            Int32 CutRunCount,
+            Int32 FillRunCount,
+            Double DistanceM,
+            String FailureReason
+            )
+        {
+            this.Success = Success;
+            this.CutRunCount = CutRunCount;
+            this.FillRunCount = FillRunCount;
+            this.DistanceM = DistanceM;
+            this.FailureReason = FailureReason;
+        }
+
+        /// <summary>Gets whether the minimum-run cut and fill geometry is feasible.</summary>
+        public Boolean Success { get; }
+
+        /// <summary>Gets the initial cut run count.</summary>
+        public Int32 CutRunCount { get; }
+
+        /// <summary>Gets the initial fill run count.</summary>
+        public Int32 FillRunCount { get; }
+
+        /// <summary>Gets compact work and connector distance.</summary>
+        public Double DistanceM { get; }
+
+        /// <summary>Gets the first failed compact-cycle requirement.</summary>
+        public String FailureReason { get; }
+    }
+
     /// <summary>Complete production guidance and timing outputs.</summary>
     public sealed class BuildResult
     {
@@ -2125,6 +2161,114 @@ public static class GuidancePlanner
             if (!EdgePolicy.ContainsWithExteriorAllowance(X, Y)) Outside += 1;
         }
         return Outside;
+    }
+
+    /// <summary>
+    /// Tests whether one allocation retains its minimum-run geometry through the
+    /// immutable cut-to-fill and grade-return guidance rules.
+    /// </summary>
+    static public CompactCycleResult EvaluateCompactCycle
+        (
+        Pass Pass,
+        Grid Grid,
+        Double BladeM,
+        Boolean GradeReturn
+        )
+    {
+        if (Pass == null) throw new ArgumentNullException(nameof(Pass));
+        if (Grid == null) throw new ArgumentNullException(nameof(Grid));
+        CoveragePlanner.PlanResult Cut = CoveragePlanner.Plan(
+            Pass.CutCells, Grid, BladeM, null, Pass.FillStartXy);
+        (Double X, Double Y)? FillAnchor = Cut.Runs.Count == 0
+            ? null
+            : Cut.Runs[Cut.Runs.Count - 1].EndXy;
+        CoveragePlanner.PlanResult Fill = CoveragePlanner.Plan(
+            Pass.FillCells, Grid, BladeM, FillAnchor, null);
+        RunSequencer.Result FillSequence = BuildSequence(Fill.Runs, Grid);
+        if (!FillSequence.Success)
+        {
+            return new CompactCycleResult(
+                false,
+                Cut.Runs.Count,
+                Fill.Runs.Count,
+                Double.PositiveInfinity,
+                "FILL_SEQUENCE");
+        }
+        ConnectorPlanner.Pose? FillEntry = FillSequence.Runs.Count == 0
+            ? null
+            : FillSequence.Runs[0].EntryPose;
+        RunSequencer.Result CutSequence = BuildSequence(
+            Cut.Runs, Grid, null, FillEntry);
+        if (!CutSequence.Success)
+        {
+            return new CompactCycleResult(
+                false,
+                Cut.Runs.Count,
+                Fill.Runs.Count,
+                Double.PositiveInfinity,
+                "CUT_SEQUENCE");
+        }
+        if ((CutSequence.Runs.Count > 0) && (Fill.Runs.Count > 0))
+        {
+            ConnectorPlanner.Pose CutExit = CutSequence.Runs[
+                CutSequence.Runs.Count - 1].ExitPose;
+            FillSequence = BuildSequence(
+                Fill.Runs, Grid, CutExit, null);
+            if (GradeReturn
+                && FillSequence.Success
+                && (FillSequence.Runs.Count > 1))
+            {
+                FillSequence = LifecyclePlanner.BuildContinuousFillSequence(
+                    FillSequence,
+                    CutExit,
+                    PlanningMinimumRadiusM,
+                    Math.Min(0.5, Grid.GridSizeM),
+                    Grid);
+            }
+        }
+        if (!FillSequence.Success
+            || !SequencesConnect(CutSequence, FillSequence, Grid))
+        {
+            return new CompactCycleResult(
+                false,
+                Cut.Runs.Count,
+                Fill.Runs.Count,
+                Double.PositiveInfinity,
+                "CUT_TO_FILL");
+        }
+        if (GradeReturn && !SupportsGradeReturn(
+            FillSequence,
+            Grid,
+            FillSequencePrepared: true))
+        {
+            return new CompactCycleResult(
+                false,
+                Cut.Runs.Count,
+                Fill.Runs.Count,
+                Double.PositiveInfinity,
+                "GRADE_RETURN");
+        }
+        Double DistanceM = Cut.WorkDistanceM
+            + Fill.WorkDistanceM
+            + CutSequence.ConnectorDistanceM
+            + FillSequence.ConnectorDistanceM;
+        if ((CutSequence.Runs.Count > 0) && (FillSequence.Runs.Count > 0))
+        {
+            TransitPlanner.Result Connector = TransitPlanner.Connect(
+                CutSequence.Runs[CutSequence.Runs.Count - 1].ExitPose,
+                FillSequence.Runs[0].EntryPose,
+                PlanningMinimumRadiusM,
+                Math.Min(0.5, Grid.GridSizeM),
+                Grid);
+            if (Connector.Success) DistanceM += Connector.LengthM;
+        }
+        if (GradeReturn) DistanceM += Fill.WorkDistanceM;
+        return new CompactCycleResult(
+            true,
+            Cut.Runs.Count,
+            Fill.Runs.Count,
+            DistanceM,
+            String.Empty);
     }
 
     /// <summary>

@@ -13,6 +13,14 @@ internal static class Program
         String[] args
         )
     {
+        if ((args.Length > 0)
+            && ((args[0] == "--probe-haul-optimizer")
+                || (args[0] == "--optimize-haul")))
+        {
+            Environment.Exit(HaulOptimizationBench.Run(args.Skip(1).ToArray()));
+            return;
+        }
+
         if ((args.Length > 0) && (args[0] == "--compare-paths"))
         {
             ComparePaths.Run(Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "TheShop2_2ft.agd")));

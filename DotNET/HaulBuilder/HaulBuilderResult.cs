@@ -57,6 +57,9 @@ namespace HaulBuilder
         /// </summary>
         public PassResult? PassResult { get; set; }
 
+        /// <summary>Gets or sets the global optimizer allocation and ledger diagnostics.</summary>
+        public HaulOptimizationResult? HaulOptimization { get; set; }
+
         /// <summary>
         /// Gets or sets the isolated-edge-patch omission audit applied before routing.
         /// </summary>
