@@ -3257,8 +3257,78 @@ public static class GuidancePlanner
                             + DeeperFill.OmittedCells.Count));
                 }
             }
+            if (GradeReturn
+                && FillSequence.Success
+                && (FillSequence.Runs.Count > 0)
+                && !SupportsGradeReturn(
+                    FillSequence,
+                    Grid,
+                    FillSequencePrepared: true))
+            {
+                ConnectorPlanner.Pose? LateGradeRecoveryStart =
+                    CutSequence.Success && (CutSequence.Runs.Count > 0)
+                        ? CutSequence.Runs[
+                            CutSequence.Runs.Count - 1].ExitPose
+                        : Current;
+                if (LateGradeRecoveryStart.HasValue
+                    && TrySelectFeasibleFillCoverageCandidate(
+                        Route.OrderedPasses[PassIndex].FillCells,
+                        Grid,
+                        BladeM,
+                        LateGradeRecoveryStart.Value,
+                        true,
+                        out CoveragePlanner.PlanResult LateGradeFill,
+                        out RunSequencer.Result LateGradeFillSequence))
+                {
+                    RunSequencer.Result PreparedLateGradeFill =
+                        LateGradeFillSequence.Runs.Count > 1
+                            ? LifecyclePlanner.BuildContinuousFillSequence(
+                                LateGradeFillSequence,
+                                LateGradeRecoveryStart,
+                                PlanningMinimumRadiusM,
+                                Math.Min(0.5, Grid.GridSizeM),
+                                Grid)
+                            : LateGradeFillSequence;
+                    if (PreparedLateGradeFill.Success
+                        && SupportsGradeReturn(
+                            PreparedLateGradeFill,
+                            Grid,
+                            FillSequencePrepared: true)
+                        && ((CutSequence.Runs.Count == 0)
+                            || SequencesConnect(
+                                CutSequence,
+                                PreparedLateGradeFill,
+                                Grid)))
+                    {
+                        Fill = LateGradeFill;
+                        FillSequence = PreparedLateGradeFill;
+                        FillPlans[PassIndex] = LateGradeFill;
+                        RetainSelectedLifecycleConnections(
+                            Current,
+                            CutSequence,
+                            FillSequence,
+                            GradeReturn,
+                            Grid);
+                        Diagnostic?.Invoke(String.Format(
+                            CultureInfo.InvariantCulture,
+                            "whole_plan late_grade_recovery pass={0} heading={1:F1} runs={2} omitted_cells={3}",
+                            PassIndex + 1,
+                            LateGradeFill.HeadingDeg,
+                            PreparedLateGradeFill.Runs.Count,
+                            LateGradeFill.OmittedCells.Count));
+                    }
+                }
+            }
+            Boolean FinalGradeReturnValid = !GradeReturn
+                || !FillSequence.Success
+                || (FillSequence.Runs.Count == 0)
+                || SupportsGradeReturn(
+                    FillSequence,
+                    Grid,
+                    FillSequencePrepared: true);
             if (!CutSequence.Success
                 || !FillSequence.Success
+                || !FinalGradeReturnValid
                 || !SequencesConnect(CutSequence, FillSequence, Grid)
                 || !PreviousToCutConnected
                 || !PreviousToFillConnected)
@@ -3276,6 +3346,16 @@ public static class GuidancePlanner
                         CutSequence.ConnectorDistanceM,
                         CutSequence.MinimumLineupM,
                         "No complete incoming connector to the pass's first remaining work satisfies the edge policy.");
+                }
+                else if (!FinalGradeReturnValid)
+                {
+                    FillSequence = new RunSequencer.Result(
+                        false,
+                        FillSequence.Runs,
+                        FillSequence.Connectors,
+                        FillSequence.ConnectorDistanceM,
+                        FillSequence.MinimumLineupM,
+                        "Final fill sequence cannot execute its required grade return.");
                 }
                 Failures[PassIndex] = String.Format(
                     CultureInfo.InvariantCulture,

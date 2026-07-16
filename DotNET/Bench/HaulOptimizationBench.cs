@@ -43,6 +43,10 @@ internal static class HaulOptimizationBench
             String.Equals(Arg, "--exact", StringComparison.OrdinalIgnoreCase));
         Boolean DeferEdgeWork = Args.Any(Arg =>
             String.Equals(Arg, "--defer-edge", StringComparison.OrdinalIgnoreCase));
+        Boolean CompleteDeferredEdge = Args.Any(Arg => String.Equals(
+            Arg,
+            "--complete-deferred-edge",
+            StringComparison.OrdinalIgnoreCase));
         Boolean CompactReport = Args.Any(Arg =>
             String.Equals(Arg, "--compact-report", StringComparison.OrdinalIgnoreCase));
         Boolean RepairPairs = Args.Any(Arg =>
@@ -54,6 +58,12 @@ internal static class HaulOptimizationBench
         Boolean PairAuction = Args.Any(Arg =>
             String.Equals(Arg, "--pair-auction", StringComparison.OrdinalIgnoreCase));
         Int32 ReorderWindow = ReadIntOption(Args, "--reorder-window=", 200);
+        Int32 EdgeMaximumRunsPerKind = Math.Max(
+            1,
+            ReadIntOption(
+                Args,
+                "--edge-max-runs=",
+                MaximumRunsPerKind));
         Int32 PairTwoOptRounds = ReadIntOption(
             Args, "--pair-2opt-rounds=", 8);
         Int32 PairTwoOptSeed = ReadIntOption(
@@ -80,6 +90,14 @@ internal static class HaulOptimizationBench
             Args, "--pair-auction-epsilon=", 0.25);
         HashSet<Int32> DiagnosticPasses = ReadIntSetOption(
             Args, "--diagnostic-pass=");
+        Int32 RandomRoutePngCount = ReadIntOption(
+            Args, "--render-random-routes=", 0);
+        Int32 RandomRouteSeed = ReadIntOption(
+            Args, "--render-seed=", 20260715);
+        String RandomRouteOutputDirectory = ReadStringOption(
+            Args,
+            "--render-dir=",
+            Path.Combine("assets", "optimized_random_routes"));
         Stopwatch Timer = Stopwatch.StartNew();
 
         HaulBuilderOptions Options = new HaulBuilderOptions
@@ -128,6 +146,70 @@ internal static class HaulOptimizationBench
                 PairTwoOptSeed,
                 Obstacles: Obstacles.EMPTY_OBSTACLES);
             CandidatePasses = PairTwoOptResult.Passes;
+        }
+        HaulOptimizationResult? EdgeCompletion = null;
+        HaulPairDistanceRefiner.Result? EdgePairTwoOptResult = null;
+        HaulPairRepair.Result? EdgePairRepairResult = null;
+        HaulDifficultCycleFilter.Result? EdgeOmissionResult = null;
+        List<Pass> InteriorCandidatePasses = CandidatePasses;
+        List<Pass> EdgeCandidatePasses = new List<Pass>();
+        if (CompleteDeferredEdge)
+        {
+            if (!DeferEdgeWork)
+            {
+                throw new ArgumentException(
+                    "--complete-deferred-edge requires --defer-edge.");
+            }
+            if (RepairPairs || SplitFailures || (OmitCompactFailures > 0))
+            {
+                throw new ArgumentException(
+                    "Edge completion cannot be combined with whole-plan omission or repair options because its interior route must remain frozen.");
+            }
+            HaulWorkLedger ResidualLedger =
+                Ledger.BuildResidual(CandidatePasses);
+            EdgeCompletion = HaulCycleOptimizer.Optimize(
+                Grid,
+                Flow,
+                ResidualLedger,
+                Axis,
+                MaximumLoadBcy,
+                EdgeMaximumRunsPerKind,
+                DeferEdgeWork: false,
+                FlowPenaltyWeight,
+                Obstacles: Obstacles.EMPTY_OBSTACLES);
+            EdgeCandidatePasses = EdgeCompletion.PassResult.Passes;
+            if (PairTwoOpt)
+            {
+                EdgePairTwoOptResult = HaulPairDistanceRefiner.Refine(
+                    EdgeCandidatePasses,
+                    Grid,
+                    PairTwoOptRounds,
+                    PairTwoOptMetric,
+                    PairTwoOptSeed + 1,
+                    Obstacles: Obstacles.EMPTY_OBSTACLES);
+                EdgeCandidatePasses = EdgePairTwoOptResult.Passes;
+            }
+            EdgePairRepairResult = HaulPairRepair.Repair(
+                EdgeCandidatePasses,
+                Grid,
+                Options.BladeWidthMm / 1000.0,
+                !Options.NoGradeReturn,
+                Obstacles: Obstacles.EMPTY_OBSTACLES);
+            EdgeCandidatePasses = EdgePairRepairResult.Passes;
+            if (EdgePairRepairResult.FinalFailures > 0)
+            {
+                EdgeOmissionResult = HaulDifficultCycleFilter.Apply(
+                    EdgeCandidatePasses,
+                    Grid,
+                    Options.BladeWidthMm / 1000.0,
+                    !Options.NoGradeReturn,
+                    EdgePairRepairResult.FinalFailures,
+                    HaulDifficultCycleFilter.OmissionPriority.SimplestFirst);
+                EdgeCandidatePasses = EdgeOmissionResult.Passes;
+            }
+            CandidatePasses = CandidatePasses
+                .Concat(EdgeCandidatePasses)
+                .ToList();
         }
         Int32 OmittedCompactCycles = 0;
         if (OmitCompactFailures > 0)
@@ -193,26 +275,49 @@ internal static class HaulOptimizationBench
                         Options.BladeWidthMm / 1000.0,
                         !Options.NoGradeReturn));
         }
-        Route Route = Routing.SequencePasses(
-            CandidatePasses,
-            1500,
-            !Options.NoGradeReturn,
-            !Options.NoDirectionAware,
-            Options.ReturnSpeedMph,
-            Options.TurnSpeedMph,
-            Options.TurningCircleFt,
-            Obstacles.EMPTY_OBSTACLES);
-        (Double Before, Double After, Int32 Moves) Refinement =
-            Routing.RefineRouteOrder(
-                Route,
+        Route Route;
+        (Double Before, Double After, Int32 Moves) Refinement;
+        if (CompleteDeferredEdge)
+        {
+            Route InteriorRoute = BuildAndRefineRoute(
+                InteriorCandidatePasses,
                 ReorderWindow,
-                !Options.NoGradeReturn,
-                !Options.NoDirectionAware,
-                Options.ReturnSpeedMph,
-                Options.TurnSpeedMph,
-                Options.TurningCircleFt,
-                20,
-                Obstacles.EMPTY_OBSTACLES);
+                Options,
+                out (Double Before, Double After, Int32 Moves)
+                    InteriorRefinement);
+            Route EdgeRoute = BuildAndRefineRoute(
+                EdgeCandidatePasses,
+                ReorderWindow,
+                Options,
+                out (Double Before, Double After, Int32 Moves)
+                    EdgeRefinement);
+            List<Pass> OrderedPasses = InteriorRoute.OrderedPasses
+                .Concat(EdgeRoute.OrderedPasses)
+                .ToList();
+            List<Int32> Order = InteriorRoute.Order
+                .Concat(EdgeRoute.Order.Select(Index =>
+                    InteriorCandidatePasses.Count + Index))
+                .ToList();
+            Route = new Route(
+                Order,
+                OrderedPasses,
+                Routing.CalculateDeadhead(
+                    OrderedPasses,
+                    !Options.NoGradeReturn,
+                    Obstacles.EMPTY_OBSTACLES));
+            Refinement = (
+                InteriorRefinement.Before + EdgeRefinement.Before,
+                InteriorRefinement.After + EdgeRefinement.After,
+                InteriorRefinement.Moves + EdgeRefinement.Moves);
+        }
+        else
+        {
+            Route = BuildAndRefineRoute(
+                CandidatePasses,
+                ReorderWindow,
+                Options,
+                out Refinement);
+        }
         TimeParams Parameters = new TimeParams(
             Options.LoadingSpeedMph,
             Options.HaulSpeedMph,
@@ -229,6 +334,8 @@ internal static class HaulOptimizationBench
         Console.WriteLine("axis={0}", Axis);
         Console.WriteLine("maximum_runs_per_kind={0}", MaximumRunsPerKind);
         Console.WriteLine("defer_edge_work={0}", DeferEdgeWork);
+        Console.WriteLine("complete_deferred_edge={0}", CompleteDeferredEdge);
+        Console.WriteLine("edge_maximum_runs_per_kind={0}", EdgeMaximumRunsPerKind);
         Console.WriteLine(String.Format(
             CultureInfo.InvariantCulture,
             "flow_penalty_weight={0:F3}",
@@ -302,6 +409,53 @@ internal static class HaulOptimizationBench
                 PairTwoOptResult.BeforeM,
                 PairTwoOptResult.AfterM,
                 PairTwoOptValidation.Success));
+        }
+        if (EdgeCompletion != null)
+        {
+            Console.WriteLine(String.Format(
+                CultureInfo.InvariantCulture,
+                "edge_completion_passes={0} edge_assigned_bcy={1:F6} edge_unmatched_cut_bcy={2:F9} edge_unmatched_fill_bcy={3:F9}",
+                EdgeCompletion.PassResult.Passes.Count,
+                EdgeCompletion.TotalAssignedBcy,
+                EdgeCompletion.UnmatchedCutBcy,
+                EdgeCompletion.UnmatchedFillBcy));
+        }
+        if (EdgePairTwoOptResult != null)
+        {
+            Console.WriteLine(String.Format(
+                CultureInfo.InvariantCulture,
+                "edge_pair_2opt_swaps={0} edge_pair_2opt_before_m={1:F1} edge_pair_2opt_after_m={2:F1}",
+                EdgePairTwoOptResult.Swaps,
+                EdgePairTwoOptResult.BeforeM,
+                EdgePairTwoOptResult.AfterM));
+        }
+        if (EdgePairRepairResult != null)
+        {
+            Console.WriteLine(String.Format(
+                CultureInfo.InvariantCulture,
+                "edge_pair_repair_swaps={0} edge_pair_repair_attempts={1} edge_pair_repair_failures_before={2} edge_pair_repair_failures_after={3}",
+                EdgePairRepairResult.SwapCount,
+                EdgePairRepairResult.CandidateAttempts,
+                EdgePairRepairResult.InitialFailures,
+                EdgePairRepairResult.FinalFailures));
+        }
+        if (EdgeOmissionResult != null)
+        {
+            Console.WriteLine(String.Format(
+                CultureInfo.InvariantCulture,
+                "edge_compact_failures={0} edge_omitted_cycles={1}",
+                EdgeOmissionResult.FailureCount,
+                EdgeOmissionResult.OmittedCycles));
+        }
+        if (CompleteDeferredEdge)
+        {
+            Console.WriteLine(String.Format(
+                CultureInfo.InvariantCulture,
+                "final_deferred_cut_bcy={0:F6} final_deferred_fill_bcy={1:F6} final_deferred_cut_percent={2:F4} final_deferred_fill_percent={3:F4}",
+                CandidateDeferredCutBcy,
+                CandidateDeferredFillBcy,
+                100.0 * CandidateDeferredCutBcy / Ledger.TotalCutBcy,
+                100.0 * CandidateDeferredFillBcy / Ledger.TotalFillBcy));
         }
         if (PairAuctionResult != null)
         {
@@ -513,6 +667,16 @@ internal static class HaulOptimizationBench
                                 "F1", CultureInfo.InvariantCulture)))));
             }
         }
+        if (RandomRoutePngCount > 0)
+        {
+            RenderRandomExactRoutes(
+                ExactResult.Plan,
+                Grid,
+                Options.BladeWidthMm / 1000.0,
+                Math.Min(RandomRoutePngCount, ExactResult.Plan.Passes.Count),
+                RandomRouteSeed,
+                Path.GetFullPath(RandomRouteOutputDirectory));
+        }
         Double ExactHours = ExactResult.DeterministicSeconds / 3600.0;
         Double SavingsPercent = 100.0 * (433.483 - ExactHours) / 433.483;
         Boolean GatePassed = ExactHours <= 216.742;
@@ -527,6 +691,116 @@ internal static class HaulOptimizationBench
             GatePassed ? "PASS" : "FAIL"));
         return GatePassed
             ? 0 : 2;
+    }
+
+    /// <summary>Sequences and locally refines one independently frozen pass batch.</summary>
+    private static Route BuildAndRefineRoute
+        (
+        List<Pass> Passes,
+        Int32 ReorderWindow,
+        HaulBuilderOptions Options,
+        out (Double Before, Double After, Int32 Moves) Refinement
+        )
+    {
+        Route Route = Routing.SequencePasses(
+            Passes,
+            1500,
+            !Options.NoGradeReturn,
+            !Options.NoDirectionAware,
+            Options.ReturnSpeedMph,
+            Options.TurnSpeedMph,
+            Options.TurningCircleFt,
+            Obstacles.EMPTY_OBSTACLES);
+        Refinement = Routing.RefineRouteOrder(
+            Route,
+            ReorderWindow,
+            !Options.NoGradeReturn,
+            !Options.NoDirectionAware,
+            Options.ReturnSpeedMph,
+            Options.TurnSpeedMph,
+            Options.TurningCircleFt,
+            20,
+            Obstacles.EMPTY_OBSTACLES);
+        return Route;
+    }
+
+    /// <summary>Renders a deterministic random sample from the final exact lifecycle.</summary>
+    private static void RenderRandomExactRoutes
+        (
+        GuidancePlanner.BuildResult Plan,
+        Grid Grid,
+        Double BladeWidthM,
+        Int32 Count,
+        Int32 Seed,
+        String OutputDirectory
+        )
+    {
+        Directory.CreateDirectory(OutputDirectory);
+        Random Random = new Random(Seed);
+        HashSet<Int32> Selected = new HashSet<Int32>();
+        while (Selected.Count < Count)
+        {
+            Selected.Add(Random.Next(1, Plan.Passes.Count + 1));
+        }
+        foreach (Int32 RouteNumber in Selected.OrderBy(Value => Value))
+        {
+            List<LifecyclePlanner.Segment> Segments = Plan.Lifecycle.Segments
+                .Where(Segment => Segment.RouteNumber == RouteNumber)
+                .ToList();
+            List<IReadOnlyList<(Double X, Double Y)>> CutRuns = Segments
+                .Where(Segment => Segment.Phase == LifecyclePlanner.Phase.Cut)
+                .Select(Segment =>
+                    (IReadOnlyList<(Double X, Double Y)>)Segment.Points)
+                .ToList();
+            List<IReadOnlyList<(Double X, Double Y)>> FillRuns = Segments
+                .Where(Segment => Segment.Phase == LifecyclePlanner.Phase.Fill)
+                .Select(Segment =>
+                    (IReadOnlyList<(Double X, Double Y)>)Segment.Points)
+                .ToList();
+            List<IReadOnlyList<(Double X, Double Y)>> ManualRuns = Segments
+                .Where(Segment =>
+                    Segment.Phase == LifecyclePlanner.Phase.ManualAssist)
+                .Select(Segment =>
+                    (IReadOnlyList<(Double X, Double Y)>)Segment.Points)
+                .ToList();
+            List<(Double X, Double Y)> RoutePoints = Segments
+                .SelectMany(Segment => Segment.Points)
+                .ToList();
+            if (RoutePoints.Count == 0) continue;
+            (Double X, Double Y) MarkerPoint = CutRuns.Count > 0
+                && CutRuns[0].Count > 0
+                ? CutRuns[0][CutRuns[0].Count / 2]
+                : RoutePoints[0];
+            Byte[] Png = Render.RenderCoverageRunsPng(
+                Grid,
+                CutRuns,
+                FillRuns,
+                RoutePoints,
+                BladeWidthM,
+                pixelsPerBin: 40,
+                padCells: 8,
+                manualAssistRuns: ManualRuns,
+                routeMarkers: new List<((Double X, Double Y) Point,
+                    String Label)>
+                {
+                    (MarkerPoint, RouteNumber.ToString(
+                        CultureInfo.InvariantCulture)),
+                },
+                drawDirectionArrows: true,
+                directionArrowSpacingM: 6.0 * Grid.GridSizeM);
+            String OutputPath = Path.Combine(
+                OutputDirectory,
+                String.Format(
+                    CultureInfo.InvariantCulture,
+                    "optimized_route_{0:D4}.png",
+                    RouteNumber));
+            File.WriteAllBytes(OutputPath, Png);
+            Console.WriteLine(
+                "random_route_png route={0} seed={1} path={2}",
+                RouteNumber,
+                Seed,
+                OutputPath);
+        }
     }
 
     /// <summary>Reads a comma-separated integer set from one command-line option.</summary>
@@ -551,6 +825,21 @@ internal static class HaulOptimizationBench
                     : 0)
             .Where(Parsed => Parsed > 0)
             .ToHashSet();
+    }
+
+    /// <summary>Reads one string option without locale-dependent conversion.</summary>
+    private static String ReadStringOption
+        (
+        IEnumerable<String> Args,
+        String Prefix,
+        String DefaultValue
+        )
+    {
+        String? Value = Args.FirstOrDefault(Arg =>
+            Arg.StartsWith(Prefix, StringComparison.OrdinalIgnoreCase));
+        return Value == null || Value.Length == Prefix.Length
+            ? DefaultValue
+            : Value.Substring(Prefix.Length);
     }
 
     /// <summary>Tests one diagnostic for an exact whole-plan pass token.</summary>

@@ -31,6 +31,7 @@
 | **2.1.0** | 2026-07-15 | Recorded the first implemented exact checkpoint, its explicit perimeter deferral, test status, and unresolved 50% gate. |
 | **2.2.0** | 2026-07-15 | Promoted six-run cycle packing, deterministic equal-load pair refinement, exact compact-cycle preflight, and an opt-in bounded difficult-work ledger; recorded both the best complete automatic-work checkpoint and the first raw-time checkpoint below 50% of baseline. |
 | **2.3.0** | 2026-07-15 | Added geometry-derived, proximity-component fill redistribution envelopes with mandatory grade-return validation, exact route diagnostics, focused tests, and the improved complete-work checkpoint. |
+| **2.4.0** | 2026-07-15 | Added residual-ledger edge completion, independently frozen interior and edge route batches, edge-only guidance repair and bounded omission, deterministic random exact-route PNG export, and the first exact edge-completion checkpoint. |
 
 ### 0.2 Current implementation checkpoint
 
@@ -55,6 +56,14 @@
 **[0.2.10]** The exact diagnostic canaries prove the intended component behavior. Routes `2526`, `2613`, `2728`, and `2858` each change from fourteen selected fill fragments to two final runs: one `25`-cell north-south corridor and one retained isolated cell. Route `2488` changes from seventeen pre-envelope fill fragments, or three fixed-heading envelope runs, to one geometry-selected corridor. Every canary retains zero guidance omissions and an automatic cut-to-fill link.
 
 **[0.2.11]** The reproducible command is `dotnet DotNET/Bench/bin/Release/net8.0/Bench.dll --optimize-haul DotNET/TheShop2_2ft.agd northsouth 6 --defer-edge --reorder-window=200 --flow-weight=1.0 --pair-2opt --exact`. `--diagnostic-pass=N[,N...]` additionally prints each selected exact fill run, its allocation bounds, heading, length, and applicable field-edge headings.
+
+**[0.2.12]** Residual-ledger edge completion now freezes the exact `3,043`-cycle interior allocation and route order, constructs supplemental cycles from required minus assigned work, routes and refines that batch independently, and concatenates it after the interior batch. This avoids the `364.937 h` global-rebuild regression caused by allowing perimeter work to perturb every interior pairing and route. The residual ledger preserves exact cell depths, volume conversion, cut/fill ratio, target surface, and the original flow field.
+
+**[0.2.13]** With at most twelve same-kind residual lane slices per supplemental cycle, equal-load pair refinement, edge-only compact pair repair, and omission of the nine residual compact failures, the exact plan contains `3,182` guided cycles and completes in `240.554 h` deterministic, `300.692 h` scheduled, and `2,298,100.9 m`. It contains `56,945` lifecycle segments and `368` manual assists, with zero sequence failures and no relaxed guidance rule. This is `44.507%` below the `433.483 h` baseline and adds `11.264 h` to the `229.290 h` interior-only checkpoint.
+
+**[0.2.14]** The edge checkpoint completes `1,168.456 BCY`, or `94.688%`, of the previously deferred matched edge work. The remaining guidance-related deferral is `65.549 BCY` cut and `65.549 BCY` fill, equal to `0.1405%` of required fill. The reported final cut deferral is `185.778 BCY` because it also includes the immutable `120.229 BCY` field cut surplus. These nine cycles remain unresolved work under section 12 and shall not be described as completed.
+
+**[0.2.15]** The edge-completion command is `dotnet DotNET/Bench/bin/Release/net8.0/Bench.dll --optimize-haul DotNET/TheShop2_2ft.agd northsouth 6 --defer-edge --complete-deferred-edge --edge-max-runs=12 --reorder-window=200 --flow-weight=1.0 --pair-2opt --exact`. `--render-random-routes=N --render-seed=S --render-dir=PATH` exports a deterministic random sample using the exact production lifecycle geometry rather than proxy polylines.
 
 **[0.1.2]** Revisions follow semantic versioning: **MAJOR** denotes an incompatible normative change, **MINOR** a backward-compatible addition, and **PATCH** a clarification that does not change an obligation.
 

@@ -75,6 +75,46 @@ namespace HaulBuilder.Tests
             Assert.All(Deferred, Entry => Assert.Equal("TEST_DEFERRED", Entry.Reason));
         }
 
+        [Fact]
+        public void ResidualLedgerContainsOnlyUnassignedWork
+            (
+            )
+        {
+            Grid Grid = MakeGrid();
+            Grid.Existing[2, 2] = 0.140;
+            Grid.Existing[7, 7] = -0.140;
+            HaulWorkLedger Ledger = HaulWorkLedger.Build(Grid, 10.0);
+            Double AssignedDepthM = 0.061;
+            Double LoadBcy = AssignedDepthM * Ledger.CutBcyPerDepthM;
+            Pass Pass = Passes.BuildPass(
+                Grid,
+                new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>
+                {
+                    ((2, 2), AssignedDepthM),
+                },
+                new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>
+                {
+                    ((7, 7), AssignedDepthM),
+                },
+                LoadBcy,
+                Obstacles.EMPTY_OBSTACLES,
+                true);
+
+            HaulWorkLedger Residual = Ledger.BuildResidual(
+                new List<Pass> { Pass });
+
+            Assert.Equal(0.079, Residual.RequiredCutDepthM[2, 2], 12);
+            Assert.Equal(0.079, Residual.RequiredFillDepthM[7, 7], 12);
+            Assert.Equal(
+                0.079 * Ledger.CutBcyPerDepthM,
+                Residual.TotalCutBcy,
+                12);
+            Assert.Equal(
+                0.079 * Ledger.FillBcyPerDepthM,
+                Residual.TotalFillBcy,
+                12);
+        }
+
         private static Grid MakeGrid
             (
             )

@@ -84,6 +84,45 @@ namespace HaulBuilder
             return new HaulWorkLedger(Grid, ToleranceM, Cut, Fill);
         }
 
+        /// <summary>
+        /// Builds a ledger containing only work not owned by the supplied passes.
+        /// The source target and material conversions are unchanged; this supports
+        /// incremental completion without reallocating an already accepted plan.
+        /// </summary>
+        public HaulWorkLedger BuildResidual
+            (
+            IEnumerable<Pass> AssignedPasses
+            )
+        {
+            if (AssignedPasses == null)
+            {
+                throw new ArgumentNullException(nameof(AssignedPasses));
+            }
+            (Double[,] AssignedCut, Double[,] AssignedFill) =
+                Accumulate(AssignedPasses);
+            Double[,] Cut = new Double[Grid.Height, Grid.Width];
+            Double[,] Fill = new Double[Grid.Height, Grid.Width];
+            for (Int32 By = 0; By < Grid.Height; By += 1)
+            {
+                for (Int32 Bx = 0; Bx < Grid.Width; Bx += 1)
+                {
+                    Double CutRemainingM = RequiredCutDepthM[By, Bx]
+                        - AssignedCut[By, Bx];
+                    Double FillRemainingM = RequiredFillDepthM[By, Bx]
+                        - AssignedFill[By, Bx];
+                    if ((CutRemainingM < -DEPTH_TOLERANCE_M)
+                        || (FillRemainingM < -DEPTH_TOLERANCE_M))
+                    {
+                        throw new InvalidOperationException(
+                            "Assigned work exceeds the source ledger.");
+                    }
+                    Cut[By, Bx] = Math.Max(0.0, CutRemainingM);
+                    Fill[By, Bx] = Math.Max(0.0, FillRemainingM);
+                }
+            }
+            return new HaulWorkLedger(Grid, ToleranceM, Cut, Fill);
+        }
+
         /// <summary>Returns assigned cut and fill depths accumulated by physical cell.</summary>
         public (Double[,] CutDepthM, Double[,] FillDepthM) Accumulate
             (

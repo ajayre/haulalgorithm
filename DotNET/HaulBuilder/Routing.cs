@@ -153,6 +153,32 @@ namespace HaulBuilder
             return new Route(Order, Ordered, Total);
         }
 
+        /// <summary>Calculates deadhead for a fixed pass order without changing it.</summary>
+        /// <param name="Passes">Passes in their final execution order.</param>
+        /// <param name="GradeReturn">Whether each pass exits after reverse grading.</param>
+        /// <param name="Obstacles">Obstacle field.</param>
+        /// <returns>Total inter-pass deadhead distance in metres.</returns>
+        static public Double CalculateDeadhead
+            (
+            IReadOnlyList<Pass> Passes,
+            Boolean GradeReturn = true,
+            ObstacleField? Obstacles = null
+            )
+        {
+            if (Passes == null) throw new ArgumentNullException(nameof(Passes));
+            ObstacleField ActiveObstacles = Obstacles ?? EMPTY_OBSTACLES;
+            Double TotalM = 0.0;
+            for (Int32 Index = 0; Index < (Passes.Count - 1); Index += 1)
+            {
+                TotalM += DeadheadDistance(
+                    Passes[Index],
+                    Passes[Index + 1],
+                    GradeReturn,
+                    ActiveObstacles);
+            }
+            return TotalM;
+        }
+
         /// <summary>
         /// Refines route with local relocate moves.
         /// </summary>
