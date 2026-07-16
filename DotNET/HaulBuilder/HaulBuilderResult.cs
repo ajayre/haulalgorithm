@@ -305,9 +305,34 @@ namespace HaulBuilder
         public Double TotalHours { get; set; }
 
         /// <summary>
-        /// Gets or sets move rate in BCY per hour.
+        /// Gets or sets scheduled move rate in BCY per hour. Retained as the
+        /// backward-compatible alias for <see cref="ScheduledMoveRateBcyPerHour"/>.
         /// </summary>
         public Double MoveRateBcyPerHour { get; set; }
+
+        /// <summary>Gets or sets deterministic production-guidance hours.</summary>
+        public Double DeterministicHours { get; set; }
+
+        /// <summary>Gets or sets availability-adjusted scheduled hours.</summary>
+        public Double ScheduledHours { get; set; }
+
+        /// <summary>Gets or sets BCY moved per deterministic guidance hour.</summary>
+        public Double DeterministicMoveRateBcyPerHour { get; set; }
+
+        /// <summary>Gets or sets BCY moved per scheduled hour.</summary>
+        public Double ScheduledMoveRateBcyPerHour { get; set; }
+
+        /// <summary>Gets or sets automatic BCY moved per valid field acre.</summary>
+        public Double MoveVolumeBcyPerAcre { get; set; }
+
+        /// <summary>Gets or sets the cross-field deterministic golden target.</summary>
+        public Double GoldenMoveRateTargetBcyPerHour { get; set; }
+
+        /// <summary>Gets or sets achieved percentage of the golden target.</summary>
+        public Double GoldenMoveRateAchievementPercent { get; set; }
+
+        /// <summary>Gets or sets whether deterministic productivity meets the target.</summary>
+        public Boolean MeetsGoldenMoveRateTarget { get; set; }
 
         /// <summary>
         /// Gets or sets area rate in acres per hour.

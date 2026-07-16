@@ -1028,19 +1028,45 @@ namespace HaulBuilder
             }
 
             Double AreaAc = ((Valid * grid.AreaM2) / M2_PER_ACRE);
-            Double TotalH = result.DetailedGuidanceTime != null
+            Double DeterministicH = result.DetailedGuidanceTime != null
+                ? (result.DetailedGuidanceTime.MotionSeconds
+                    + result.DetailedGuidanceTime.EventSeconds) / 3600.0
+                : (Time.TotalTimeS - Time.OtherTimeS) / 3600.0;
+            Double ScheduledH = result.DetailedGuidanceTime != null
                 ? result.DetailedGuidanceTime.TotalSeconds / 3600.0
                 : Time.TotalTimeS / 3600.0;
-            Double MoveRate = (TotalH > 0.0) ? (MovedBcy / TotalH) : 0.0;
+            Double DeterministicMoveRate = DeterministicH > 0.0
+                ? MovedBcy / DeterministicH
+                : 0.0;
+            Double ScheduledMoveRate = ScheduledH > 0.0
+                ? MovedBcy / ScheduledH
+                : 0.0;
+            Double GoldenAchievementPercent =
+                100.0 * DeterministicMoveRate
+                    / Constants.GOLDEN_MOVE_RATE_BCY_PER_HOUR;
             Double AvgMoveYd = passResult.Passes.Count > 0 ? ((Time.HaulingDistM / passResult.Passes.Count) / METERS_PER_YARD) : 0.0;
             result.Metrics = new HaulAnalysisMetrics
             {
                 ValidAreas = Valid,
                 FieldAreaAcres = AreaAc,
                 MoveVolumeBcy = MovedBcy,
-                TotalHours = TotalH,
-                MoveRateBcyPerHour = MoveRate,
-                AreaRateAcresPerHour = TotalH > 0.0 ? (AreaAc / TotalH) : 0.0,
+                TotalHours = ScheduledH,
+                MoveRateBcyPerHour = ScheduledMoveRate,
+                DeterministicHours = DeterministicH,
+                ScheduledHours = ScheduledH,
+                DeterministicMoveRateBcyPerHour = DeterministicMoveRate,
+                ScheduledMoveRateBcyPerHour = ScheduledMoveRate,
+                MoveVolumeBcyPerAcre = AreaAc > 0.0
+                    ? MovedBcy / AreaAc
+                    : 0.0,
+                GoldenMoveRateTargetBcyPerHour =
+                    Constants.GOLDEN_MOVE_RATE_BCY_PER_HOUR,
+                GoldenMoveRateAchievementPercent = GoldenAchievementPercent,
+                MeetsGoldenMoveRateTarget = DeterministicMoveRate
+                    >= Constants.GOLDEN_MOVE_RATE_BCY_PER_HOUR,
+                AreaRateAcresPerHour = ScheduledH > 0.0
+                    ? AreaAc / ScheduledH
+                    : 0.0,
                 AverageMoveDistanceYards = AvgMoveYd,
                 HeadingDeg = flowAligned ? null : headingDeg,
                 FlowAligned = flowAligned,
@@ -1051,6 +1077,14 @@ namespace HaulBuilder
                 DeferredFillBcy = result.DeferredWorkSummary?.DeferredFillBcy
                     ?? passResult.UnmatchedFillBcy,
             };
+            result.Messages.Add(String.Format(
+                CultureInfo.InvariantCulture,
+                "Productivity: {0:F1} BCY/deterministic guidance hour versus {1:F1} golden target ({2:F1}%); scheduled productivity={3:F1} BCY/h; automatic volume={4:F1} BCY/acre.",
+                DeterministicMoveRate,
+                Constants.GOLDEN_MOVE_RATE_BCY_PER_HOUR,
+                GoldenAchievementPercent,
+                ScheduledMoveRate,
+                result.Metrics.MoveVolumeBcyPerAcre));
         }
 
         private static void BuildAnimations

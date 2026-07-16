@@ -71,6 +71,12 @@ namespace HaulBuilder
         public const Double DEFAULT_FIELD_EFFICIENCY = 0.8;
 
         /// <summary>
+        /// Cross-field optimizer target measured in bank cubic yards moved per
+        /// deterministic production-guidance hour.
+        /// </summary>
+        public const Double GOLDEN_MOVE_RATE_BCY_PER_HOUR = 200.0;
+
+        /// <summary>
         /// Default loading speed in miles per hour.
         /// </summary>
         public const Double DEFAULT_LOADING_SPEED_MPH = 4.0;

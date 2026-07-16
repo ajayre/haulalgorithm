@@ -14,6 +14,8 @@ namespace HaulBuilder.Tests
             HaulBuilderOptions Options = new HaulBuilderOptions();
 
             Assert.False(Options.EnableHaulOptimization);
+            Assert.Equal(200.0,
+                Constants.GOLDEN_MOVE_RATE_BCY_PER_HOUR);
             Assert.True(Options.HaulOptimizationDeferEdgeWork);
             Assert.True(Options.HaulOptimizationCompleteDeferredEdge);
             Assert.Equal(12, Options.HaulOptimizationEdgeMaxRunsPerKind);

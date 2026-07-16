@@ -38,6 +38,7 @@
 | **2.8.0** | 2026-07-16 | Added an optional bounded multi-route fragment exchange, exact pooled-ledger transactions, per-route invariant quotas, compact-guidance/run-count acceptance gates, production and benchmark controls, focused tests, and the improved exact checkpoint. |
 | **2.9.0** | 2026-07-16 | Promoted ten-slice cycle packing and residual edge completion, added capacity-flexible balanced route consolidation, made manual-cleanup volume a first-class result, added multi-start open-route sequencing, and recorded the exact full-field checkpoint. |
 | **2.10.0** | 2026-07-16 | Added a field-wide opportunity audit and an opt-in whole-fill cycle-chain optimizer that couples cut/fill ownership to next-cut routing, scores exchanges in production seconds, preserves exact ledgers and route loads, and compact-preflights every changed route. |
+| **2.11.0** | 2026-07-16 | Established `200 BCY` per deterministic production-guidance hour as the normalized cross-field golden target and added separate per-acre, deterministic, scheduled, achievement, and target-status result metrics. |
 
 ### 0.2 Current implementation checkpoint
 
@@ -92,6 +93,8 @@
 **[0.2.25]** Full production guidance validates the [0.2.24] plan at `233.546 h` deterministic, `291.933 h` scheduled, `2,230,431.2 m`, `55,218` lifecycle segments, `157` manual assists, and zero sequence failures across all `3,114` routes. Relative to [0.2.21], this saves `0.179 h` deterministic, `0.224 h` scheduled, and `2,107.3 m` without changing route count, deferred work, target surface, cut/fill ratio, or any guidance rule. An earlier time-surrogate-only candidate accepted `337` exchanges but regressed exact guidance to `233.850 h`; it is rejected evidence. Production integration therefore evaluates both the baseline and provisional complete plans through `GuidanceCostOracle` and transactionally rolls back unless candidate exact deterministic time strictly improves. The pass remains default-off because it adds field-wide candidate search plus one additional full exact evaluation. Focused audit, conservation, Pareto, and default-option tests pass `3/3`; the complete suite reports `128` passed and the same `11` known legacy parity, lineup, guidance-contract, and PNG-contract failures. The reproducible benchmark adds `--joint-chain --joint-chain-rounds=1 --joint-chain-candidates=1 --exact` to the command in [0.2.22].
 
 **[0.2.26]** Expanding the exact shortlist to two fill candidates per visited route accepts `188` Pareto-safe exchanges and improves every screen relative to [0.2.24], but exact guidance regresses relative to the one-candidate profile: `233.662 h` deterministic, `292.077 h` scheduled, `2,232,341.7 m`, `55,227` segments, and `159` manual assists. It remains `0.063 h` better than [0.2.21] and has zero sequence failures, but is rejected because it is `0.116 h` slower than [0.2.25]. This establishes one candidate per route as the retained bounded profile and demonstrates that the screens are useful search filters, not promotion authority.
+
+**[0.2.27]** The [0.2.25] plan automatically moves `46,588.037 BCY` across `37.0820 acres`, equal to `1,256.35 BCY/acre`. Its exact productivity is `199.48 BCY` per deterministic guidance hour and `159.59 BCY` per scheduled hour. The normalized cross-field golden target is therefore `200 BCY` per deterministic production-guidance hour. Scheduled productivity remains separately reported and shall not be used to judge algorithm geometry because it includes configurable operational availability. The automatic volume numerator excludes explicitly deferred manual cleanup; required, automatic, and deferred volumes remain separately visible.
 
 **[0.1.2]** Revisions follow semantic versioning: **MAJOR** denotes an incompatible normative change, **MINOR** a backward-compatible addition, and **PATCH** a clarification that does not change an obligation.
 
@@ -460,6 +463,14 @@ Reporting and optional export
 **[10.3.5]** A candidate that improves by less than `50%` may be retained as an experimental checkpoint but shall not enable the optimizer by default or be described as satisfying this specification.
 
 **[10.3.6]** If the `50%` gate cannot be met, implementation shall continue through the iteration workflow in section 13 until either it is met or a reproducible bound and hotspot decomposition show that the remaining target is incompatible with the fixed guidance and equipment rules. That evidence shall quantify irreducible blade-down work, minimum per-cycle lineup and grade-return geometry, loaded transport, unloaded transport, curvature, acceleration, deferred-work completion, and every remaining gap to `216.742 h`. It requires user review and is not an automatic waiver.
+
+### 10.4 Cross-field golden productivity target
+
+**[10.4.1]** Future fields shall be evaluated against a golden target of `200 BCY` automatically moved per exact deterministic production-guidance hour. The numerator is the sum of final automatic cycle loads in bank cubic yards; the denominator is `GuidanceTiming.Result.MotionSeconds + EventSeconds`. Field-efficiency allowance, scheduled downtime, and manual-cleanup volume are excluded from this normalized algorithm KPI.
+
+**[10.4.2]** Every result shall separately report automatic `BCY/acre`, deterministic `BCY/hour`, scheduled `BCY/hour`, achieved percentage of the `200 BCY/hour` target, and whether the target was met. `TotalHours` and the backward-compatible `MoveRateBcyPerHour` remain scheduled metrics.
+
+**[10.4.3]** Falling below `200 BCY/hour` shall trigger hotspot and opportunity reporting rather than relaxing guidance, changing the target surface or cut/fill ratio, hiding deferred work, or changing equipment assumptions. Field geometry may make the target unattainable; any exception requires exact lower-bound evidence rather than a proxy-only conclusion.
 
 ## 11. Global repair after construction
 
