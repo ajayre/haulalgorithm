@@ -74,6 +74,14 @@ internal static class HaulOptimizationBench
             Arg,
             "--consolidate-routes",
             StringComparison.OrdinalIgnoreCase));
+        Boolean FieldWideAudit = Args.Any(Arg => String.Equals(
+            Arg,
+            "--field-wide-audit",
+            StringComparison.OrdinalIgnoreCase));
+        Boolean JointChain = Args.Any(Arg => String.Equals(
+            Arg,
+            "--joint-chain",
+            StringComparison.OrdinalIgnoreCase));
         Int32 ReorderWindow = ReadIntOption(Args, "--reorder-window=", 200);
         Int32 EdgeMaximumRunsPerKind = Math.Max(
             1,
@@ -118,6 +126,10 @@ internal static class HaulOptimizationBench
                     : HaulPairDistanceRefiner.PairMetric.Centroid;
         Double FlowPenaltyWeight = ReadDoubleOption(
             Args, "--flow-weight=", 0.20);
+        Int32 JointChainRounds = Math.Max(
+            1, ReadIntOption(Args, "--joint-chain-rounds=", 2));
+        Int32 JointChainCandidates = Math.Max(
+            1, ReadIntOption(Args, "--joint-chain-candidates=", 4));
         Double PairAuctionEpsilonM = ReadDoubleOption(
             Args, "--pair-auction-epsilon=", 0.25);
         HashSet<Int32> DiagnosticPasses = ReadIntSetOption(
@@ -424,6 +436,21 @@ internal static class HaulOptimizationBench
                 Options,
                 out Refinement);
         }
+        HaulFieldWideAudit.Result? AuditBefore = null;
+        if (FieldWideAudit || JointChain)
+        {
+            AuditBefore = HaulFieldWideAudit.Analyze(
+                Route.OrderedPasses,
+                Grid,
+                !Options.NoGradeReturn,
+                !Options.NoDirectionAware,
+                Options.ReturnSpeedMph,
+                Options.TurnSpeedMph,
+                Options.TurningCircleFt,
+                Obstacles.EMPTY_OBSTACLES);
+        }
+        HaulCycleChainOptimizer.Result? JointChainResult = null;
+        HaulFieldWideAudit.Result? AuditAfter = null;
         TimeParams Parameters = new TimeParams(
             Options.LoadingSpeedMph,
             Options.HaulSpeedMph,
@@ -432,6 +459,54 @@ internal static class HaulOptimizationBench
             Options.AccelTimeS,
             Options.DecelTimeS,
             Options.FieldEfficiency);
+        if (JointChain)
+        {
+            JointChainResult = HaulCycleChainOptimizer.Optimize(
+                Route.OrderedPasses,
+                Grid,
+                Options.BladeWidthMm / 1000.0,
+                !Options.NoGradeReturn,
+                !Options.NoDirectionAware,
+                Options.ReturnSpeedMph,
+                Options.TurnSpeedMph,
+                Options.TurningCircleFt,
+                Parameters,
+                JointChainRounds,
+                JointChainCandidates,
+                Obstacles: Obstacles.EMPTY_OBSTACLES);
+            CandidatePasses = JointChainResult.Passes;
+            Route = new Route(
+                Route.Order.ToList(),
+                JointChainResult.Passes,
+                Routing.CalculateDeadhead(
+                    JointChainResult.Passes,
+                    !Options.NoGradeReturn,
+                    Obstacles.EMPTY_OBSTACLES));
+            (Double Before, Double After, Int32 Moves) ChainRefinement =
+                Routing.RefineRouteOrder(
+                    Route,
+                    ReorderWindow,
+                    !Options.NoGradeReturn,
+                    !Options.NoDirectionAware,
+                    Options.ReturnSpeedMph,
+                    Options.TurnSpeedMph,
+                    Options.TurningCircleFt,
+                    20,
+                    Obstacles.EMPTY_OBSTACLES);
+            Refinement = (
+                Refinement.Before + ChainRefinement.Before,
+                Refinement.After + ChainRefinement.After,
+                Refinement.Moves + ChainRefinement.Moves);
+            AuditAfter = HaulFieldWideAudit.Analyze(
+                Route.OrderedPasses,
+                Grid,
+                !Options.NoGradeReturn,
+                !Options.NoDirectionAware,
+                Options.ReturnSpeedMph,
+                Options.TurnSpeedMph,
+                Options.TurningCircleFt,
+                Obstacles.EMPTY_OBSTACLES);
+        }
         TimeResult ProxyTime = Timemodel.EstimateTime(
             Grid, Route, Parameters);
 
@@ -451,6 +526,8 @@ internal static class HaulOptimizationBench
         Console.WriteLine("edge_maximum_runs_per_kind={0}", EdgeMaximumRunsPerKind);
         Console.WriteLine("multi_route_exchange={0}", MultiRouteExchange);
         Console.WriteLine("consolidate_routes={0}", ConsolidateRoutes);
+        Console.WriteLine("field_wide_audit={0}", FieldWideAudit);
+        Console.WriteLine("joint_chain={0}", JointChain);
         Console.WriteLine(String.Format(
             CultureInfo.InvariantCulture,
             "flow_penalty_weight={0:F3}",
@@ -669,6 +746,44 @@ internal static class HaulOptimizationBench
                 ConsolidationResult.CandidateAttempts,
                 ConsolidationResult.BeforeGuidanceM,
                 ConsolidationResult.AfterGuidanceM));
+        }
+        if (AuditBefore != null)
+        {
+            Console.WriteLine(String.Format(
+                CultureInfo.InvariantCulture,
+                "field_audit transition_current_s={0:F1} transition_lower_bound_s={1:F1} transition_gap_s={2:F1} cut_fill_current_m={3:F1} cut_fill_lower_bound_m={4:F1} joint_current_m={5:F1} joint_lower_bound_m={6:F1}",
+                AuditBefore.CurrentTransitionSeconds,
+                AuditBefore.TransitionLowerBoundSeconds,
+                AuditBefore.CurrentTransitionSeconds
+                    - AuditBefore.TransitionLowerBoundSeconds,
+                AuditBefore.CurrentCutFillCentroidM,
+                AuditBefore.CutFillLowerBoundM,
+                AuditBefore.CurrentJointEquivalentM,
+                AuditBefore.JointLowerBoundEquivalentM));
+        }
+        if (JointChainResult != null)
+        {
+            Console.WriteLine(String.Format(
+                CultureInfo.InvariantCulture,
+                "joint_chain_swaps={0} evaluations={1} before_objective_s={2:F1} after_objective_s={3:F1} before_proxy_s={4:F1} after_proxy_s={5:F1} before_compact_m={6:F1} after_compact_m={7:F1} before_transition_s={8:F1} after_transition_s={9:F1}",
+                JointChainResult.AcceptedSwaps,
+                JointChainResult.ExactCandidateEvaluations,
+                JointChainResult.BeforeObjectiveSeconds,
+                JointChainResult.AfterObjectiveSeconds,
+                JointChainResult.BeforeProxySeconds,
+                JointChainResult.AfterProxySeconds,
+                JointChainResult.BeforeCompactM,
+                JointChainResult.AfterCompactM,
+                JointChainResult.BeforeTransitionSeconds,
+                JointChainResult.AfterTransitionSeconds));
+        }
+        if (AuditAfter != null)
+        {
+            Console.WriteLine(String.Format(
+                CultureInfo.InvariantCulture,
+                "field_audit_after transition_current_s={0:F1} joint_current_m={1:F1}",
+                AuditAfter.CurrentTransitionSeconds,
+                AuditAfter.CurrentJointEquivalentM));
         }
         Console.WriteLine(String.Format(
             CultureInfo.InvariantCulture,

@@ -22,6 +22,10 @@ namespace HaulBuilder.Tests
             Assert.Equal(50, Options.HaulOptimizationRouteConsolidationMaximumCycles);
             Assert.Equal(10, Options.HaulOptimizationMaxRunsPerKind);
             Assert.Equal(8, Options.HaulOptimizationPairRefinementRounds);
+            Assert.False(Options.EnableHaulCycleChainOptimization);
+            Assert.Equal(1, Options.HaulOptimizationCycleChainRounds);
+            Assert.Equal(1,
+                Options.HaulOptimizationCycleChainCandidatesPerRoute);
             Assert.Equal(200, Options.HaulOptimizationReorderWindow);
             Assert.Equal(0, Options.HaulOptimizationMaximumCompactOmissions);
             Assert.Equal(

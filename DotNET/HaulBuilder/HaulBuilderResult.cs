@@ -73,6 +73,15 @@ namespace HaulBuilder
         /// <summary>Gets or sets capacity-flexible route-consolidation diagnostics.</summary>
         public HaulRouteConsolidationOptimizer.Result? HaulRouteConsolidation { get; set; }
 
+        /// <summary>Gets or sets optional field-wide cut/fill-chain diagnostics.</summary>
+        public HaulCycleChainOptimizer.Result? HaulCycleChainOptimization { get; set; }
+
+        /// <summary>
+        /// Gets or sets whether the provisional cycle-chain result strictly
+        /// improved full production guidance and became the final route plan.
+        /// </summary>
+        public Boolean HaulCycleChainPromoted { get; set; }
+
         /// <summary>
         /// Gets or sets the isolated-edge-patch omission audit applied before routing.
         /// </summary>

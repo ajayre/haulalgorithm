@@ -76,6 +76,10 @@ namespace HaulBuilder
             HaulOptimizationMultiRouteExchangeGroupRoutes = 8;
             HaulOptimizationMultiRouteExchangeMaximumGroups = 100;
             HaulOptimizationMultiRouteExchangeMinimumImprovementM = 1.0;
+            EnableHaulCycleChainOptimization = false;
+            HaulOptimizationCycleChainRounds = 1;
+            HaulOptimizationCycleChainCandidatesPerRoute = 1;
+            HaulOptimizationCycleChainMinimumImprovementSeconds = 0.25;
             HaulOptimizationReorderWindow = 200;
             HaulOptimizationCompactOmissionPriority =
                 HaulDifficultCycleFilter.OmissionPriority
@@ -463,6 +467,22 @@ namespace HaulBuilder
         /// to commit one route-group transaction, in metres.
         /// </summary>
         public Double HaulOptimizationMultiRouteExchangeMinimumImprovementM { get; set; }
+
+        /// <summary>
+        /// Gets or sets whether the optional field-wide whole-fill chain pass is
+        /// enabled. This pass is deliberately opt-in because it performs compact
+        /// guidance preflight for candidate exchanges across the complete field.
+        /// </summary>
+        public Boolean EnableHaulCycleChainOptimization { get; set; }
+
+        /// <summary>Gets or sets field-wide chain refinement rounds.</summary>
+        public Int32 HaulOptimizationCycleChainRounds { get; set; }
+
+        /// <summary>Gets or sets exact candidates checked for each route.</summary>
+        public Int32 HaulOptimizationCycleChainCandidatesPerRoute { get; set; }
+
+        /// <summary>Gets or sets minimum production-objective saving per exchange.</summary>
+        public Double HaulOptimizationCycleChainMinimumImprovementSeconds { get; set; }
 
         /// <summary>Gets or sets the route-refinement window used by optimized plans.</summary>
         public Int32 HaulOptimizationReorderWindow { get; set; }

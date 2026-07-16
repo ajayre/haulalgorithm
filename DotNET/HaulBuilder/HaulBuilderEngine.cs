@@ -373,9 +373,111 @@ namespace HaulBuilder
                     Obstacles);
             }
 
+            GuidancePlanner.BuildResult? PrecomputedGuidancePlan = null;
+            if (Opt.EnableHaulOptimization
+                && Opt.EnableHaulCycleChainOptimization)
+            {
+                Route BaselineRoute = Route;
+                PassResult BaselinePassResult = PassResult;
+                TimeParams ChainTimeParameters = new TimeParams(
+                    Opt.LoadingSpeedMph,
+                    Opt.HaulSpeedMph,
+                    Opt.DumpingSpeedMph,
+                    Opt.ReturnSpeedMph,
+                    Opt.AccelTimeS,
+                    Opt.DecelTimeS,
+                    Opt.FieldEfficiency);
+                HaulCycleChainOptimizer.Result Chain =
+                    HaulCycleChainOptimizer.Optimize(
+                        Route.OrderedPasses,
+                        Grid,
+                        Opt.BladeWidthMm / 1000.0,
+                        !Opt.NoGradeReturn,
+                        !Opt.NoDirectionAware,
+                        Opt.ReturnSpeedMph,
+                        Opt.TurnSpeedMph,
+                        Opt.TurningCircleFt,
+                        ChainTimeParameters,
+                        Opt.HaulOptimizationCycleChainRounds,
+                        Opt.HaulOptimizationCycleChainCandidatesPerRoute,
+                        Opt.HaulOptimizationCycleChainMinimumImprovementSeconds,
+                        Obstacles);
+                PassResult CandidatePassResult = new PassResult(
+                    Chain.Passes,
+                    PassResult.Rounds,
+                    PassResult.UnmatchedCutBcy,
+                    PassResult.UnmatchedFillBcy);
+                Route CandidateRoute = new Route(
+                    Enumerable.Range(0, Chain.Passes.Count).ToList(),
+                    Chain.Passes,
+                    Routing.CalculateDeadhead(
+                        Chain.Passes,
+                        !Opt.NoGradeReturn,
+                        Obstacles));
+                if (ActiveReorderWindow > 0)
+                {
+                    Routing.RefineRouteOrder(
+                        CandidateRoute,
+                        ActiveReorderWindow,
+                        !Opt.NoGradeReturn,
+                        !Opt.NoDirectionAware,
+                        Opt.ReturnSpeedMph,
+                        Opt.TurnSpeedMph,
+                        Opt.TurningCircleFt,
+                        12,
+                        Obstacles);
+                }
+                Result.HaulCycleChainOptimization = Chain;
+                if (Chain.AcceptedSwaps > 0)
+                {
+                    GuidanceCostOracle.Result BaselineExact =
+                        GuidanceCostOracle.EvaluatePlan(
+                            BaselineRoute, Grid, Field, HeadingDeg, Opt);
+                    GuidanceCostOracle.Result CandidateExact =
+                        GuidanceCostOracle.EvaluatePlan(
+                            CandidateRoute, Grid, Field, HeadingDeg, Opt);
+                    Boolean Promote = CandidateExact.Success
+                        && (!BaselineExact.Success
+                            || (CandidateExact.DeterministicSeconds
+                                < BaselineExact.DeterministicSeconds - 1e-6));
+                    if (Promote)
+                    {
+                        Route = CandidateRoute;
+                        PassResult = CandidatePassResult;
+                        Result.PassResult = PassResult;
+                        Result.Route = Route;
+                        PrecomputedGuidancePlan = CandidateExact.Plan;
+                        Result.HaulCycleChainPromoted = true;
+                        ReplaceOptimizationPassResult(Result, PassResult);
+                        Result.Messages.Add(String.Format(
+                            CultureInfo.InvariantCulture,
+                            "Optional field-wide chain refinement promoted {0} whole-fill exchanges after exact guidance improved from {1:F1} s to {2:F1} s.",
+                            Chain.AcceptedSwaps,
+                            BaselineExact.DeterministicSeconds,
+                            CandidateExact.DeterministicSeconds));
+                    }
+                    else
+                    {
+                        Route = BaselineRoute;
+                        PassResult = BaselinePassResult;
+                        Result.PassResult = PassResult;
+                        Result.Route = Route;
+                        PrecomputedGuidancePlan = BaselineExact.Plan;
+                        Result.Messages.Add(String.Format(
+                            CultureInfo.InvariantCulture,
+                            "Optional field-wide chain refinement rejected {0} provisional exchanges because exact guidance did not improve ({1:F1} s baseline, {2:F1} s candidate, candidate success={3}).",
+                            Chain.AcceptedSwaps,
+                            BaselineExact.DeterministicSeconds,
+                            CandidateExact.DeterministicSeconds,
+                            CandidateExact.Success));
+                    }
+                }
+            }
+
             BuildZoneSequence(Result, Grid, Field, Route, Opt);
             BuildPairs(Result, Grid, Field, Route, Opt);
-            BuildGuidance(Result, Grid, Field, Route, Obstacles, HeadingDeg, Opt);
+            BuildGuidance(Result, Grid, Field, Route, Obstacles, HeadingDeg, Opt,
+                PrecomputedGuidancePlan);
             BuildTimingAndMetrics(Result, Grid, PassResult, Route, HeadingDeg, FlowAligned, Opt);
             BuildAnimations(Result, Grid, Route, Opt);
             BuildPivot(Result, Grid, Route, Obstacles, Opt);
@@ -384,6 +486,32 @@ namespace HaulBuilder
             LogRoute2ParityDebug(Result, Opt, Grid, HeadingDeg, FlowAligned, ScraperBcy, StripList.Count);
 
             return Result;
+        }
+
+        /// <summary>Rebinds allocation diagnostics to a transactionally promoted pass set.</summary>
+        private static void ReplaceOptimizationPassResult(
+            HaulBuilderResult Result,
+            PassResult PassResult)
+        {
+            if (Result.HaulOptimization == null) return;
+            HaulOptimizationResult Previous = Result.HaulOptimization;
+            Result.HaulOptimization = new HaulOptimizationResult(
+                PassResult,
+                Previous.Axis,
+                Previous.CutLaneCount,
+                Previous.FillLaneCount,
+                Previous.TotalAssignedBcy,
+                Previous.UnmatchedCutBcy,
+                Previous.UnmatchedFillBcy,
+                Previous.DeferredWork,
+                Previous.Validation,
+                Previous.PairRefinementSwaps,
+                Previous.PairRefinementBeforeM,
+                Previous.PairRefinementAfterM,
+                Previous.CompactPreflightFailures,
+                Previous.CompactOmittedCycles,
+                Previous.EdgeCompletionCycles,
+                Previous.EdgeOmittedCycles);
         }
 
         /// <summary>
@@ -760,7 +888,8 @@ namespace HaulBuilder
             Route route,
             ObstacleField obstacles,
             Double headingDeg,
-            HaulBuilderOptions options
+            HaulBuilderOptions options,
+            GuidancePlanner.BuildResult? PrecomputedPlan = null
             )
         {
             // Guidance stage is optional and only runs when one of its artifacts is requested.
@@ -773,13 +902,14 @@ namespace HaulBuilder
                 return;
             }
 
-            GuidancePlanner.BuildResult Plan = GuidancePlanner.Build(
-                route,
-                grid,
-                field,
-                headingDeg,
-                options,
-                Diagnostic: Message => result.Messages.Add(Message));
+            GuidancePlanner.BuildResult Plan = PrecomputedPlan
+                ?? GuidancePlanner.Build(
+                    route,
+                    grid,
+                    field,
+                    headingDeg,
+                    options,
+                    Diagnostic: Message => result.Messages.Add(Message));
             GuidanceResult Guidance = Plan.Guidance;
             result.Guidance = Guidance;
             result.GuidancePoints.AddRange(Guidance.Points);
@@ -1287,6 +1417,10 @@ namespace HaulBuilder
                 HaulOptimizationMultiRouteExchangeGroupRoutes = options.HaulOptimizationMultiRouteExchangeGroupRoutes,
                 HaulOptimizationMultiRouteExchangeMaximumGroups = options.HaulOptimizationMultiRouteExchangeMaximumGroups,
                 HaulOptimizationMultiRouteExchangeMinimumImprovementM = options.HaulOptimizationMultiRouteExchangeMinimumImprovementM,
+                EnableHaulCycleChainOptimization = options.EnableHaulCycleChainOptimization,
+                HaulOptimizationCycleChainRounds = options.HaulOptimizationCycleChainRounds,
+                HaulOptimizationCycleChainCandidatesPerRoute = options.HaulOptimizationCycleChainCandidatesPerRoute,
+                HaulOptimizationCycleChainMinimumImprovementSeconds = options.HaulOptimizationCycleChainMinimumImprovementSeconds,
                 HaulOptimizationReorderWindow = options.HaulOptimizationReorderWindow,
                 HaulOptimizationMaximumCompactOmissions = options.HaulOptimizationMaximumCompactOmissions,
                 HaulOptimizationCompactOmissionPriority = options.HaulOptimizationCompactOmissionPriority,
@@ -1437,6 +1571,30 @@ namespace HaulBuilder
                 {
                     throw new ArgumentException(
                         "HaulOptimizationMultiRouteExchangeMinimumImprovementM must be finite and non-negative.",
+                        nameof(options));
+                }
+            }
+            if (options.EnableHaulCycleChainOptimization)
+            {
+                if (options.HaulOptimizationCycleChainRounds <= 0)
+                {
+                    throw new ArgumentException(
+                        "HaulOptimizationCycleChainRounds must be positive when cycle-chain optimization is enabled.",
+                        nameof(options));
+                }
+                if (options.HaulOptimizationCycleChainCandidatesPerRoute <= 0)
+                {
+                    throw new ArgumentException(
+                        "HaulOptimizationCycleChainCandidatesPerRoute must be positive.",
+                        nameof(options));
+                }
+                if (!Double.IsFinite(
+                        options.HaulOptimizationCycleChainMinimumImprovementSeconds)
+                    || (options.HaulOptimizationCycleChainMinimumImprovementSeconds
+                        < 0.0))
+                {
+                    throw new ArgumentException(
+                        "HaulOptimizationCycleChainMinimumImprovementSeconds must be finite and non-negative.",
                         nameof(options));
                 }
             }

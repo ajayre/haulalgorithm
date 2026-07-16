@@ -56,6 +56,39 @@ namespace HaulBuilder
         private const Double DEFAULT_TURNING_CIRCLE_FT = 50.0;
 
         /// <summary>
+        /// Reusable direction-aware transition evaluator for field-wide audits
+        /// and optimizers.  It uses the same proxy model as route sequencing.
+        /// </summary>
+        public sealed class TransitionCostEvaluator
+        {
+            private readonly _TransitionModel Model;
+
+            /// <summary>Initializes one immutable transition evaluator.</summary>
+            public TransitionCostEvaluator
+                (
+                Boolean GradeReturn = true,
+                Boolean DirectionAware = true,
+                Double ReturnSpeedMph = DEFAULT_RETURN_SPEED_MPH,
+                Double TurnSpeedMph = DEFAULT_TURN_SPEED_MPH,
+                Double TurningCircleFt = DEFAULT_TURNING_CIRCLE_FT,
+                ObstacleField? Obstacles = null
+                )
+            {
+                Model = new _TransitionModel(
+                    GradeReturn,
+                    DirectionAware,
+                    ReturnSpeedMph * Constants.MPH_TO_MPS,
+                    TurnSpeedMph * Constants.MPH_TO_MPS,
+                    (TurningCircleFt * Constants.FEET_TO_METERS) / 2.0,
+                    Obstacles ?? EMPTY_OBSTACLES);
+            }
+
+            /// <summary>Gets transition proxy seconds from one cycle to another.</summary>
+            public Double CostSeconds(Pass First, Pass Second) =>
+                Model.Cost(First, Second);
+        }
+
+        /// <summary>
         /// Sequences passes using nearest-neighbor then optional 2-opt.
         /// </summary>
         /// <param name="Passes">Pass list.</param>
