@@ -105,7 +105,49 @@ namespace HaulBuilder
                         Obstacles: Obstacles);
                     OptimizedPasses = PairRefinement.Passes;
                 }
+                HaulResidualEdgeCompleter.Result? EdgeCompletion = null;
+                if (Opt.HaulOptimizationDeferEdgeWork
+                    && Opt.HaulOptimizationCompleteDeferredEdge)
+                {
+                    EdgeCompletion = HaulResidualEdgeCompleter.Complete(
+                        OptimizedPasses,
+                        Grid,
+                        Flow,
+                        Ledger,
+                        Opt.HeadingDeg.HasValue
+                            ? HaulLaneBuilder.LaneAxis.UserHeading
+                            : Opt.HaulOptimizationAxis,
+                        ScraperBcy,
+                        Opt.HaulOptimizationEdgeMaxRunsPerKind,
+                        Opt.HaulOptimizationFlowPenaltyWeight,
+                        Opt.HaulOptimizationPairRefinementRounds,
+                        Opt.HaulOptimizationPairMetric,
+                        Opt.BladeWidthMm / 1000.0,
+                        !Opt.NoGradeReturn,
+                        Obstacles,
+                        Opt.HeadingDeg.HasValue ? HeadingDeg : null);
+                    OptimizedPasses = OptimizedPasses
+                        .Concat(EdgeCompletion.Passes)
+                        .ToList();
+                }
                 HaulMultiRouteExchangeOptimizer.Result? MultiRouteExchange = null;
+                HaulRouteConsolidationOptimizer.Result? RouteConsolidation = null;
+                if (Opt.EnableHaulRouteConsolidation)
+                {
+                    RouteConsolidation =
+                        HaulRouteConsolidationOptimizer.Optimize(
+                            OptimizedPasses,
+                            Grid,
+                            ScraperBcy,
+                            Grid.MaxDepthMm / 1000.0,
+                            Opt.BladeWidthMm / 1000.0,
+                            !Opt.NoGradeReturn,
+                            Opt.HaulOptimizationRouteConsolidationGroupRoutes,
+                            Opt.HaulOptimizationRouteConsolidationMaximumCycles,
+                            Obstacles);
+                    OptimizedPasses = RouteConsolidation.Passes;
+                    Result.HaulRouteConsolidation = RouteConsolidation;
+                }
                 if (Opt.EnableHaulMultiRouteExchange)
                 {
                     MultiRouteExchange = HaulMultiRouteExchangeOptimizer.Optimize(
@@ -136,17 +178,19 @@ namespace HaulBuilder
                     OptimizedPasses = DifficultFilter.Passes;
                 }
                 if ((PairRefinement != null)
+                    || (EdgeCompletion != null)
+                    || (RouteConsolidation != null)
                     || (MultiRouteExchange != null)
                     || (DifficultFilter != null))
                 {
                     IReadOnlyList<HaulDeferredWork> Deferred =
-                        DifficultFilter == null
-                            ? Optimized.DeferredWork
-                            : PreserveExistingDeferredReasons(
-                                Ledger.BuildDeferredWork(
-                                    OptimizedPasses,
-                                    "GUIDANCE_COMPACT_PREFLIGHT"),
-                                Optimized.DeferredWork);
+                        PreserveExistingDeferredReasons(
+                            Ledger.BuildDeferredWork(
+                                OptimizedPasses,
+                                DifficultFilter == null
+                                    ? "OPTIMIZER_UNASSIGNED"
+                                    : "GUIDANCE_COMPACT_PREFLIGHT"),
+                            Optimized.DeferredWork);
                     Double UnmatchedCutBcy = Deferred
                         .Where(Entry =>
                             Entry.Kind == HaulLaneBuilder.WorkKind.Cut)
@@ -178,7 +222,9 @@ namespace HaulBuilder
                         PairRefinement?.BeforeM ?? 0.0,
                         PairRefinement?.AfterM ?? 0.0,
                         DifficultFilter?.FailureCount ?? 0,
-                        DifficultFilter?.OmittedCycles ?? 0);
+                        DifficultFilter?.OmittedCycles ?? 0,
+                        EdgeCompletion?.Passes.Count ?? 0,
+                        EdgeCompletion?.OmittedCycles ?? 0);
                 }
                 if (!Optimized.Validation.Success)
                 {
@@ -188,12 +234,33 @@ namespace HaulBuilder
                 }
                 Result.HaulOptimization = Optimized;
                 PassResult = Optimized.PassResult;
+                Result.DeferredWorkSummary = HaulDeferredWorkSummary.Create(
+                    Ledger.TotalCutBcy,
+                    Ledger.TotalFillBcy,
+                    Optimized.UnmatchedCutBcy,
+                    Optimized.UnmatchedFillBcy,
+                    Optimized.DeferredWork);
                 Result.Messages.Add(String.Format(
                     CultureInfo.InvariantCulture,
                     "Global haul optimization generated {0} cycles with {1:F3} BCY cut and {2:F3} BCY fill explicitly deferred.",
                     PassResult.Passes.Count,
                     Optimized.UnmatchedCutBcy,
                     Optimized.UnmatchedFillBcy));
+                Result.Messages.Add(String.Format(
+                    CultureInfo.InvariantCulture,
+                    "Automatic haul omits {0:F3} BCY of balanced work for manual cleanup ({1:F4}% of required fill); the remaining {2:F3} BCY deferred cut is material surplus.",
+                    Result.DeferredWorkSummary.ManualCleanupBcy,
+                    Result.DeferredWorkSummary.ManualCleanupPercentOfRequiredFill,
+                    Result.DeferredWorkSummary.MaterialSurplusCutBcy));
+                if (EdgeCompletion != null)
+                {
+                    Result.Messages.Add(String.Format(
+                        CultureInfo.InvariantCulture,
+                        "Residual edge completion retained {0} of {1} generated cycles and left {2} compact-infeasible cycles for manual cleanup.",
+                        EdgeCompletion.Passes.Count,
+                        EdgeCompletion.GeneratedCycles,
+                        EdgeCompletion.OmittedCycles));
+                }
                 if (Optimized.PairRefinementSwaps > 0)
                 {
                     Result.Messages.Add(String.Format(
@@ -214,6 +281,17 @@ namespace HaulBuilder
                         MultiRouteExchange.BeforeM,
                         MultiRouteExchange.AfterM,
                         MultiRouteExchange.ConservationValidated));
+                }
+                if ((RouteConsolidation != null)
+                    && (RouteConsolidation.RemovedCycles > 0))
+                {
+                    Result.Messages.Add(String.Format(
+                        CultureInfo.InvariantCulture,
+                        "Capacity-flexible consolidation removed {0} cycles in {1} attempts and reduced accepted compact-guidance distance from {2:F1} m to {3:F1} m.",
+                        RouteConsolidation.RemovedCycles,
+                        RouteConsolidation.CandidateAttempts,
+                        RouteConsolidation.BeforeGuidanceM,
+                        RouteConsolidation.AfterGuidanceM));
                 }
                 if (Optimized.CompactOmittedCycles > 0)
                 {
@@ -269,7 +347,8 @@ namespace HaulBuilder
                 Opt.ReturnSpeedMph,
                 Opt.TurnSpeedMph,
                 Opt.TurningCircleFt,
-                Obstacles);
+                Obstacles,
+                Opt.EnableHaulOptimization ? 8 : 1);
             Result.Route = Route;
 
             if (!Opt.NoKnotRepair && !Opt.EnableHaulOptimization)
@@ -835,6 +914,12 @@ namespace HaulBuilder
                 AverageMoveDistanceYards = AvgMoveYd,
                 HeadingDeg = flowAligned ? null : headingDeg,
                 FlowAligned = flowAligned,
+                ManualCleanupBcy = result.DeferredWorkSummary?.ManualCleanupBcy
+                    ?? 0.0,
+                DeferredCutBcy = result.DeferredWorkSummary?.DeferredCutBcy
+                    ?? passResult.UnmatchedCutBcy,
+                DeferredFillBcy = result.DeferredWorkSummary?.DeferredFillBcy
+                    ?? passResult.UnmatchedFillBcy,
             };
         }
 
@@ -1190,6 +1275,11 @@ namespace HaulBuilder
                 HaulOptimizationMaxRunsPerKind = options.HaulOptimizationMaxRunsPerKind,
                 HaulOptimizationFlowPenaltyWeight = options.HaulOptimizationFlowPenaltyWeight,
                 HaulOptimizationDeferEdgeWork = options.HaulOptimizationDeferEdgeWork,
+                HaulOptimizationCompleteDeferredEdge = options.HaulOptimizationCompleteDeferredEdge,
+                HaulOptimizationEdgeMaxRunsPerKind = options.HaulOptimizationEdgeMaxRunsPerKind,
+                EnableHaulRouteConsolidation = options.EnableHaulRouteConsolidation,
+                HaulOptimizationRouteConsolidationGroupRoutes = options.HaulOptimizationRouteConsolidationGroupRoutes,
+                HaulOptimizationRouteConsolidationMaximumCycles = options.HaulOptimizationRouteConsolidationMaximumCycles,
                 HaulOptimizationPairRefinementRounds = options.HaulOptimizationPairRefinementRounds,
                 HaulOptimizationPairMetric = options.HaulOptimizationPairMetric,
                 EnableHaulMultiRouteExchange = options.EnableHaulMultiRouteExchange,
@@ -1281,6 +1371,26 @@ namespace HaulBuilder
                 throw new ArgumentException(
                     "HaulOptimizationMaxRunsPerKind must be positive.",
                     nameof(options));
+            }
+            if (options.HaulOptimizationEdgeMaxRunsPerKind <= 0)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(options.HaulOptimizationEdgeMaxRunsPerKind),
+                    "HaulOptimizationEdgeMaxRunsPerKind must be positive.");
+            }
+            if (options.EnableHaulRouteConsolidation
+                && (options.HaulOptimizationRouteConsolidationGroupRoutes < 3))
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(options.HaulOptimizationRouteConsolidationGroupRoutes),
+                    "HaulOptimizationRouteConsolidationGroupRoutes must be at least 3.");
+            }
+            if (options.EnableHaulRouteConsolidation
+                && (options.HaulOptimizationRouteConsolidationMaximumCycles <= 0))
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(options.HaulOptimizationRouteConsolidationMaximumCycles),
+                    "HaulOptimizationRouteConsolidationMaximumCycles must be positive.");
             }
             if (!Double.IsFinite(options.HaulOptimizationFlowPenaltyWeight)
                 || (options.HaulOptimizationFlowPenaltyWeight < 0.0))

@@ -31,6 +31,22 @@ namespace HaulBuilder.Tests
                 9);
         }
 
+        /// <summary>Legacy/default sequencing retains pass zero as its anchor.</summary>
+        [Fact]
+        public void SequencePasses_DefaultStartPreservesLegacyAnchor()
+        {
+            List<Pass> Passes = new List<Pass>
+            {
+                MakePass((100.0, 100.0), (110.0, 100.0), (120.0, 100.0)),
+                MakePass((0.0, 0.0), (10.0, 0.0), (20.0, 0.0)),
+                MakePass((20.0, 0.0), (30.0, 0.0), (40.0, 0.0)),
+            };
+
+            Route Route = Routing.SequencePasses(Passes);
+
+            Assert.Equal(0, Route.Order[0]);
+        }
+
         private static Pass MakePass
             (
             (Double X, Double Y) CutStart,

@@ -57,9 +57,18 @@ namespace HaulBuilder
             PivotAnimationStride = 15;
             EquipmentWidthFt = 14.0;
             HaulOptimizationAxis = HaulLaneBuilder.LaneAxis.NorthSouth;
-            HaulOptimizationMaxRunsPerKind = 6;
+            // Exact TheShop2 guidance testing found ten same-kind slices to be
+            // the best packing point: it completes more work with fewer cycles
+            // while retaining zero guidance-sequence failures.  The value is a
+            // packing bound, not a commanded number of physical work runs.
+            HaulOptimizationMaxRunsPerKind = 10;
             HaulOptimizationFlowPenaltyWeight = 1.0;
             HaulOptimizationDeferEdgeWork = true;
+            HaulOptimizationCompleteDeferredEdge = true;
+            HaulOptimizationEdgeMaxRunsPerKind = 12;
+            EnableHaulRouteConsolidation = true;
+            HaulOptimizationRouteConsolidationGroupRoutes = 8;
+            HaulOptimizationRouteConsolidationMaximumCycles = 50;
             HaulOptimizationPairRefinementRounds = 8;
             HaulOptimizationPairMetric =
                 HaulPairDistanceRefiner.PairMetric.Centroid;
@@ -409,6 +418,24 @@ namespace HaulBuilder
 
         /// <summary>Gets or sets whether field-edge work is explicitly deferred for later analysis.</summary>
         public Boolean HaulOptimizationDeferEdgeWork { get; set; }
+
+        /// <summary>
+        /// Gets or sets whether deferred edge work is completed in an independent
+        /// residual batch, leaving only compact-infeasible cleanup work.
+        /// </summary>
+        public Boolean HaulOptimizationCompleteDeferredEdge { get; set; }
+
+        /// <summary>Gets or sets the same-kind slice bound for residual edge cycles.</summary>
+        public Int32 HaulOptimizationEdgeMaxRunsPerKind { get; set; }
+
+        /// <summary>Gets or sets whether capacity-flexible route consolidation is enabled.</summary>
+        public Boolean EnableHaulRouteConsolidation { get; set; }
+
+        /// <summary>Gets or sets the maximum nearby routes in a consolidation transaction.</summary>
+        public Int32 HaulOptimizationRouteConsolidationGroupRoutes { get; set; }
+
+        /// <summary>Gets or sets the maximum cycles removed by consolidation.</summary>
+        public Int32 HaulOptimizationRouteConsolidationMaximumCycles { get; set; }
 
         /// <summary>Gets or sets equal-load fill-pair refinement rounds; zero disables refinement.</summary>
         public Int32 HaulOptimizationPairRefinementRounds { get; set; }

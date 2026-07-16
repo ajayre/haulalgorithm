@@ -70,6 +70,10 @@ internal static class HaulOptimizationBench
             Arg,
             "--multi-route-exchange",
             StringComparison.OrdinalIgnoreCase));
+        Boolean ConsolidateRoutes = Args.Any(Arg => String.Equals(
+            Arg,
+            "--consolidate-routes",
+            StringComparison.OrdinalIgnoreCase));
         Int32 ReorderWindow = ReadIntOption(Args, "--reorder-window=", 200);
         Int32 EdgeMaximumRunsPerKind = Math.Max(
             1,
@@ -265,6 +269,28 @@ internal static class HaulOptimizationBench
                 .ToList();
         }
         HaulMultiRouteExchangeOptimizer.Result? MultiRouteExchangeResult = null;
+        HaulRouteConsolidationOptimizer.Result? ConsolidationResult = null;
+        Boolean RouteCombinedPlan = false;
+        if (ConsolidateRoutes)
+        {
+            ConsolidationResult = HaulRouteConsolidationOptimizer.Optimize(
+                CandidatePasses,
+                Grid,
+                MaximumLoadBcy,
+                Grid.MaxDepthMm / 1000.0,
+                Options.BladeWidthMm / 1000.0,
+                !Options.NoGradeReturn,
+                Obstacles: Obstacles.EMPTY_OBSTACLES);
+            CandidatePasses = ConsolidationResult.Passes;
+            if (CompleteDeferredEdge)
+            {
+                // Consolidation may cross the former batch boundary, so route
+                // the resulting fixed-work plan as one combined portfolio.
+                InteriorCandidatePasses = CandidatePasses;
+                EdgeCandidatePasses = new List<Pass>();
+                RouteCombinedPlan = true;
+            }
+        }
         if (MultiRouteExchange)
         {
             MultiRouteExchangeResult = HaulMultiRouteExchangeOptimizer.Optimize(
@@ -357,7 +383,7 @@ internal static class HaulOptimizationBench
         }
         Route Route;
         (Double Before, Double After, Int32 Moves) Refinement;
-        if (CompleteDeferredEdge)
+        if (CompleteDeferredEdge && !RouteCombinedPlan)
         {
             Route InteriorRoute = BuildAndRefineRoute(
                 InteriorCandidatePasses,
@@ -424,6 +450,7 @@ internal static class HaulOptimizationBench
         Console.WriteLine("complete_deferred_edge={0}", CompleteDeferredEdge);
         Console.WriteLine("edge_maximum_runs_per_kind={0}", EdgeMaximumRunsPerKind);
         Console.WriteLine("multi_route_exchange={0}", MultiRouteExchange);
+        Console.WriteLine("consolidate_routes={0}", ConsolidateRoutes);
         Console.WriteLine(String.Format(
             CultureInfo.InvariantCulture,
             "flow_penalty_weight={0:F3}",
@@ -460,6 +487,19 @@ internal static class HaulOptimizationBench
                 Optimized.DeferredWork,
                 Grid,
                 Options)));
+        Double MaterialSurplusCutBcy = Math.Max(
+            0.0, Ledger.TotalCutBcy - Ledger.TotalFillBcy);
+        Double ManualCleanupBcy = Math.Min(
+            Math.Max(0.0, CandidateDeferredCutBcy - MaterialSurplusCutBcy),
+            CandidateDeferredFillBcy);
+        Console.WriteLine(String.Format(
+            CultureInfo.InvariantCulture,
+            "manual_cleanup_bcy={0:F3} material_surplus_cut_bcy={1:F3} manual_cleanup_fill_percent={2:F4}",
+            ManualCleanupBcy,
+            MaterialSurplusCutBcy,
+            Ledger.TotalFillBcy > 0.0
+                ? 100.0 * ManualCleanupBcy / Ledger.TotalFillBcy
+                : 0.0));
         Console.WriteLine(String.Format(
             CultureInfo.InvariantCulture,
             "validation={0} max_cut_error_m={1:R} max_fill_error_m={2:R} issue_count={3}",
@@ -620,6 +660,16 @@ internal static class HaulOptimizationBench
                 MultiRouteExchangeResult.ConservationValidated,
                 ExchangeValidation.Success));
         }
+        if (ConsolidationResult != null)
+        {
+            Console.WriteLine(String.Format(
+                CultureInfo.InvariantCulture,
+                "route_consolidation_removed={0} attempts={1} before_m={2:F1} after_m={3:F1}",
+                ConsolidationResult.RemovedCycles,
+                ConsolidationResult.CandidateAttempts,
+                ConsolidationResult.BeforeGuidanceM,
+                ConsolidationResult.AfterGuidanceM));
+        }
         Console.WriteLine(String.Format(
             CultureInfo.InvariantCulture,
             "proxy_hours={0:F3} proxy_haul_m={1:F1} proxy_deadhead_m={2:F1} elapsed_s={3:F2}",
@@ -708,7 +758,6 @@ internal static class HaulOptimizationBench
                 Message =>
                 {
                     if (Message.Contains("sequence_failure", StringComparison.Ordinal)
-                        || Message.Contains("pass_timing", StringComparison.Ordinal)
                         || Message.Contains("timing total", StringComparison.Ordinal)
                         || DiagnosticPasses.Any(PassNumber =>
                             ContainsPassToken(Message, PassNumber)))
@@ -926,7 +975,8 @@ internal static class HaulOptimizationBench
             Options.ReturnSpeedMph,
             Options.TurnSpeedMph,
             Options.TurningCircleFt,
-            Obstacles.EMPTY_OBSTACLES);
+            Obstacles.EMPTY_OBSTACLES,
+            StartCandidateCount: 8);
         Refinement = Routing.RefineRouteOrder(
             Route,
             ReorderWindow,

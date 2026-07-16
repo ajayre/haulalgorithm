@@ -60,8 +60,18 @@ namespace HaulBuilder
         /// <summary>Gets or sets the global optimizer allocation and ledger diagnostics.</summary>
         public HaulOptimizationResult? HaulOptimization { get; set; }
 
+        /// <summary>
+        /// Gets or sets the explicit automatic-work omission summary.  This
+        /// separates unavoidable material surplus from balanced work left for
+        /// pragmatic manual cleanup.
+        /// </summary>
+        public HaulDeferredWorkSummary? DeferredWorkSummary { get; set; }
+
         /// <summary>Gets or sets optional multi-route fragment-exchange diagnostics.</summary>
         public HaulMultiRouteExchangeOptimizer.Result? HaulMultiRouteExchange { get; set; }
+
+        /// <summary>Gets or sets capacity-flexible route-consolidation diagnostics.</summary>
+        public HaulRouteConsolidationOptimizer.Result? HaulRouteConsolidation { get; set; }
 
         /// <summary>
         /// Gets or sets the isolated-edge-patch omission audit applied before routing.
@@ -319,5 +329,98 @@ namespace HaulBuilder
         /// Gets or sets pivot detour added time in seconds.
         /// </summary>
         public Double PivotAddedTimeS { get; set; }
+
+        /// <summary>Gets or sets balanced BCY left for manual cleanup.</summary>
+        public Double ManualCleanupBcy { get; set; }
+
+        /// <summary>Gets or sets deferred cut BCY, including material surplus.</summary>
+        public Double DeferredCutBcy { get; set; }
+
+        /// <summary>Gets or sets deferred fill BCY.</summary>
+        public Double DeferredFillBcy { get; set; }
+    }
+
+    /// <summary>
+    /// User-facing accounting for work excluded from the automatic haul plan.
+    /// </summary>
+    public sealed class HaulDeferredWorkSummary
+    {
+        /// <summary>Builds a user-facing summary from final ledger volumes.</summary>
+        static public HaulDeferredWorkSummary Create
+            (
+            Double RequiredCutBcy,
+            Double RequiredFillBcy,
+            Double DeferredCutBcy,
+            Double DeferredFillBcy,
+            IReadOnlyList<HaulDeferredWork> DeferredWork
+            )
+        {
+            Double MaterialSurplusCutBcy = Math.Max(
+                0.0, RequiredCutBcy - RequiredFillBcy);
+            Double CleanupCutBcy = Math.Max(
+                0.0, DeferredCutBcy - MaterialSurplusCutBcy);
+            Double ManualCleanupBcy = Math.Min(
+                CleanupCutBcy, DeferredFillBcy);
+            return new HaulDeferredWorkSummary
+            {
+                RequiredCutBcy = RequiredCutBcy,
+                RequiredFillBcy = RequiredFillBcy,
+                DeferredCutBcy = DeferredCutBcy,
+                DeferredFillBcy = DeferredFillBcy,
+                MaterialSurplusCutBcy = MaterialSurplusCutBcy,
+                ManualCleanupBcy = ManualCleanupBcy,
+                DeferredCutPercent = RequiredCutBcy > 0.0
+                    ? 100.0 * DeferredCutBcy / RequiredCutBcy
+                    : 0.0,
+                DeferredFillPercent = RequiredFillBcy > 0.0
+                    ? 100.0 * DeferredFillBcy / RequiredFillBcy
+                    : 0.0,
+                ManualCleanupPercentOfRequiredFill = RequiredFillBcy > 0.0
+                    ? 100.0 * ManualCleanupBcy / RequiredFillBcy
+                    : 0.0,
+                DeferredEntryCount = DeferredWork.Count,
+                DeferredCellCount = DeferredWork
+                    .Select(Entry => Entry.Cell)
+                    .Distinct()
+                    .Count(),
+            };
+        }
+
+        /// <summary>Gets required cut volume before automatic deferral.</summary>
+        public Double RequiredCutBcy { get; init; }
+
+        /// <summary>Gets required fill volume before automatic deferral.</summary>
+        public Double RequiredFillBcy { get; init; }
+
+        /// <summary>Gets all deferred cut, including immutable surplus.</summary>
+        public Double DeferredCutBcy { get; init; }
+
+        /// <summary>Gets all deferred fill.</summary>
+        public Double DeferredFillBcy { get; init; }
+
+        /// <summary>Gets cut which cannot be paired because the field has surplus cut.</summary>
+        public Double MaterialSurplusCutBcy { get; init; }
+
+        /// <summary>
+        /// Gets balanced cut/fill BCY intentionally left for manual cleanup.
+        /// One BCY represents one matched bank-volume unit, not the sum of both
+        /// the cut and fill sides.
+        /// </summary>
+        public Double ManualCleanupBcy { get; init; }
+
+        /// <summary>Gets deferred cut as a percentage of required cut.</summary>
+        public Double DeferredCutPercent { get; init; }
+
+        /// <summary>Gets deferred fill as a percentage of required fill.</summary>
+        public Double DeferredFillPercent { get; init; }
+
+        /// <summary>Gets balanced manual cleanup as a percentage of required fill.</summary>
+        public Double ManualCleanupPercentOfRequiredFill { get; init; }
+
+        /// <summary>Gets the number of deferred depth-layer entries.</summary>
+        public Int32 DeferredEntryCount { get; init; }
+
+        /// <summary>Gets the number of distinct cells affected by deferral.</summary>
+        public Int32 DeferredCellCount { get; init; }
     }
 }

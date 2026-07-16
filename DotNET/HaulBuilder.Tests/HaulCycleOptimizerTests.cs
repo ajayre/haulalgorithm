@@ -15,7 +15,12 @@ namespace HaulBuilder.Tests
 
             Assert.False(Options.EnableHaulOptimization);
             Assert.True(Options.HaulOptimizationDeferEdgeWork);
-            Assert.Equal(6, Options.HaulOptimizationMaxRunsPerKind);
+            Assert.True(Options.HaulOptimizationCompleteDeferredEdge);
+            Assert.Equal(12, Options.HaulOptimizationEdgeMaxRunsPerKind);
+            Assert.True(Options.EnableHaulRouteConsolidation);
+            Assert.Equal(8, Options.HaulOptimizationRouteConsolidationGroupRoutes);
+            Assert.Equal(50, Options.HaulOptimizationRouteConsolidationMaximumCycles);
+            Assert.Equal(10, Options.HaulOptimizationMaxRunsPerKind);
             Assert.Equal(8, Options.HaulOptimizationPairRefinementRounds);
             Assert.Equal(200, Options.HaulOptimizationReorderWindow);
             Assert.Equal(0, Options.HaulOptimizationMaximumCompactOmissions);

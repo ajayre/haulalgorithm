@@ -22,7 +22,9 @@ namespace HaulBuilder
             Double PairRefinementBeforeM = 0.0,
             Double PairRefinementAfterM = 0.0,
             Int32 CompactPreflightFailures = 0,
-            Int32 CompactOmittedCycles = 0
+            Int32 CompactOmittedCycles = 0,
+            Int32 EdgeCompletionCycles = 0,
+            Int32 EdgeOmittedCycles = 0
             )
         {
             this.PassResult = PassResult;
@@ -39,6 +41,8 @@ namespace HaulBuilder
             this.PairRefinementAfterM = PairRefinementAfterM;
             this.CompactPreflightFailures = CompactPreflightFailures;
             this.CompactOmittedCycles = CompactOmittedCycles;
+            this.EdgeCompletionCycles = EdgeCompletionCycles;
+            this.EdgeOmittedCycles = EdgeOmittedCycles;
         }
 
         /// <summary>Gets generated passes.</summary>
@@ -82,5 +86,11 @@ namespace HaulBuilder
 
         /// <summary>Gets whole balanced cycles explicitly deferred after preflight.</summary>
         public Int32 CompactOmittedCycles { get; }
+
+        /// <summary>Gets retained residual edge cycles.</summary>
+        public Int32 EdgeCompletionCycles { get; }
+
+        /// <summary>Gets residual compact-failing cycles left for cleanup.</summary>
+        public Int32 EdgeOmittedCycles { get; }
     }
 }

@@ -66,6 +66,9 @@ namespace HaulBuilder
         /// <param name="TurnSpeedMph">Turn speed mph.</param>
         /// <param name="TurningCircleFt">Turning circle diameter feet.</param>
         /// <param name="Obstacles">Obstacle field.</param>
+        /// <param name="StartCandidateCount">
+        /// Maximum deterministic open-route start candidates.
+        /// </param>
         /// <returns>Routed order and deadhead total.</returns>
         static public Route SequencePasses
             (
@@ -76,7 +79,8 @@ namespace HaulBuilder
             Double ReturnSpeedMph = DEFAULT_RETURN_SPEED_MPH,
             Double TurnSpeedMph = DEFAULT_TURN_SPEED_MPH,
             Double TurningCircleFt = DEFAULT_TURNING_CIRCLE_FT,
-            ObstacleField? Obstacles = null
+            ObstacleField? Obstacles = null,
+            Int32 StartCandidateCount = 1
             )
         {
             // Handle degenerate list sizes up front.
@@ -102,36 +106,30 @@ namespace HaulBuilder
                 ActiveObstacles
                 );
 
-            // Deterministic nearest-neighbor construction from pass 0.
-            HashSet<Int32> Unvisited = new HashSet<Int32>();
-            for (Int32 Index = 0; Index < N; Index += 1)
+            // Open routes have no fixed depot, so evaluate deterministic spatial
+            // extrema rather than forcing allocation item zero to be first.
+            List<Int32> Starts = StartCandidates(
+                Passes, Math.Max(1, StartCandidateCount));
+            List<Int32>? Order = null;
+            Double BestObjective = Double.PositiveInfinity;
+            foreach (Int32 Start in Starts)
             {
-                Unvisited.Add(Index);
-            }
-
-            List<Int32> Order = new List<Int32> { 0 };
-            Unvisited.Remove(0);
-            Int32 Current = 0;
-            while (Unvisited.Count > 0)
-            {
-                Double BestCost = Double.PositiveInfinity;
-                Int32 Best = -1;
-                // Ascending index order matches CPython set(range(n)) iteration so
-                // equal transition costs pick the same successor as Python.
-                foreach (Int32 Candidate in Unvisited.OrderBy(Index => Index))
+                List<Int32> CandidateOrder = NearestNeighborOrder(
+                    Passes, Model, Start, StartCandidateCount <= 1);
+                Double Objective = RouteObjective(
+                    Model,
+                    CandidateOrder.Select(Index => Passes[Index]).ToList());
+                if ((Objective < BestObjective - 1e-9)
+                    || ((Math.Abs(Objective - BestObjective) <= 1e-9)
+                        && ((Order == null)
+                            || LexicographicallyLess(CandidateOrder, Order))))
                 {
-                    Double Cost = Model.Cost(Passes[Current], Passes[Candidate]);
-                    if (Cost < BestCost)
-                    {
-                        BestCost = Cost;
-                        Best = Candidate;
-                    }
+                    Order = CandidateOrder;
+                    BestObjective = Objective;
                 }
-
-                Order.Add(Best);
-                Unvisited.Remove(Best);
-                Current = Best;
             }
+            Order ??= NearestNeighborOrder(
+                Passes, Model, 0, StartCandidateCount <= 1);
 
             if (!DirectionAware && (N <= TwoOptCap))
             {
@@ -151,6 +149,98 @@ namespace HaulBuilder
             }
 
             return new Route(Order, Ordered, Total);
+        }
+
+        private static List<Int32> StartCandidates
+            (
+            IReadOnlyList<Pass> Passes,
+            Int32 MaximumCount
+            )
+        {
+            IEnumerable<(Int32 Index, Double X, Double Y)> Points = Passes
+                .Select((Pass, Index) =>
+                    (Index, Pass.CutStartXy.X, Pass.CutStartXy.Y));
+            List<Int32> Candidates = new List<Int32> { 0 };
+            if (MaximumCount <= 1) return Candidates;
+            void Add(Int32 Index)
+            {
+                if (!Candidates.Contains(Index)
+                    && (Candidates.Count < MaximumCount))
+                {
+                    Candidates.Add(Index);
+                }
+            }
+            Add(Points.OrderBy(Point => Point.X)
+                .ThenBy(Point => Point.Index).First().Index);
+            Add(Points.OrderByDescending(Point => Point.X)
+                .ThenBy(Point => Point.Index).First().Index);
+            Add(Points.OrderBy(Point => Point.Y)
+                .ThenBy(Point => Point.Index).First().Index);
+            Add(Points.OrderByDescending(Point => Point.Y)
+                .ThenBy(Point => Point.Index).First().Index);
+            Add(Points.OrderBy(Point => Point.X + Point.Y)
+                .ThenBy(Point => Point.Index).First().Index);
+            Add(Points.OrderByDescending(Point => Point.X + Point.Y)
+                .ThenBy(Point => Point.Index).First().Index);
+            Add(Points.OrderBy(Point => Point.X - Point.Y)
+                .ThenBy(Point => Point.Index).First().Index);
+            return Candidates;
+        }
+
+        private static List<Int32> NearestNeighborOrder
+            (
+            IReadOnlyList<Pass> Passes,
+            _TransitionModel Model,
+            Int32 Start,
+            Boolean PreserveLegacyTies
+            )
+        {
+            Boolean[] Unvisited = Enumerable.Repeat(true, Passes.Count)
+                .ToArray();
+            List<Int32> Order = new List<Int32>(Passes.Count) { Start };
+            Unvisited[Start] = false;
+            Int32 Current = Start;
+            for (Int32 Step = 1; Step < Passes.Count; Step += 1)
+            {
+                Double BestCost = Double.PositiveInfinity;
+                Int32 Best = -1;
+                for (Int32 Candidate = 0;
+                    Candidate < Passes.Count;
+                    Candidate += 1)
+                {
+                    if (!Unvisited[Candidate]) continue;
+                    Double Cost = Model.Cost(
+                        Passes[Current], Passes[Candidate]);
+                    Boolean Better = PreserveLegacyTies
+                        ? Cost < BestCost
+                        : (Cost < BestCost - 1e-12)
+                            || ((Math.Abs(Cost - BestCost) <= 1e-12)
+                                && ((Best < 0) || (Candidate < Best)));
+                    if (Better)
+                    {
+                        BestCost = Cost;
+                        Best = Candidate;
+                    }
+                }
+                Order.Add(Best);
+                Unvisited[Best] = false;
+                Current = Best;
+            }
+            return Order;
+        }
+
+        private static Boolean LexicographicallyLess
+            (
+            IReadOnlyList<Int32> First,
+            IReadOnlyList<Int32> Second
+            )
+        {
+            for (Int32 Index = 0; Index < First.Count; Index += 1)
+            {
+                if (First[Index] == Second[Index]) continue;
+                return First[Index] < Second[Index];
+            }
+            return false;
         }
 
         /// <summary>Calculates deadhead for a fixed pass order without changing it.</summary>
