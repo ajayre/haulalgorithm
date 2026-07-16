@@ -22,13 +22,22 @@ internal static class HaulOptimizationBench
             : Path.GetFullPath(Path.Combine(
                 AppContext.BaseDirectory, "..", "..", "..", "..",
                 "TheShop2_2ft.agd"));
-        HaulLaneBuilder.LaneAxis Axis = Args.Length > 1
-            && String.Equals(Args[1], "adaptive", StringComparison.OrdinalIgnoreCase)
-            ? HaulLaneBuilder.LaneAxis.Adaptive
+        Double? HeadingAxisDeg = ReadNullableDoubleOption(
+            Args, "--heading-axis=");
+        if (HeadingAxisDeg.HasValue)
+        {
+            HeadingAxisDeg = HaulLaneBuilder.NormalizeAxisHeadingDeg(
+                HeadingAxisDeg.Value);
+        }
+        HaulLaneBuilder.LaneAxis Axis = HeadingAxisDeg.HasValue
+            ? HaulLaneBuilder.LaneAxis.UserHeading
             : Args.Length > 1
-                && String.Equals(Args[1], "northsouth", StringComparison.OrdinalIgnoreCase)
-                ? HaulLaneBuilder.LaneAxis.NorthSouth
-                : HaulLaneBuilder.LaneAxis.EastWest;
+                && String.Equals(Args[1], "adaptive", StringComparison.OrdinalIgnoreCase)
+                ? HaulLaneBuilder.LaneAxis.Adaptive
+                : Args.Length > 1
+                    && String.Equals(Args[1], "northsouth", StringComparison.OrdinalIgnoreCase)
+                    ? HaulLaneBuilder.LaneAxis.NorthSouth
+                    : HaulLaneBuilder.LaneAxis.EastWest;
         Int32 MaximumRunsPerKind = 2;
         if ((Args.Length > 2)
             && Int32.TryParse(
@@ -98,6 +107,12 @@ internal static class HaulOptimizationBench
             Args,
             "--render-dir=",
             Path.Combine("assets", "optimized_random_routes"));
+        Int32 RouteSequenceStart = ReadIntOption(
+            Args, "--render-route-sequence-start=", 0);
+        String RouteSequenceOutputPath = ReadStringOption(
+            Args,
+            "--render-route-sequence-output=",
+            Path.Combine("assets", "optimized_route_sequence.png"));
         String LevelingGifPath = ReadStringOption(
             Args,
             "--render-leveling-gif=",
@@ -111,6 +126,7 @@ internal static class HaulOptimizationBench
         {
             AgdPath = AgdPath,
             OmitIsolatedEdgePatches = false,
+            HeadingDeg = HeadingAxisDeg,
         };
         AgdField Field = Agd.Parse(AgdPath);
         Grid Grid = GridMath.BuildGrid(
@@ -130,7 +146,8 @@ internal static class HaulOptimizationBench
             MaximumRunsPerKind,
             DeferEdgeWork,
             FlowPenaltyWeight,
-            Obstacles: Obstacles.EMPTY_OBSTACLES);
+            Obstacles: Obstacles.EMPTY_OBSTACLES,
+            HeadingAxisDeg: HeadingAxisDeg);
         List<Pass> CandidatePasses = Optimized.PassResult.Passes;
         HaulPairAuctionOptimizer.Result? PairAuctionResult = null;
         if (PairAuction)
@@ -183,7 +200,8 @@ internal static class HaulOptimizationBench
                 EdgeMaximumRunsPerKind,
                 DeferEdgeWork: false,
                 FlowPenaltyWeight,
-                Obstacles: Obstacles.EMPTY_OBSTACLES);
+                Obstacles: Obstacles.EMPTY_OBSTACLES,
+                HeadingAxisDeg: HeadingAxisDeg);
             EdgeCandidatePasses = EdgeCompletion.PassResult.Passes;
             if (PairTwoOpt)
             {
@@ -339,6 +357,13 @@ internal static class HaulOptimizationBench
         Console.WriteLine("HAUL OPTIMIZATION PROBE");
         Console.WriteLine("agd={0}", AgdPath);
         Console.WriteLine("axis={0}", Axis);
+        if (HeadingAxisDeg.HasValue)
+        {
+            Console.WriteLine(String.Format(
+                CultureInfo.InvariantCulture,
+                "heading_axis_deg={0:F3}",
+                HeadingAxisDeg.Value));
+        }
         Console.WriteLine("maximum_runs_per_kind={0}", MaximumRunsPerKind);
         Console.WriteLine("defer_edge_work={0}", DeferEdgeWork);
         Console.WriteLine("complete_deferred_edge={0}", CompleteDeferredEdge);
@@ -593,7 +618,9 @@ internal static class HaulOptimizationBench
                 Route,
                 Grid,
                 Field,
-                Passes.EstimateSlopeHeading(Grid),
+                HeadingAxisDeg
+                    ?? HaulLaneBuilder.NormalizeAxisHeadingDeg(
+                        Passes.EstimateSlopeHeading(Grid)),
                 Options,
                 (Stage, Completed, Total) =>
                 {
@@ -717,6 +744,16 @@ internal static class HaulOptimizationBench
                 Math.Min(RandomRoutePngCount, ExactResult.Plan.Passes.Count),
                 RandomRouteSeed,
                 Path.GetFullPath(RandomRouteOutputDirectory));
+        }
+        if (RouteSequenceStart > 0)
+        {
+            RenderExactRouteSequence(
+                ExactResult.Plan,
+                Grid,
+                Options.BladeWidthMm / 1000.0,
+                RouteSequenceStart,
+                3,
+                Path.GetFullPath(RouteSequenceOutputPath));
         }
         Double ExactHours = ExactResult.DeterministicSeconds / 3600.0;
         Double SavingsPercent = 100.0 * (433.483 - ExactHours) / 433.483;
@@ -844,6 +881,91 @@ internal static class HaulOptimizationBench
         }
     }
 
+    /// <summary>Renders consecutive exact lifecycle routes into one PNG.</summary>
+    private static void RenderExactRouteSequence
+        (
+        GuidancePlanner.BuildResult Plan,
+        Grid Grid,
+        Double BladeWidthM,
+        Int32 FirstRouteNumber,
+        Int32 Count,
+        String OutputPath
+        )
+    {
+        Int32 LastRouteNumber = Math.Min(
+            Plan.Passes.Count,
+            FirstRouteNumber + Count - 1);
+        if ((FirstRouteNumber < 1) || (FirstRouteNumber > LastRouteNumber))
+        {
+            throw new ArgumentOutOfRangeException(nameof(FirstRouteNumber));
+        }
+        HashSet<Int32> RouteNumbers = Enumerable.Range(
+            FirstRouteNumber,
+            LastRouteNumber - FirstRouteNumber + 1).ToHashSet();
+        List<LifecyclePlanner.Segment> Segments = Plan.Lifecycle.Segments
+            .Where(Segment => RouteNumbers.Contains(Segment.RouteNumber))
+            .ToList();
+        List<IReadOnlyList<(Double X, Double Y)>> CutRuns = Segments
+            .Where(Segment => Segment.Phase == LifecyclePlanner.Phase.Cut)
+            .Select(Segment =>
+                (IReadOnlyList<(Double X, Double Y)>)Segment.Points)
+            .ToList();
+        List<IReadOnlyList<(Double X, Double Y)>> FillRuns = Segments
+            .Where(Segment => Segment.Phase == LifecyclePlanner.Phase.Fill)
+            .Select(Segment =>
+                (IReadOnlyList<(Double X, Double Y)>)Segment.Points)
+            .ToList();
+        List<IReadOnlyList<(Double X, Double Y)>> ManualRuns = Segments
+            .Where(Segment =>
+                Segment.Phase == LifecyclePlanner.Phase.ManualAssist)
+            .Select(Segment =>
+                (IReadOnlyList<(Double X, Double Y)>)Segment.Points)
+            .ToList();
+        List<(Double X, Double Y)> RoutePoints = Segments
+            .SelectMany(Segment => Segment.Points)
+            .ToList();
+        List<((Double X, Double Y) Point, String Label)> Markers =
+            new List<((Double X, Double Y), String)>();
+        foreach (Int32 RouteNumber in RouteNumbers.OrderBy(Value => Value))
+        {
+            LifecyclePlanner.Segment? Cut = Segments.FirstOrDefault(
+                Segment => Segment.RouteNumber == RouteNumber
+                    && Segment.Phase == LifecyclePlanner.Phase.Cut
+                    && Segment.Points.Count > 0);
+            LifecyclePlanner.Segment? Any = Segments.FirstOrDefault(
+                Segment => Segment.RouteNumber == RouteNumber
+                    && Segment.Points.Count > 0);
+            LifecyclePlanner.Segment? MarkerSegment = Cut ?? Any;
+            if (MarkerSegment == null) continue;
+            Markers.Add((
+                MarkerSegment.Points[MarkerSegment.Points.Count / 2],
+                RouteNumber.ToString(CultureInfo.InvariantCulture)));
+        }
+        String? OutputDirectory = Path.GetDirectoryName(OutputPath);
+        if (!String.IsNullOrEmpty(OutputDirectory))
+        {
+            Directory.CreateDirectory(OutputDirectory);
+        }
+        Byte[] Png = Render.RenderCoverageRunsPng(
+            Grid,
+            CutRuns,
+            FillRuns,
+            RoutePoints,
+            BladeWidthM,
+            pixelsPerBin: 24,
+            padCells: 8,
+            manualAssistRuns: ManualRuns,
+            routeMarkers: Markers,
+            drawDirectionArrows: true,
+            directionArrowSpacingM: 6.0 * Grid.GridSizeM);
+        File.WriteAllBytes(OutputPath, Png);
+        Console.WriteLine(
+            "route_sequence_png first={0} last={1} path={2}",
+            FirstRouteNumber,
+            LastRouteNumber,
+            OutputPath);
+    }
+
     /// <summary>Reads a comma-separated integer set from one command-line option.</summary>
     private static HashSet<Int32> ReadIntSetOption
         (
@@ -953,5 +1075,28 @@ internal static class HaulOptimizationBench
                 out Double Value)
             ? Math.Max(0.0, Value)
             : DefaultValue;
+    }
+
+    private static Double? ReadNullableDoubleOption
+        (
+        IEnumerable<String> Args,
+        String Prefix
+        )
+    {
+        String? Text = Args.FirstOrDefault(Arg =>
+            Arg.StartsWith(Prefix, StringComparison.OrdinalIgnoreCase));
+        if (Text == null) return null;
+        if (!Double.TryParse(
+            Text.Substring(Prefix.Length),
+            NumberStyles.Float,
+            CultureInfo.InvariantCulture,
+            out Double Value)
+            || !Double.IsFinite(Value))
+        {
+            throw new ArgumentException(
+                "Heading axis must be a finite number.",
+                nameof(Args));
+        }
+        return Value;
     }
 }

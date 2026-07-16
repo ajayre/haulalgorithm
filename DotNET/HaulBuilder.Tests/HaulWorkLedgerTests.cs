@@ -6,6 +6,115 @@ namespace HaulBuilder.Tests
 {
     public sealed class HaulWorkLedgerTests
     {
+        [Theory]
+        [InlineData(0.0, 0.0)]
+        [InlineData(180.0, 0.0)]
+        [InlineData(270.0, 90.0)]
+        [InlineData(-90.0, 90.0)]
+        [InlineData(217.5, 37.5)]
+        public void HeadingInputNormalizesToAnUndirectedAxis
+            (
+            Double InputDeg,
+            Double ExpectedDeg
+            )
+        {
+            Assert.Equal(
+                ExpectedDeg,
+                HaulLaneBuilder.NormalizeAxisHeadingDeg(InputDeg),
+                12);
+        }
+
+        [Fact]
+        public void ArbitraryAxisConservesLayersAndOppositeBearingIsIdentical
+            (
+            )
+        {
+            Grid Grid = MakeGrid();
+            Grid.Existing[2, 2] = 0.140;
+            Grid.Existing[3, 3] = 0.061;
+            Grid.Existing[6, 6] = -0.061;
+            Grid.Existing[7, 7] = -0.140;
+            HaulWorkLedger Ledger = HaulWorkLedger.Build(Grid, 10.0);
+
+            HaulLaneBuilder.Inventory First = HaulLaneBuilder.Build(
+                Ledger,
+                HaulLaneBuilder.LaneAxis.UserHeading,
+                HeadingAxisDeg: 37.5);
+            HaulLaneBuilder.Inventory Opposite = HaulLaneBuilder.Build(
+                Ledger,
+                HaulLaneBuilder.LaneAxis.UserHeading,
+                HeadingAxisDeg: 217.5);
+
+            Assert.Equal(LaneSignature(First), LaneSignature(Opposite));
+            Assert.All(
+                First.CutLanes.Concat(First.FillLanes),
+                Lane => Assert.Equal(37.5, Lane.AxisHeadingDeg, 12));
+            Assert.Equal(
+                Ledger.RequiredCutDepthM.Cast<Double>().Sum(),
+                First.CutLanes.SelectMany(Lane => Lane.Entries)
+                    .Sum(Entry => Entry.DepthM),
+                12);
+            Assert.Equal(
+                Ledger.RequiredFillDepthM.Cast<Double>().Sum(),
+                First.FillLanes.SelectMany(Lane => Lane.Entries)
+                    .Sum(Entry => Entry.DepthM),
+                12);
+        }
+
+        [Fact]
+        public void CardinalUserAxisReusesTheExistingLaneCover
+            (
+            )
+        {
+            Grid Grid = MakeGrid();
+            Grid.Existing[2, 2] = 0.140;
+            Grid.Existing[3, 2] = 0.061;
+            Grid.Existing[6, 7] = -0.061;
+            Grid.Existing[7, 7] = -0.140;
+            HaulWorkLedger Ledger = HaulWorkLedger.Build(Grid, 10.0);
+
+            HaulLaneBuilder.Inventory Existing = HaulLaneBuilder.Build(
+                Ledger, HaulLaneBuilder.LaneAxis.NorthSouth);
+            HaulLaneBuilder.Inventory User = HaulLaneBuilder.Build(
+                Ledger,
+                HaulLaneBuilder.LaneAxis.UserHeading,
+                HeadingAxisDeg: 180.0);
+
+            Assert.Equal(LaneSignature(Existing), LaneSignature(User));
+        }
+
+        [Fact]
+        public void ArbitraryAxisCoversEveryLayerOnARectangularField
+            (
+            )
+        {
+            Grid Grid = MakeGrid(14, 8);
+            Grid.Existing[1, 2] = 0.140;
+            Grid.Existing[5, 11] = 0.061;
+            Grid.Existing[2, 10] = -0.061;
+            Grid.Existing[6, 3] = -0.140;
+            HaulWorkLedger Ledger = HaulWorkLedger.Build(Grid, 10.0);
+
+            HaulLaneBuilder.Inventory Inventory = HaulLaneBuilder.Build(
+                Ledger,
+                HaulLaneBuilder.LaneAxis.UserHeading,
+                HeadingAxisDeg: 37.5);
+
+            Assert.Equal(
+                Ledger.RequiredCutDepthM.Cast<Double>().Sum(),
+                Inventory.CutLanes.SelectMany(Lane => Lane.Entries)
+                    .Sum(Entry => Entry.DepthM),
+                12);
+            Assert.Equal(
+                Ledger.RequiredFillDepthM.Cast<Double>().Sum(),
+                Inventory.FillLanes.SelectMany(Lane => Lane.Entries)
+                    .Sum(Entry => Entry.DepthM),
+                12);
+            Assert.All(
+                Inventory.CutLanes.Concat(Inventory.FillLanes),
+                Lane => Assert.Equal(37.5, Lane.AxisHeadingDeg, 12));
+        }
+
         [Fact]
         public void LayersRecombineToTheExactRequiredDepth
             (
@@ -117,34 +226,59 @@ namespace HaulBuilder.Tests
 
         private static Grid MakeGrid
             (
+            ) => MakeGrid(10, 10);
+
+        private static Grid MakeGrid
+            (
+            Int32 Width,
+            Int32 Height
             )
         {
-            const Int32 Size = 10;
-            Boolean[,] Valid = new Boolean[Size, Size];
-            for (Int32 By = 0; By < Size; By += 1)
+            Boolean[,] Valid = new Boolean[Height, Width];
+            for (Int32 By = 0; By < Height; By += 1)
             {
-                for (Int32 Bx = 0; Bx < Size; Bx += 1)
+                for (Int32 Bx = 0; Bx < Width; Bx += 1)
                 {
                     Valid[By, Bx] = true;
                 }
             }
             return new Grid(
                 1.0,
-                Size,
-                Size,
+                Width,
+                Height,
                 0.0,
                 0.0,
                 12,
                 true,
                 0.0,
                 0.0,
-                new Double[Size, Size],
-                new Double[Size, Size],
+                new Double[Height, Width],
+                new Double[Height, Width],
                 Valid,
                 1.3,
                 1.0,
                 61.0,
                 new List<List<(Double X, Double Y)>>());
         }
+
+        private static String LaneSignature
+            (
+            HaulLaneBuilder.Inventory Inventory
+            ) => String.Join(
+                "|",
+                Inventory.CutLanes.Concat(Inventory.FillLanes)
+                    .Select(Lane => String.Format(
+                        System.Globalization.CultureInfo.InvariantCulture,
+                        "{0}:{1}:{2}:{3}",
+                        Lane.Kind,
+                        Lane.LayerIndex,
+                        Lane.AxisHeadingDeg,
+                        String.Join(",", Lane.Entries.Select(Entry =>
+                            String.Format(
+                                System.Globalization.CultureInfo.InvariantCulture,
+                                "{0}/{1}/{2:R}",
+                                Entry.Cell.Bx,
+                                Entry.Cell.By,
+                                Entry.DepthM))))));
     }
 }

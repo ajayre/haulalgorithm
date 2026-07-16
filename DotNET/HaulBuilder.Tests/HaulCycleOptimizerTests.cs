@@ -71,6 +71,42 @@ namespace HaulBuilder.Tests
         }
 
         [Fact]
+        public void ArbitraryAxisProducesBalancedPlanAndPreservesAxisMetadata
+            (
+            )
+        {
+            Grid Grid = MakeBalancedGrid();
+            HaulWorkLedger Ledger = HaulWorkLedger.Build(Grid, 10.0);
+
+            HaulOptimizationResult Result = HaulCycleOptimizer.Optimize(
+                Grid,
+                ZeroFlow(Grid),
+                Ledger,
+                HaulLaneBuilder.LaneAxis.UserHeading,
+                0.20,
+                2,
+                false,
+                0.20,
+                Obstacles.EMPTY_OBSTACLES,
+                HeadingAxisDeg: 217.5);
+
+            Assert.True(
+                Result.Validation.Success,
+                String.Join(Environment.NewLine, Result.Validation.Issues));
+            Assert.NotEmpty(Result.PassResult.Passes);
+            Assert.All(Result.PassResult.Passes, Pass =>
+            {
+                Assert.Equal(37.5, Pass.CutHeadingDeg!.Value, 12);
+                Assert.Equal(37.5, Pass.FillHeadingDeg!.Value, 12);
+            });
+            HaulPlanValidation Exact = Ledger.ValidateComplete(
+                Result.PassResult.Passes, 0.20, 0.061, false);
+            Assert.True(
+                Exact.Success,
+                String.Join(Environment.NewLine, Exact.Issues));
+        }
+
+        [Fact]
         public void EdgeDeferralIsExplicitAndNeverCountedAsCompleted
             (
             )

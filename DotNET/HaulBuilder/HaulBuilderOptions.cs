@@ -122,7 +122,9 @@ namespace HaulBuilder
         public Double BladeWidthMm { get; set; }
 
         /// <summary>
-        /// Gets or sets optional global heading in compass degrees.
+        /// Gets or sets the optional undirected work-lane axis in compass
+        /// degrees. Values are normalized into [0, 180), so 0 equals 180 and
+        /// 90 equals 270. Guidance chooses either travel bearing per run.
         /// </summary>
         public Double? HeadingDeg { get; set; }
 
@@ -389,7 +391,10 @@ namespace HaulBuilder
         /// <summary>Gets or sets whether the experimental global lane optimizer is enabled.</summary>
         public Boolean EnableHaulOptimization { get; set; }
 
-        /// <summary>Gets or sets the optimizer lane-cover profile.</summary>
+        /// <summary>
+        /// Gets or sets the fallback optimizer lane-cover profile used when
+        /// <see cref="HeadingDeg"/> is not supplied.
+        /// </summary>
         public HaulLaneBuilder.LaneAxis HaulOptimizationAxis { get; set; }
 
         /// <summary>Gets or sets the maximum same-kind lane runs packed in one cycle.</summary>

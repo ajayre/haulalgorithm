@@ -25,7 +25,8 @@ namespace HaulBuilder
             Int32 MaximumRunsPerKind = 2,
             Boolean DeferEdgeWork = false,
             Double FlowPenaltyWeight = 0.20,
-            ObstacleField? Obstacles = null
+            ObstacleField? Obstacles = null,
+            Double? HeadingAxisDeg = null
             )
         {
             if (Grid == null) throw new ArgumentNullException(nameof(Grid));
@@ -36,7 +37,7 @@ namespace HaulBuilder
             if (FlowPenaltyWeight < 0.0) throw new ArgumentOutOfRangeException(nameof(FlowPenaltyWeight));
 
             HaulLaneBuilder.Inventory Inventory = HaulLaneBuilder.Build(
-                Ledger, Axis, DeferEdgeWork, Flow);
+                Ledger, Axis, DeferEdgeWork, Flow, HeadingAxisDeg);
             List<LaneState> CutStates = Inventory.CutLanes
                 .Select(Lane => new LaneState(Lane)).ToList();
             List<LaneState> FillStates = Inventory.FillLanes
@@ -87,12 +88,8 @@ namespace HaulBuilder
                 Pass Pass = HaulBuilder.Passes.BuildPass(
                     Grid, CutCells, FillCells, ActualCutBcy,
                     ActiveObstacles, Ordered: true);
-                Pass.CutHeadingDeg = PrimaryCut.Lane.Axis
-                    == HaulLaneBuilder.LaneAxis.EastWest
-                    ? 90.0 : 0.0;
-                Pass.FillHeadingDeg = FillGroup[0].Lane.Axis
-                    == HaulLaneBuilder.LaneAxis.EastWest
-                    ? 90.0 : 0.0;
+                Pass.CutHeadingDeg = PrimaryCut.Lane.AxisHeadingDeg;
+                Pass.FillHeadingDeg = FillGroup[0].Lane.AxisHeadingDeg;
                 PassList.Add(Pass);
                 TotalAssignedBcy += ActualCutBcy;
             }
@@ -174,7 +171,9 @@ namespace HaulBuilder
                     .Where(State => !Output.Contains(State)
                         && (State.RemainingVolumeBcy > VOLUME_TOLERANCE_BCY)
                         && (State.Lane.LayerIndex == Primary.Lane.LayerIndex)
-                        && (State.Lane.Axis == Primary.Lane.Axis)
+                        && AxisHeadingsMatch(
+                            State.Lane.AxisHeadingDeg,
+                            Primary.Lane.AxisHeadingDeg)
                         && !State.RemainingCells().Any(Cell => UsedCells.Contains(Cell)))
                     .OrderBy(State => LaneDistance(Primary, State, Grid))
                     .ThenBy(State => State.Lane.Id)
@@ -297,9 +296,9 @@ namespace HaulBuilder
             (Double X, Double Y) FillLast = Grid.CellCenterXy(
                 FillLastCell.Bx, FillLastCell.By);
             Double CutForwardHeading = LaneHeading(
-                CutFirst, CutLast, Cut.Lane.Axis);
+                CutFirst, CutLast, Cut.Lane.AxisHeadingDeg);
             Double FillForwardHeading = LaneHeading(
-                FillFirst, FillLast, Fill.Lane.Axis);
+                FillFirst, FillLast, Fill.Lane.AxisHeadingDeg);
             ConnectorPlanner.Pose[] CutExits =
             {
                 new ConnectorPlanner.Pose(
@@ -338,17 +337,26 @@ namespace HaulBuilder
             (
             (Double X, Double Y) First,
             (Double X, Double Y) Last,
-            HaulLaneBuilder.LaneAxis Axis
+            Double FallbackAxisHeadingDeg
             )
         {
             Double Dx = Last.X - First.X;
             Double Dy = Last.Y - First.Y;
             if ((Math.Abs(Dx) <= 1e-9) && (Math.Abs(Dy) <= 1e-9))
             {
-                return Axis == HaulLaneBuilder.LaneAxis.EastWest
-                    ? 90.0 : 0.0;
+                return FallbackAxisHeadingDeg;
             }
             return (Math.Atan2(Dx, Dy) * 180.0 / Math.PI + 360.0) % 360.0;
+        }
+
+        private static Boolean AxisHeadingsMatch
+            (
+            Double FirstDeg,
+            Double SecondDeg
+            )
+        {
+            Double Difference = Math.Abs(FirstDeg - SecondDeg) % 180.0;
+            return Math.Min(Difference, 180.0 - Difference) <= 1e-9;
         }
 
         private static Double LaneDistance

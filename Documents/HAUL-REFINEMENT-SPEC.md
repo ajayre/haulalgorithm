@@ -33,6 +33,7 @@
 | **2.3.0** | 2026-07-15 | Added geometry-derived, proximity-component fill redistribution envelopes with mandatory grade-return validation, exact route diagnostics, focused tests, and the improved complete-work checkpoint. |
 | **2.4.0** | 2026-07-15 | Added residual-ledger edge completion, independently frozen interior and edge route batches, edge-only guidance repair and bounded omission, deterministic random exact-route PNG export, and the first exact edge-completion checkpoint. |
 | **2.5.0** | 2026-07-15 | Expanded exact fill-envelope heading finalists, recorded the improved full-guidance checkpoint, and documented rejected local-flow, global-flow, endpoint-pairing, and long-gap experiments. |
+| **2.6.0** | 2026-07-15 | Redefined the existing heading input as a normalized undirected lane axis, added arbitrary-angle lane construction for rectangular fields, retained per-run bearing selection by guidance, and added consecutive-route diagnostic rendering. |
 
 ### 0.2 Current implementation checkpoint
 
@@ -69,6 +70,8 @@
 **[0.2.16]** Expanding the fill-envelope production-sequencing portfolio from the best three screened headings to the best eight reduces the full plan to `240.440 h` deterministic, `300.550 h` scheduled, and `2,296,941.9 m`. The exact result contains `56,913` lifecycle segments and `369` manual assists, has zero sequence failures, retains the same `3,182` cycles and deferred ledger, and relaxes no guidance rule. This saves `0.114 h` and `1,159.0 m` relative to [0.2.13]. Sixteen finalists reproduce the same plan and are therefore rejected as unnecessary runtime.
 
 **[0.2.17]** Flow-following experiments establish that coherence is more important than local angular agreement on this field. Fifteen-degree local flow sectors with an eight-cell smoothing radius create `16,558` lane fragments and regress to `337.422` proxy hours. A field-wide smoothed flow heading reduces fragmentation to `6,495` lanes but still regresses to `283.269` proxy hours. Both are rejected. Endpoint-only equal-volume fill refinement improves the proxy from `255.980 h` to `254.759 h` but regresses exact guidance to `241.320 h` and `2,312,817.7 m`; it is also rejected. Extending the accepted fill-envelope gap from twelve to twenty-four cells remains exact-valid but regresses to `240.561 h`, because added fill and reverse-grade distance exceeds the saved maneuver distance. The retained policy is therefore coherent north-south allocation, flow-constrained cut-to-fill pairing, arbitrary geometry-derived local fill headings, eight exact sequencing finalists, a twelve-cell gap bound, and the existing `2.0` work-inflation bound.
+
+**[0.2.18]** `HeadingDeg` now denotes an undirected work-lane axis rather than a commanded travel bearing. Inputs normalize to `[0, 180)`, so `0` and `180` produce the same north-south lane cover and `90` and `270` produce the same east-west cover; production guidance remains responsible for choosing either bearing independently for every cut, fill, and connector. Arbitrary axes are supported on rectangular fields. Omitting `HeadingDeg` retains the measured north-south optimizer default. The exact `0`-degree fixture reproduces [0.2.16] at `240.440 h` deterministic, `300.550 h` scheduled, `2,296,941.9 m`, `3,182` routes, and zero sequence failures. A `37.5`-degree real-field run also validates with zero allocation or ledger violations, demonstrating that the axis is no longer cardinal-only; it is not promoted as the optimum for this fixture. Focused lane-ledger and optimizer tests pass `15/15`; the complete suite reports `118` passed and the same `11` known legacy/parity/guidance-contract failures.
 
 **[0.1.2]** Revisions follow semantic versioning: **MAJOR** denotes an incompatible normative change, **MINOR** a backward-compatible addition, and **PATCH** a clarification that does not change an obligation.
 
@@ -534,7 +537,8 @@ Reporting and optional export
 |---|---:|---|
 | `EnableHaulOptimization` | `false` | Remains false until work unit 9. |
 | `HaulAllocationMode` | `GlobalFlowGuidance` | Optimized mode; `LegacyGreedy` remains available. |
-| `HaulOptimizationAxis` | `NorthSouth` | Measured lane-cover direction for the frozen fixture. |
+| `HeadingDeg` | `null` | Optional undirected work-lane axis, normalized to `[0, 180)`; opposite bearings are equivalent and guidance selects the bearing of each run. |
+| `HaulOptimizationAxis` | `NorthSouth` | Fallback lane-cover direction when `HeadingDeg` is omitted; this is the measured direction for the frozen fixture. |
 | `HaulOptimizationMaxRunsPerKind` | `6` | Maximum source lane slices packed per work kind and cycle. |
 | `HaulOptimizationFlowPenaltyWeight` | `1.0` | Uses the unchanged commercial-matching Poisson field. |
 | `HaulOptimizationDeferEdgeWork` | `true` | Explicitly records infeasible field-edge work in the ledger. |

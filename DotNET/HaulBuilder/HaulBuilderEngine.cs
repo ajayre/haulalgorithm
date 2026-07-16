@@ -60,7 +60,10 @@ namespace HaulBuilder
             }
 
             List<Strip> StripList = Strips.TraceStrips(Grid, Flow, 400);
-            Double HeadingDeg = Opt.HeadingDeg.HasValue ? Opt.HeadingDeg.Value : Passes.EstimateSlopeHeading(Grid);
+            Double HeadingDeg = HaulLaneBuilder.NormalizeAxisHeadingDeg(
+                Opt.HeadingDeg.HasValue
+                    ? Opt.HeadingDeg.Value
+                    : Passes.EstimateSlopeHeading(Grid));
             Boolean FlowAligned = !Opt.NoFlowAligned;
             Double ScraperBcy = (Opt.ScraperCapacityLcy / Opt.SwellFactor);
 
@@ -80,12 +83,15 @@ namespace HaulBuilder
                         Grid,
                         Flow,
                         Ledger,
-                        Opt.HaulOptimizationAxis,
+                        Opt.HeadingDeg.HasValue
+                            ? HaulLaneBuilder.LaneAxis.UserHeading
+                            : Opt.HaulOptimizationAxis,
                         ScraperBcy,
                         Opt.HaulOptimizationMaxRunsPerKind,
                         Opt.HaulOptimizationDeferEdgeWork,
                         Opt.HaulOptimizationFlowPenaltyWeight,
-                        Obstacles);
+                        Obstacles,
+                        Opt.HeadingDeg.HasValue ? HeadingDeg : null);
                 List<Pass> OptimizedPasses = Optimized.PassResult.Passes;
                 HaulPairDistanceRefiner.Result? PairRefinement = null;
                 if (Opt.HaulOptimizationPairRefinementRounds > 0)
@@ -1211,7 +1217,28 @@ namespace HaulBuilder
             HaulBuilderOptions options
             )
         {
+            if (options.HeadingDeg.HasValue
+                && !Double.IsFinite(options.HeadingDeg.Value))
+            {
+                throw new ArgumentException(
+                    "HeadingDeg must be finite when supplied.",
+                    nameof(options));
+            }
             if (!options.EnableHaulOptimization) return;
+            if (!Enum.IsDefined(options.HaulOptimizationAxis))
+            {
+                throw new ArgumentException(
+                    "HaulOptimizationAxis is invalid.",
+                    nameof(options));
+            }
+            if ((options.HaulOptimizationAxis
+                    == HaulLaneBuilder.LaneAxis.UserHeading)
+                && !options.HeadingDeg.HasValue)
+            {
+                throw new ArgumentException(
+                    "HeadingDeg is required when HaulOptimizationAxis is UserHeading.",
+                    nameof(options));
+            }
             if (options.HaulOptimizationMaxRunsPerKind <= 0)
             {
                 throw new ArgumentException(

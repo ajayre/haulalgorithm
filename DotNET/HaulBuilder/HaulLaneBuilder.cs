@@ -20,6 +20,9 @@ namespace HaulBuilder
 
             /// <summary>Each cell uses the cardinal axis closest to local flow.</summary>
             Adaptive,
+
+            /// <summary>All lanes use one caller-supplied arbitrary axis.</summary>
+            UserHeading,
         }
 
         /// <summary>Kind of physical work represented by a lane.</summary>
@@ -74,7 +77,8 @@ namespace HaulBuilder
                 LaneAxis Axis,
                 Int32 LayerIndex,
                 IReadOnlyList<LaneEntry> Entries,
-                Grid Grid
+                Grid Grid,
+                Double? AxisHeadingDeg = null
                 )
             {
                 this.Id = Id;
@@ -82,6 +86,9 @@ namespace HaulBuilder
                 this.Axis = Axis;
                 this.LayerIndex = LayerIndex;
                 this.Entries = Entries;
+                this.AxisHeadingDeg = NormalizeAxisHeadingDeg(
+                    AxisHeadingDeg
+                    ?? (Axis == LaneAxis.EastWest ? 90.0 : 0.0));
                 VolumeBcy = Entries.Sum(Entry => Entry.VolumeBcy);
                 (Double X, Double Y) First = Grid.CellCenterXy(
                     Entries[0].Cell.Bx, Entries[0].Cell.By);
@@ -109,6 +116,12 @@ namespace HaulBuilder
 
             /// <summary>Gets ordered work entries.</summary>
             public IReadOnlyList<LaneEntry> Entries { get; }
+
+            /// <summary>
+            /// Gets the undirected lane axis in compass degrees. The guidance
+            /// planner may drive either this bearing or the opposite bearing.
+            /// </summary>
+            public Double AxisHeadingDeg { get; }
 
             /// <summary>Gets total lane volume.</summary>
             public Double VolumeBcy { get; }
@@ -155,12 +168,70 @@ namespace HaulBuilder
             HaulWorkLedger Ledger,
             LaneAxis Axis,
             Boolean ExcludeEdgeWorkCells = false,
-            FlowField? Flow = null
+            FlowField? Flow = null,
+            Double? HeadingAxisDeg = null
             )
         {
             if (Ledger == null) throw new ArgumentNullException(nameof(Ledger));
             FieldEdgePolicy EdgePolicy = new FieldEdgePolicy(
                 Ledger.Grid, Ledger.Grid.GridSizeM);
+            if (Axis == LaneAxis.UserHeading)
+            {
+                if (!HeadingAxisDeg.HasValue
+                    || !Double.IsFinite(HeadingAxisDeg.Value))
+                {
+                    throw new ArgumentOutOfRangeException(
+                        nameof(HeadingAxisDeg));
+                }
+                Double NormalizedHeadingDeg = NormalizeAxisHeadingDeg(
+                    HeadingAxisDeg.Value);
+                LaneAxis? CardinalAxis = Math.Abs(NormalizedHeadingDeg) <= 1e-9
+                    ? LaneAxis.NorthSouth
+                    : Math.Abs(NormalizedHeadingDeg - 90.0) <= 1e-9
+                        ? LaneAxis.EastWest
+                        : null;
+                List<Lane> HeadingCut = CardinalAxis.HasValue
+                    ? BuildKind(
+                        Ledger,
+                        WorkKind.Cut,
+                        CardinalAxis.Value,
+                        Ledger.RequiredCutDepthM,
+                        EdgePolicy,
+                        ExcludeEdgeWorkCells,
+                        Ledger.CutBcyPerDepthM,
+                        0,
+                        null)
+                    : BuildHeadingKind(
+                        Ledger,
+                        WorkKind.Cut,
+                        Ledger.RequiredCutDepthM,
+                        EdgePolicy,
+                        ExcludeEdgeWorkCells,
+                        Ledger.CutBcyPerDepthM,
+                        0,
+                        NormalizedHeadingDeg);
+                List<Lane> HeadingFill = CardinalAxis.HasValue
+                    ? BuildKind(
+                        Ledger,
+                        WorkKind.Fill,
+                        CardinalAxis.Value,
+                        Ledger.RequiredFillDepthM,
+                        EdgePolicy,
+                        ExcludeEdgeWorkCells,
+                        Ledger.FillBcyPerDepthM,
+                        HeadingCut.Count,
+                        null)
+                    : BuildHeadingKind(
+                        Ledger,
+                        WorkKind.Fill,
+                        Ledger.RequiredFillDepthM,
+                        EdgePolicy,
+                        ExcludeEdgeWorkCells,
+                        Ledger.FillBcyPerDepthM,
+                        HeadingCut.Count,
+                        NormalizedHeadingDeg);
+                return new Inventory(Axis, HeadingCut, HeadingFill);
+            }
             if (Axis == LaneAxis.Adaptive)
             {
                 if (Flow == null)
@@ -272,6 +343,140 @@ namespace HaulBuilder
                 }
             }
 
+            return Output;
+        }
+
+        /// <summary>
+        /// Normalizes an undirected compass axis into [0, 180). Opposite
+        /// bearings therefore select identical lane geometry.
+        /// </summary>
+        static public Double NormalizeAxisHeadingDeg(Double HeadingDeg)
+        {
+            if (!Double.IsFinite(HeadingDeg))
+            {
+                throw new ArgumentOutOfRangeException(nameof(HeadingDeg));
+            }
+            Double Normalized = HeadingDeg % 180.0;
+            return Normalized < 0.0 ? Normalized + 180.0 : Normalized;
+        }
+
+        /// <summary>Builds an exact layer cover along one arbitrary axis.</summary>
+        private static List<Lane> BuildHeadingKind
+            (
+            HaulWorkLedger Ledger,
+            WorkKind Kind,
+            Double[,] RequiredDepthM,
+            FieldEdgePolicy EdgePolicy,
+            Boolean ExcludeEdgeWorkCells,
+            Double BcyPerDepthM,
+            Int32 StartingId,
+            Double HeadingAxisDeg
+            )
+        {
+            Grid Grid = Ledger.Grid;
+            Double MaximumDepthM = Grid.MaxDepthMm / 1000.0;
+            Int32 MaximumLayers = 0;
+            for (Int32 By = 0; By < Grid.Height; By += 1)
+            {
+                for (Int32 Bx = 0; Bx < Grid.Width; Bx += 1)
+                {
+                    MaximumLayers = Math.Max(
+                        MaximumLayers,
+                        GridMath.LayersForDepth(
+                            RequiredDepthM[By, Bx], Grid.MaxDepthMm));
+                }
+            }
+
+            Double HeadingRad = HeadingAxisDeg * Math.PI / 180.0;
+            Double AlongX = Math.Sin(HeadingRad);
+            Double AlongY = Math.Cos(HeadingRad);
+            Double CrossX = Math.Cos(HeadingRad);
+            Double CrossY = -Math.Sin(HeadingRad);
+            List<Lane> Output = new List<Lane>();
+            Int32 NextId = StartingId;
+            for (Int32 LayerIndex = 0;
+                LayerIndex < MaximumLayers;
+                LayerIndex += 1)
+            {
+                Dictionary<Int32, List<(LaneEntry Entry, Double Along)>> Bands =
+                    new Dictionary<Int32,
+                        List<(LaneEntry Entry, Double Along)>>();
+                for (Int32 By = 0; By < Grid.Height; By += 1)
+                {
+                    for (Int32 Bx = 0; Bx < Grid.Width; Bx += 1)
+                    {
+                        Double RemainingM = RequiredDepthM[By, Bx]
+                            - (LayerIndex * MaximumDepthM);
+                        Double DepthM = Math.Min(MaximumDepthM, RemainingM);
+                        if (!Grid.Valid[By, Bx]
+                            || (ExcludeEdgeWorkCells
+                                && EdgePolicy.IsEdgeWorkCell((Bx, By)))
+                            || (DepthM <= 1e-12))
+                        {
+                            continue;
+                        }
+                        Double Along = (Bx * AlongX) + (By * AlongY);
+                        Int32 Band = (Int32)Math.Round(
+                            (Bx * CrossX) + (By * CrossY),
+                            MidpointRounding.AwayFromZero);
+                        if (!Bands.TryGetValue(
+                            Band,
+                            out List<(LaneEntry Entry, Double Along)>? Entries))
+                        {
+                            Entries = new List<(LaneEntry, Double)>();
+                            Bands.Add(Band, Entries);
+                        }
+                        Entries.Add((
+                            new LaneEntry(
+                                (Bx, By),
+                                LayerIndex,
+                                DepthM,
+                                DepthM * BcyPerDepthM),
+                            Along));
+                    }
+                }
+
+                foreach (KeyValuePair<Int32,
+                    List<(LaneEntry Entry, Double Along)>> Band in Bands
+                        .OrderBy(Pair => Pair.Key))
+                {
+                    List<LaneEntry> Current = new List<LaneEntry>();
+                    (Int32 Bx, Int32 By)? Previous = null;
+                    foreach ((LaneEntry Entry, Double Along) Item in Band.Value
+                        .OrderBy(Item => Item.Along)
+                        .ThenBy(Item => Item.Entry.Cell.Bx)
+                        .ThenBy(Item => Item.Entry.Cell.By))
+                    {
+                        if (Previous.HasValue
+                            && ((Math.Abs(Item.Entry.Cell.Bx
+                                    - Previous.Value.Bx) > 1)
+                                || (Math.Abs(Item.Entry.Cell.By
+                                    - Previous.Value.By) > 1)))
+                        {
+                            FlushLane();
+                        }
+                        Current.Add(Item.Entry);
+                        Previous = Item.Entry.Cell;
+                    }
+                    FlushLane();
+
+                    void FlushLane()
+                    {
+                        if (Current.Count == 0) return;
+                        Output.Add(new Lane(
+                            NextId,
+                            Kind,
+                            LaneAxis.UserHeading,
+                            LayerIndex,
+                            Current.ToList(),
+                            Grid,
+                            HeadingAxisDeg));
+                        NextId += 1;
+                        Current.Clear();
+                        Previous = null;
+                    }
+                }
+            }
             return Output;
         }
 
