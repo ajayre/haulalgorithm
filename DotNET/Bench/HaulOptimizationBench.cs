@@ -132,6 +132,15 @@ internal static class HaulOptimizationBench
             Args,
             "--render-route-sequence-output=",
             Path.Combine("assets", "optimized_route_sequence.png"));
+        Int32 RandomRouteTripletCount = Math.Max(
+            0,
+            ReadIntOption(Args, "--render-random-route-triplets=", 0));
+        Int32 RandomRouteTripletSeed = ReadIntOption(
+            Args, "--render-route-triplet-seed=", 20260716);
+        String RandomRouteTripletDirectory = ReadStringOption(
+            Args,
+            "--render-route-triplet-dir=",
+            Path.Combine("assets", "theshop2_random_route_triplets"));
         String LevelingGifPath = ReadStringOption(
             Args,
             "--render-leveling-gif=",
@@ -849,6 +858,40 @@ internal static class HaulOptimizationBench
                 RouteSequenceStart,
                 3,
                 Path.GetFullPath(RouteSequenceOutputPath));
+        }
+        if (RandomRouteTripletCount > 0)
+        {
+            Random Random = new Random(RandomRouteTripletSeed);
+            HashSet<Int32> Starts = new HashSet<Int32>();
+            Int32 MaximumStart = ExactResult.Plan.Passes.Count - 2;
+            while (Starts.Count < Math.Min(
+                RandomRouteTripletCount, MaximumStart))
+            {
+                Starts.Add(Random.Next(1, MaximumStart + 1));
+            }
+            String DirectoryPath = Path.GetFullPath(
+                RandomRouteTripletDirectory);
+            foreach (Int32 Start in Starts.OrderBy(Value => Value))
+            {
+                RenderExactRouteSequence(
+                    ExactResult.Plan,
+                    Grid,
+                    Options.BladeWidthMm / 1000.0,
+                    Start,
+                    3,
+                    Path.Combine(
+                        DirectoryPath,
+                        String.Format(
+                            CultureInfo.InvariantCulture,
+                            "routes_{0:D4}_{1:D4}.png",
+                            Start,
+                            Start + 2)));
+            }
+            Console.WriteLine(
+                "random_route_triplets count={0} seed={1} directory={2}",
+                Starts.Count,
+                RandomRouteTripletSeed,
+                DirectoryPath);
         }
         Double ExactHours = ExactResult.DeterministicSeconds / 3600.0;
         Double SavingsPercent = 100.0 * (433.483 - ExactHours) / 433.483;
