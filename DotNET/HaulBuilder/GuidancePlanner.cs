@@ -2654,18 +2654,72 @@ public static class GuidancePlanner
                         }
                     }
                 }
-                RunSequencer.Result ConnectedFillSequence =
-                    BuildSequence(Fill.Runs, Grid, CutExit, NextWorkEntry);
+                Double BaselineDirectionScoreM = Double.PositiveInfinity;
+                Double SelectedDirectionScoreM = Double.PositiveInfinity;
+                Int32 DirectionCandidatesEvaluated = 0;
+                RunSequencer.Result ConnectedFillSequence = GradeReturn
+                    ? SelectGradeAwareFillDirection(
+                        Fill.Runs,
+                        FillSequence,
+                        Grid,
+                        CutExit,
+                        NextWorkEntry,
+                        out BaselineDirectionScoreM,
+                        out SelectedDirectionScoreM,
+                        out DirectionCandidatesEvaluated)
+                    : BuildSequence(
+                        Fill.Runs, Grid, CutExit, NextWorkEntry);
                 if (ConnectedFillSequence.Success
-                    && (!GradeReturn || SupportsGradeReturn(ConnectedFillSequence, Grid))
+                    && (!GradeReturn || SupportsGradeReturn(
+                        ConnectedFillSequence,
+                        Grid,
+                        FillSequencePrepared: true))
                     && SequencesConnect(CutSequence, ConnectedFillSequence, Grid)
-                    && (!NextWorkEntry.HasValue
+                    && (GradeReturn
+                        || !NextWorkEntry.HasValue
                         || SequenceConnectsToPose(
                             ConnectedFillSequence,
                             NextWorkEntry.Value,
                             Grid)))
                 {
                     FillSequence = ConnectedFillSequence;
+                }
+                if (GradeReturn)
+                {
+                    Diagnostic?.Invoke(String.Format(
+                        CultureInfo.InvariantCulture,
+                        "whole_plan grade_aware_fill_direction pass={0} candidates={1} baseline_m={2:F2} selected_m={3:F2} improvement_m={4:F2} entry=({5:F1},{6:F1},{7:F1}) post_grade=({8:F1},{9:F1},{10:F1})",
+                        PassIndex + 1,
+                        DirectionCandidatesEvaluated,
+                        BaselineDirectionScoreM,
+                        SelectedDirectionScoreM,
+                        Double.IsFinite(BaselineDirectionScoreM)
+                            && Double.IsFinite(SelectedDirectionScoreM)
+                                ? BaselineDirectionScoreM
+                                    - SelectedDirectionScoreM
+                                : 0.0,
+                        ConnectedFillSequence.Runs.Count == 0
+                            ? 0.0
+                            : ConnectedFillSequence.Runs[0].EntryPose.X,
+                        ConnectedFillSequence.Runs.Count == 0
+                            ? 0.0
+                            : ConnectedFillSequence.Runs[0].EntryPose.Y,
+                        ConnectedFillSequence.Runs.Count == 0
+                            ? 0.0
+                            : ConnectedFillSequence.Runs[0].EntryPose.HeadingDeg,
+                        ConnectedFillSequence.Runs.Count == 0
+                            ? 0.0
+                            : ReversePose(
+                                ConnectedFillSequence.Runs[0].EntryPose).X,
+                        ConnectedFillSequence.Runs.Count == 0
+                            ? 0.0
+                            : ReversePose(
+                                ConnectedFillSequence.Runs[0].EntryPose).Y,
+                        ConnectedFillSequence.Runs.Count == 0
+                            ? 0.0
+                            : ReversePose(
+                                ConnectedFillSequence.Runs[0].EntryPose)
+                                .HeadingDeg));
                 }
                 if (((PassIndex + 1) < PassCount)
                     && ((CutPlans[PassIndex + 1]?.Runs.Count ?? 0) == 0)
@@ -3828,6 +3882,189 @@ public static class GuidancePlanner
             Math.Min(0.5, Grid.GridSizeM),
             Grid);
     }
+
+    /// <summary>
+    /// Compares both complete fill bearings using the actual post-grade exit.
+    /// Reverse grading finishes at the fill's entry end, so an ordinary sequence
+    /// end anchor scores the wrong route boundary when grade return is enabled.
+    /// </summary>
+    static internal RunSequencer.Result SelectGradeAwareFillDirection
+        (
+        List<CoveragePlanner.Run> Runs,
+        RunSequencer.Result Existing,
+        Grid Grid,
+        ConnectorPlanner.Pose CutExit,
+        ConnectorPlanner.Pose? NextWorkEntry,
+        out Double BaselineScoreM,
+        out Double SelectedScoreM,
+        out Int32 CandidatesEvaluated
+        )
+    {
+        if (Runs == null) throw new ArgumentNullException(nameof(Runs));
+        if (Existing == null) throw new ArgumentNullException(nameof(Existing));
+        if (Grid == null) throw new ArgumentNullException(nameof(Grid));
+        BaselineScoreM = Double.PositiveInfinity;
+        SelectedScoreM = Double.PositiveInfinity;
+        CandidatesEvaluated = 0;
+        if (!Existing.Success || (Runs.Count == 0)) return Existing;
+
+        List<RunSequencer.Result> Seeds = new List<RunSequencer.Result>
+        {
+            Existing,
+            LifecyclePlanner.ReversePreparedSequence(Existing),
+            BuildSequence(Runs, Grid, CutExit, null),
+        };
+        if (NextWorkEntry.HasValue)
+        {
+            // Reversing a forward connector from the post-grade exit to the
+            // next work pose produces a connector from the reversed next-work
+            // pose to the fill entry.  This anchor exposes the other bearing
+            // without weakening any connector rule.
+            Seeds.Add(BuildSequence(
+                Runs,
+                Grid,
+                ReversePose(NextWorkEntry.Value),
+                null));
+        }
+
+        RunSequencer.Result Best = Existing;
+        Int32 BestManualAssists = Int32.MaxValue;
+        HashSet<String> Seen = new HashSet<String>(StringComparer.Ordinal);
+        for (Int32 SeedIndex = 0; SeedIndex < Seeds.Count; SeedIndex += 1)
+        {
+            RunSequencer.Result Seed = Seeds[SeedIndex];
+            if (!Seed.Success || (Seed.Runs.Count == 0)) continue;
+            RunSequencer.Result Prepared =
+                LifecyclePlanner.BuildContinuousFillSequence(
+                    Seed,
+                    CutExit,
+                    PlanningMinimumRadiusM,
+                    Math.Min(0.5, Grid.GridSizeM),
+                    Grid);
+            if (!Prepared.Success || (Prepared.Runs.Count == 0)) continue;
+            String Key = SequenceDirectionSignature(Prepared);
+            if (!Seen.Add(Key)) continue;
+            if (!TryScoreGradeAwareFillDirection(
+                Prepared,
+                Grid,
+                CutExit,
+                NextWorkEntry,
+                out Double ScoreM,
+                out Int32 ManualAssists))
+            {
+                continue;
+            }
+            CandidatesEvaluated += 1;
+            if (SeedIndex == 0) BaselineScoreM = ScoreM;
+            if ((ManualAssists > BestManualAssists)
+                || ((ManualAssists == BestManualAssists)
+                    && (ScoreM >= SelectedScoreM - 1e-9)))
+            {
+                continue;
+            }
+            Best = Prepared;
+            BestManualAssists = ManualAssists;
+            SelectedScoreM = ScoreM;
+        }
+        if (!Double.IsFinite(SelectedScoreM)
+            && Double.IsFinite(BaselineScoreM))
+        {
+            SelectedScoreM = BaselineScoreM;
+        }
+        return Best;
+    }
+
+    /// <summary>Scores the true cut-to-fill-to-grade-to-next-work boundary.</summary>
+    private static Boolean TryScoreGradeAwareFillDirection
+        (
+        RunSequencer.Result Fill,
+        Grid Grid,
+        ConnectorPlanner.Pose CutExit,
+        ConnectorPlanner.Pose? NextWorkEntry,
+        out Double ScoreM,
+        out Int32 ManualAssists
+        )
+    {
+        ScoreM = Double.PositiveInfinity;
+        ManualAssists = Int32.MaxValue;
+        if (!LifecyclePlanner.SupportsPreparedGradeReturn(
+            Fill,
+            PlanningMinimumRadiusM,
+            Math.Min(0.5, Grid.GridSizeM),
+            Grid,
+            out _))
+        {
+            return false;
+        }
+        TransitPlanner.Result Inbound = TransitPlanner.Connect(
+            CutExit,
+            Fill.Runs[0].EntryPose,
+            PlanningMinimumRadiusM,
+            Math.Min(0.5, Grid.GridSizeM),
+            Grid,
+            EdgeAllowanceM: Grid.GridSizeM,
+            AllowForwardDetour: true);
+        if (!Inbound.Success) return false;
+        List<RunSequencer.SequencedRun> GradeRuns =
+            LifecyclePlanner.BuildGradeRuns(
+                Fill.Runs,
+                PlanningPreferredLineupM,
+                PlanningMinimumRadiusM,
+                Math.Min(0.5, Grid.GridSizeM),
+                Grid);
+        TransitPlanner.Result TurnToGrade = TransitPlanner.Connect(
+            Fill.Runs[Fill.Runs.Count - 1].ExitPose,
+            GradeRuns[0].EntryPose,
+            PlanningMinimumRadiusM,
+            Math.Min(0.5, Grid.GridSizeM),
+            Grid,
+            EdgeAllowanceM: Grid.GridSizeM,
+            AllowForwardDetour: true);
+        if (!TurnToGrade.Success) return false;
+        TransitPlanner.Result? Outbound = null;
+        if (NextWorkEntry.HasValue)
+        {
+            Outbound = TransitPlanner.Connect(
+                GradeRuns[GradeRuns.Count - 1].ExitPose,
+                NextWorkEntry.Value,
+                PlanningMinimumRadiusM,
+                Math.Min(0.5, Grid.GridSizeM),
+                Grid,
+                EdgeAllowanceM: Grid.GridSizeM,
+                AllowForwardDetour: true);
+            if (!Outbound.Success) return false;
+        }
+        ScoreM = Inbound.LengthM
+            + TurnToGrade.LengthM
+            + (2.0 * Fill.ConnectorDistanceM)
+            + (Outbound?.LengthM ?? 0.0);
+        ManualAssists = ConnectorManualAssistCount(Inbound)
+            + ConnectorManualAssistCount(TurnToGrade)
+            + (Outbound == null ? 0 : ConnectorManualAssistCount(Outbound))
+            + (2 * Fill.Connectors.Sum(ConnectorManualAssistCount));
+        return true;
+    }
+
+    /// <summary>Returns a deterministic signature for a prepared drive direction.</summary>
+    private static String SequenceDirectionSignature
+        (
+        RunSequencer.Result Sequence
+        ) => String.Join(
+            ";",
+            Sequence.Runs.Select(Run => String.Format(
+                CultureInfo.InvariantCulture,
+                "{0:F2},{1:F2}>{2:F2},{3:F2}@{4:F1}",
+                Run.Run.StartXy.X,
+                Run.Run.StartXy.Y,
+                Run.Run.EndXy.X,
+                Run.Run.EndXy.Y,
+                Run.Run.HeadingDeg)));
+
+    /// <summary>Counts explicit operator-alignment legs in one connector.</summary>
+    private static Int32 ConnectorManualAssistCount
+        (
+        TransitPlanner.Result Connector
+        ) => Connector.Legs.Count(Leg => Leg.OperatorAlignmentRequired);
 
     /// <summary>
     /// Preserves a compact cut layout by trying bounded endpoint recovery before

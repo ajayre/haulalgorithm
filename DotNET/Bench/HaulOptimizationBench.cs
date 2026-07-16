@@ -148,6 +148,12 @@ internal static class HaulOptimizationBench
             Args,
             "--render-route-sequence-output=",
             Path.Combine("assets", "optimized_route_sequence.png"));
+        HashSet<Int32> RouteSequenceStarts = ReadIntSetOption(
+            Args, "--render-route-sequence-starts=");
+        String RouteSequenceOutputDirectory = ReadStringOption(
+            Args,
+            "--render-route-sequence-dir=",
+            Path.Combine("assets", "optimized_route_sequences"));
         Int32 RandomRouteTripletCount = Math.Max(
             0,
             ReadIntOption(Args, "--render-random-route-triplets=", 0));
@@ -831,6 +837,8 @@ internal static class HaulOptimizationBench
                         TargetFrames = 100,
                         EarlyPerPass = 0,
                         GifMs = 100,
+                        ProgressDurationMs = 10000,
+                        FinalHoldMs = 4000,
                         Title = "The Shop 2 - optimized leveling progress",
                     });
             if (Animation.GifBytes == null)
@@ -1022,6 +1030,24 @@ internal static class HaulOptimizationBench
                 RouteSequenceStart,
                 3,
                 Path.GetFullPath(RouteSequenceOutputPath));
+        }
+        foreach (Int32 Start in RouteSequenceStarts
+            .Where(Start => Start > 0)
+            .OrderBy(Start => Start))
+        {
+            RenderExactRouteSequence(
+                ExactResult.Plan,
+                Grid,
+                Options.BladeWidthMm / 1000.0,
+                Start,
+                3,
+                Path.Combine(
+                    Path.GetFullPath(RouteSequenceOutputDirectory),
+                    String.Format(
+                        CultureInfo.InvariantCulture,
+                        "routes_{0:D4}_{1:D4}.png",
+                        Start,
+                        Start + 2)));
         }
         if (RandomRouteTripletCount > 0)
         {

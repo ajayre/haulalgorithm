@@ -2367,6 +2367,37 @@ namespace HaulBuilder
         }
 
         /// <summary>
+        /// Reverses the complete drive order of a prepared work sequence.  Every
+        /// work run, sampled connector, lineup, and coverage-shortfall endpoint
+        /// is reversed without changing the assigned cells or depths.
+        /// </summary>
+        static internal RunSequencer.Result ReversePreparedSequence
+            (
+            RunSequencer.Result Sequence
+            )
+        {
+            if (Sequence == null) throw new ArgumentNullException(nameof(Sequence));
+            List<RunSequencer.SequencedRun> Runs = Sequence.Runs
+                .AsEnumerable()
+                .Reverse()
+                .Select(ReverseSequencedRun)
+                .ToList();
+            List<TransitPlanner.Result> Connectors = Sequence.Connectors
+                .AsEnumerable()
+                .Reverse()
+                .Select(ReverseTransit)
+                .ToList();
+            return new RunSequencer.Result(
+                Sequence.Success,
+                Runs,
+                Connectors,
+                Sequence.ConnectorDistanceM,
+                Sequence.MinimumLineupM,
+                Sequence.FailureReason,
+                Sequence.InfeasibleRunIndices);
+        }
+
+        /// <summary>
         /// Checks the forward-only turnaround and reverse-order connectors needed to
         /// grade an already prepared fill sequence.  Unlike <see cref="Build"/>, this
         /// does not rebuild the fill sequence or allocate lifecycle segments merely

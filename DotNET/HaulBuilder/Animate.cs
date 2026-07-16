@@ -133,6 +133,17 @@ namespace HaulBuilder
             /// <summary>Gets or sets GIF frame delay in milliseconds.</summary>
             public Int32 GifMs { get; set; } = 90;
 
+            /// <summary>
+            /// Gets or sets the optional exact duration of the progressing
+            /// portion of the GIF.  The final completed frame hold is not
+            /// included.  When omitted, <see cref="GifMs"/> is applied to
+            /// every progressing frame.
+            /// </summary>
+            public Int32? ProgressDurationMs { get; set; }
+
+            /// <summary>Gets or sets the completed-frame hold duration.</summary>
+            public Int32 FinalHoldMs { get; set; } = 4000;
+
             /// <summary>Gets or sets on-grade tolerance in metres.</summary>
             public Double ToleranceM { get; set; } = 0.010;
 
@@ -224,7 +235,11 @@ namespace HaulBuilder
 
             if (Payload.FramePngBytes.Count > 0)
             {
-                Payload.GifBytes = BuildGif(Payload.FramePngBytes, Opt.GifMs);
+                Payload.GifBytes = BuildGif(
+                    Payload.FramePngBytes,
+                    Opt.GifMs,
+                    Opt.ProgressDurationMs,
+                    Opt.FinalHoldMs);
             }
 
             return Payload;
@@ -775,20 +790,26 @@ namespace HaulBuilder
         private static Byte[] BuildGif
             (
             IReadOnlyList<Byte[]> frames,
-            Int32 gifMs
+            Int32 gifMs,
+            Int32? progressDurationMs = null,
+            Int32 finalHoldMs = 4000
             )
         {
             // Last-frame hold mirrors Python UX so the completed grade remains visible.
+            IReadOnlyList<Int32> DelaysCs = ComputeGifFrameDelaysCs(
+                frames.Count,
+                gifMs,
+                progressDurationMs,
+                finalHoldMs);
             using Image<Rgba32> First = Image.Load<Rgba32>(frames[0]);
-            SetGifDelay(First.Frames.RootFrame, gifMs);
+            SetGifDelayCentiseconds(First.Frames.RootFrame, DelaysCs[0]);
             for (Int32 Iter = 1; Iter < frames.Count; Iter += 1)
             {
                 using Image<Rgba32> Next = Image.Load<Rgba32>(frames[Iter]);
                 ImageFrame<Rgba32> Added = First.Frames.AddFrame(Next.Frames.RootFrame);
-                SetGifDelay(Added, gifMs);
+                SetGifDelayCentiseconds(Added, DelaysCs[Iter]);
             }
 
-            SetGifDelay(First.Frames[First.Frames.Count - 1], 4000);
             First.Metadata.GetGifMetadata().RepeatCount = 0;
 
             using MemoryStream Stream = new MemoryStream();
@@ -796,15 +817,72 @@ namespace HaulBuilder
             return Stream.ToArray();
         }
 
-        private static void SetGifDelay
+        /// <summary>Computes GIF frame delays in centiseconds.</summary>
+        internal static IReadOnlyList<Int32> ComputeGifFrameDelaysCs
             (
-            ImageFrame<Rgba32> frame,
-            Int32 delayMs
+            Int32 frameCount,
+            Int32 gifMs,
+            Int32? progressDurationMs,
+            Int32 finalHoldMs
             )
         {
-            // GIF delays are in hundredths of a second; clamp to minimum 1 tick.
-            Int32 DelayCs = Math.Max(1, (Int32)Math.Round((delayMs / 10.0), MidpointRounding.AwayFromZero));
-            frame.Metadata.GetGifMetadata().FrameDelay = DelayCs;
+            if (frameCount <= 0)
+            {
+                return Array.Empty<Int32>();
+            }
+
+            Int32[] DelaysCs = new Int32[frameCount];
+            Int32 ProgressFrameCount = frameCount - 1;
+            if (ProgressFrameCount > 0)
+            {
+                if (progressDurationMs.HasValue)
+                {
+                    Int32 TotalProgressCs = Math.Max(
+                        ProgressFrameCount,
+                        (Int32)Math.Round(
+                            progressDurationMs.Value / 10.0,
+                            MidpointRounding.AwayFromZero));
+                    for (Int32 Iter = 0; Iter < ProgressFrameCount; Iter += 1)
+                    {
+                        // Integer interval differences spread the rounding
+                        // evenly while preserving the exact requested total.
+                        Int64 Start = (Int64)Iter * TotalProgressCs
+                            / ProgressFrameCount;
+                        Int64 End = (Int64)(Iter + 1) * TotalProgressCs
+                            / ProgressFrameCount;
+                        DelaysCs[Iter] = Math.Max(1, (Int32)(End - Start));
+                    }
+                }
+                else
+                {
+                    Int32 UniformDelayCs = Math.Max(
+                        1,
+                        (Int32)Math.Round(
+                            gifMs / 10.0,
+                            MidpointRounding.AwayFromZero));
+                    Array.Fill(
+                        DelaysCs,
+                        UniformDelayCs,
+                        0,
+                        ProgressFrameCount);
+                }
+            }
+
+            DelaysCs[frameCount - 1] = Math.Max(
+                1,
+                (Int32)Math.Round(
+                    finalHoldMs / 10.0,
+                    MidpointRounding.AwayFromZero));
+            return DelaysCs;
+        }
+
+        private static void SetGifDelayCentiseconds
+            (
+            ImageFrame<Rgba32> frame,
+            Int32 delayCs
+            )
+        {
+            frame.Metadata.GetGifMetadata().FrameDelay = Math.Max(1, delayCs);
         }
     }
 }
