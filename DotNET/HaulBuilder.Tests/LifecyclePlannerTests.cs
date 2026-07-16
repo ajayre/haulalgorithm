@@ -191,6 +191,108 @@ namespace HaulBuilder.Tests
         }
 
         /// <summary>
+        /// Verifies cut endpoint distance borrowed by flexible sequencing is
+        /// completed blade-down on the internal connector rather than omitted.
+        /// </summary>
+        [Fact]
+        public void Build_FlexibleCutEndpoints_KeepBladeDownOnConnectorTails
+            (
+            )
+        {
+            Grid Grid = MakeGrid();
+            CoveragePlanner.Run FirstRun = MakeRun(4.0, 8.0, 10.0, 90.0);
+            CoveragePlanner.Run SecondRun = MakeRun(16.0, 20.0, 12.0, 90.0);
+            RunSequencer.SequencedRun First =
+                new RunSequencer.SequencedRun(
+                    FirstRun,
+                    new ConnectorPlanner.Pose(4.0, 10.0, 90.0),
+                    new ConnectorPlanner.Pose(8.0, 10.0, 90.0),
+                    0.0,
+                    0.0,
+                    0.0,
+                    2.0);
+            RunSequencer.SequencedRun Second =
+                new RunSequencer.SequencedRun(
+                    SecondRun,
+                    new ConnectorPlanner.Pose(16.0, 12.0, 90.0),
+                    new ConnectorPlanner.Pose(20.0, 12.0, 90.0),
+                    0.0,
+                    0.0,
+                    3.0,
+                    0.0);
+            List<(Double X, Double Y)> ConnectorPoints =
+                new List<(Double X, Double Y)>
+                {
+                    (8.0, 10.0),
+                    (10.0, 10.0),
+                    (12.0, 11.0),
+                    (14.0, 12.0),
+                    (16.0, 12.0),
+                };
+            Double ConnectorLengthM = 0.0;
+            for (Int32 Index = 1; Index < ConnectorPoints.Count; Index += 1)
+            {
+                Double Dx = ConnectorPoints[Index].X
+                    - ConnectorPoints[Index - 1].X;
+                Double Dy = ConnectorPoints[Index].Y
+                    - ConnectorPoints[Index - 1].Y;
+                ConnectorLengthM += Math.Sqrt((Dx * Dx) + (Dy * Dy));
+            }
+            TransitPlanner.Result Connector = new TransitPlanner.Result(
+                true,
+                false,
+                ConnectorPoints,
+                ConnectorLengthM,
+                new List<TransitPlanner.Leg>
+                {
+                    new TransitPlanner.Leg(false, ConnectorPoints),
+                },
+                0.0,
+                "AUTO_CURVE",
+                String.Empty);
+            RunSequencer.Result Cut = new RunSequencer.Result(
+                true,
+                new List<RunSequencer.SequencedRun> { First, Second },
+                new List<TransitPlanner.Result> { Connector },
+                ConnectorLengthM,
+                0.0,
+                String.Empty);
+            RunSequencer.Result Empty = new RunSequencer.Result(
+                true,
+                new List<RunSequencer.SequencedRun>(),
+                new List<TransitPlanner.Result>(),
+                0.0,
+                0.0,
+                String.Empty);
+
+            LifecyclePlanner.Result Result = LifecyclePlanner.Build(
+                new List<LifecyclePlanner.PassPlan>
+                {
+                    new LifecyclePlanner.PassPlan(Cut, Empty),
+                },
+                false,
+                LINEUP_M,
+                RADIUS_M,
+                SAMPLE_M,
+                Grid);
+
+            Assert.True(Result.Success, Result.FailureReason);
+            List<LifecyclePlanner.Segment> CutSegments = Result.Segments
+                .Where(Segment => Segment.Phase == LifecyclePlanner.Phase.Cut)
+                .ToList();
+            Assert.Equal(4, CutSegments.Count);
+            Assert.All(CutSegments, Segment => Assert.True(Segment.BladeDown));
+            Assert.Equal(13.0, CutSegments.Sum(SegmentLength), 6);
+            Assert.Equal(
+                ConnectorLengthM - 5.0,
+                Result.Segments
+                    .Where(Segment =>
+                        Segment.Phase == LifecyclePlanner.Phase.Transit)
+                    .Sum(SegmentLength),
+                6);
+        }
+
+        /// <summary>
         /// Verifies collinear fragments from one route are filled continuously,
         /// turned once, and graded continuously in reverse order.
         /// </summary>

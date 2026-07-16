@@ -2401,6 +2401,7 @@ public static class GuidancePlanner
                 Cut.Runs, Grid, CutSearchStart, FillEntry);
             if (!CutSequence.Success || !SequencesConnect(CutSequence, FillSequence, Grid))
             {
+                Int32 InitialCutCandidateIndex = 0;
                 foreach (CoveragePlanner.PlanResult Candidate in
                     MinimalOmissionCandidates(
                         Route.OrderedPasses[PassIndex].CutCells,
@@ -2410,8 +2411,24 @@ public static class GuidancePlanner
                         FillEntry.HasValue ? (FillEntry.Value.X, FillEntry.Value.Y) : null)
                     .Take(MAX_INITIAL_CUT_CANDIDATE_ATTEMPTS))
                 {
-                    RunSequencer.Result CandidateSequence = BuildSequence(
-                        Candidate.Runs, Grid, CutSearchStart, FillEntry);
+                    RunSequencer.Result CandidateSequence =
+                        BuildCutSequenceWithEndpointRecovery(
+                            Candidate.Runs,
+                            Grid,
+                            CutSearchStart,
+                            FillEntry);
+                    Diagnostic?.Invoke(String.Format(
+                        CultureInfo.InvariantCulture,
+                        "whole_plan initial_cut_candidate pass={0} index={1} heading={2:F1} runs={3} success={4} connects={5} reason={6}",
+                        PassIndex + 1,
+                        InitialCutCandidateIndex,
+                        Candidate.HeadingDeg,
+                        Candidate.Runs.Count,
+                        CandidateSequence.Success,
+                        CandidateSequence.Success
+                            && SequencesConnect(CandidateSequence, FillSequence, Grid),
+                        CandidateSequence.FailureReason));
+                    InitialCutCandidateIndex += 1;
                     if (!CandidateSequence.Success
                         || !SequencesConnect(CandidateSequence, FillSequence, Grid)) continue;
                     Cut = Candidate;
@@ -2482,7 +2499,7 @@ public static class GuidancePlanner
                     ConnectorPlanner.Pose CandidateFillEntry =
                         ProvisionalFillSequence.Runs[0].EntryPose;
                     RunSequencer.Result CandidateCutSequence =
-                        BuildSequence(
+                        BuildCutSequenceWithEndpointRecovery(
                             CutCandidate.Runs,
                             Grid,
                             CutSearchStart,
@@ -2537,12 +2554,24 @@ public static class GuidancePlanner
                 }
                 Diagnostic?.Invoke(String.Format(
                     CultureInfo.InvariantCulture,
-                    "whole_plan pair_result pass={0} attempts={1} selected={2} fill_index={3} cut_index={4} truncated={5}",
+                    "whole_plan pair_result pass={0} attempts={1} selected={2} fill_index={3} cut_index={4} cut_heading={5:F1} cut_runs={6} fill_heading={7:F1} fill_runs={8} truncated={9}",
                     PassIndex + 1,
                     PairAttempts,
                     SelectedPair,
                     SelectedFillIndex,
                     SelectedCutIndex,
+                    SelectedCutIndex >= 0
+                        ? CutCandidates[SelectedCutIndex].HeadingDeg
+                        : -1.0,
+                    SelectedCutIndex >= 0
+                        ? CutCandidates[SelectedCutIndex].Runs.Count
+                        : -1,
+                    SelectedFillIndex >= 0
+                        ? FillCandidates[SelectedFillIndex].HeadingDeg
+                        : -1.0,
+                    SelectedFillIndex >= 0
+                        ? FillCandidates[SelectedFillIndex].Runs.Count
+                        : -1,
                     !SelectedPair && (PairAttempts < CandidatePairs.Count)));
             }
             ReportStage("paired_cut_fill_recovery");
@@ -3754,6 +3783,46 @@ public static class GuidancePlanner
             PlanningMinimumRadiusM,
             Math.Min(0.5, Grid.GridSizeM),
             Grid);
+    }
+
+    /// <summary>
+    /// Preserves a compact cut layout by trying bounded endpoint recovery before
+    /// the coverage search falls through to a more fragmented heading. Flexible
+    /// endpoint distance remains explicit coverage shortfall and the lifecycle
+    /// performs it blade-down on the adjoining connector.
+    /// </summary>
+    static internal RunSequencer.Result BuildCutSequenceWithEndpointRecovery
+        (
+        List<CoveragePlanner.Run> Runs,
+        Grid Grid,
+        ConnectorPlanner.Pose? Start = null,
+        ConnectorPlanner.Pose? End = null
+        )
+    {
+        RunSequencer.Result Strict = BuildSequence(Runs, Grid, Start, End);
+        if (Strict.Success) return Strict;
+        RunSequencer.Result Recovered =
+            BuildFlexibleSequence(Runs, Grid, Start, End);
+        if (!Recovered.Success || (Recovered.Runs.Count == 0))
+        {
+            return Recovered;
+        }
+        // Internal shortfalls are worked blade-down by AppendSequenceConnector.
+        // A shortfall at the outer ends has no adjoining work connector and would
+        // therefore change the completed cut surface, so reject it transactionally.
+        if ((Recovered.Runs[0].StartCoverageShortfallM > 1e-9)
+            || (Recovered.Runs[Recovered.Runs.Count - 1]
+                .EndCoverageShortfallM > 1e-9))
+        {
+            return new RunSequencer.Result(
+                false,
+                Recovered.Runs,
+                Recovered.Connectors,
+                Recovered.ConnectorDistanceM,
+                Recovered.MinimumLineupM,
+                "Compact cut recovery would leave an external coverage shortfall.");
+        }
+        return Recovered;
     }
 
     /// <summary>

@@ -650,6 +650,19 @@ internal static class HaulOptimizationBench
         }
 
         GuidanceTiming.Result Timing = ExactResult.Plan!.Timing;
+        Double ExactCutCoverageShortfallM = ExactResult.Plan.Passes
+            .SelectMany(Pass => Pass.Cut.Runs)
+            .Sum(Run => Run.StartCoverageShortfallM
+                + Run.EndCoverageShortfallM);
+        Double ExactFillCoverageShortfallM = ExactResult.Plan.Passes
+            .SelectMany(Pass => Pass.Fill.Runs)
+            .Sum(Run => Run.StartCoverageShortfallM
+                + Run.EndCoverageShortfallM);
+        Double ExactExternalCutCoverageShortfallM = ExactResult.Plan.Passes
+            .Where(Pass => Pass.Cut.Runs.Count > 0)
+            .Sum(Pass => Pass.Cut.Runs[0].StartCoverageShortfallM
+                + Pass.Cut.Runs[Pass.Cut.Runs.Count - 1]
+                    .EndCoverageShortfallM);
         Console.WriteLine("exact_success=True");
         Console.WriteLine(String.Format(
             CultureInfo.InvariantCulture,
@@ -663,6 +676,12 @@ internal static class HaulOptimizationBench
             Timing.MotionBlockCount,
             Timing.CurvatureLimitedDistanceM,
             Timer.Elapsed.TotalMinutes));
+        Console.WriteLine(String.Format(
+            CultureInfo.InvariantCulture,
+            "exact_nominal_cut_coverage_shortfall_m={0:F3} exact_external_cut_coverage_shortfall_m={1:F3} exact_nominal_fill_coverage_shortfall_m={2:F3}",
+            ExactCutCoverageShortfallM,
+            ExactExternalCutCoverageShortfallM,
+            ExactFillCoverageShortfallM));
         foreach (LifecyclePlanner.Phase Phase in Timing.PhaseSeconds.Keys.OrderBy(Value => Value))
         {
             Timing.PhaseDistanceM.TryGetValue(Phase, out Double DistanceM);
@@ -699,40 +718,51 @@ internal static class HaulOptimizationBench
                 PassNumber,
                 Pass.Cut.Runs.Count,
                 Pass.Fill.Runs.Count);
-            for (Int32 RunIndex = 0;
-                RunIndex < Pass.Fill.Runs.Count;
-                RunIndex += 1)
+            WriteExactRuns("cut", Pass.Cut.Runs);
+            WriteExactRuns("fill", Pass.Fill.Runs);
+
+            void WriteExactRuns
+                (
+                String Kind,
+                IReadOnlyList<RunSequencer.SequencedRun> Runs
+                )
             {
-                CoveragePlanner.Run Run = Pass.Fill.Runs[RunIndex].Run;
-                Int32 MinimumBx = Run.Cells.Min(Entry => Entry.Cell.Bx);
-                Int32 MaximumBx = Run.Cells.Max(Entry => Entry.Cell.Bx);
-                Int32 MinimumBy = Run.Cells.Min(Entry => Entry.Cell.By);
-                Int32 MaximumBy = Run.Cells.Max(Entry => Entry.Cell.By);
-                List<Double> EdgeHeadings = Run.Cells
-                    .Select(Entry => ExactEdgePolicy.TryGetParallelHeadingDeg(
-                        Entry.Cell, out Double EdgeHeadingDeg)
-                            ? (Double?)EdgeHeadingDeg
-                            : null)
-                    .Where(HeadingDeg => HeadingDeg.HasValue)
-                    .Select(HeadingDeg => HeadingDeg!.Value)
-                    .ToList();
-                Console.WriteLine(String.Format(
-                    CultureInfo.InvariantCulture,
-                    "exact_route_fill_run pass={0} run={1} cells={2} heading={3:F2} length_m={4:F2} bounds=({5},{6})-({7},{8}) edge_headings={9}",
-                    PassNumber,
-                    RunIndex,
-                    Run.Cells.Count,
-                    Run.HeadingDeg,
-                    Run.LengthM,
-                    MinimumBx,
-                    MinimumBy,
-                    MaximumBx,
-                    MaximumBy,
-                    EdgeHeadings.Count == 0
-                        ? "none"
-                        : String.Join(",", EdgeHeadings
-                            .Select(HeadingDeg => HeadingDeg.ToString(
-                                "F1", CultureInfo.InvariantCulture)))));
+                for (Int32 RunIndex = 0; RunIndex < Runs.Count; RunIndex += 1)
+                {
+                    CoveragePlanner.Run Run = Runs[RunIndex].Run;
+                    Int32 MinimumBx = Run.Cells.Min(Entry => Entry.Cell.Bx);
+                    Int32 MaximumBx = Run.Cells.Max(Entry => Entry.Cell.Bx);
+                    Int32 MinimumBy = Run.Cells.Min(Entry => Entry.Cell.By);
+                    Int32 MaximumBy = Run.Cells.Max(Entry => Entry.Cell.By);
+                    List<Double> EdgeHeadings = Run.Cells
+                        .Select(Entry => ExactEdgePolicy.TryGetParallelHeadingDeg(
+                            Entry.Cell, out Double EdgeHeadingDeg)
+                                ? (Double?)EdgeHeadingDeg
+                                : null)
+                        .Where(HeadingDeg => HeadingDeg.HasValue)
+                        .Select(HeadingDeg => HeadingDeg!.Value)
+                        .ToList();
+                    Console.WriteLine(String.Format(
+                        CultureInfo.InvariantCulture,
+                        "exact_route_{0}_run pass={1} run={2} cells={3} heading={4:F2} length_m={5:F2} shortfall_m={6:F2} bounds=({7},{8})-({9},{10}) edge_headings={11}",
+                        Kind,
+                        PassNumber,
+                        RunIndex,
+                        Run.Cells.Count,
+                        Run.HeadingDeg,
+                        Run.LengthM,
+                        Runs[RunIndex].StartCoverageShortfallM
+                            + Runs[RunIndex].EndCoverageShortfallM,
+                        MinimumBx,
+                        MinimumBy,
+                        MaximumBx,
+                        MaximumBy,
+                        EdgeHeadings.Count == 0
+                            ? "none"
+                            : String.Join(",", EdgeHeadings
+                                .Select(HeadingDeg => HeadingDeg.ToString(
+                                    "F1", CultureInfo.InvariantCulture)))));
+                }
             }
         }
         if (RandomRoutePngCount > 0)
