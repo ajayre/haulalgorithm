@@ -98,6 +98,13 @@ internal static class HaulOptimizationBench
             Args,
             "--render-dir=",
             Path.Combine("assets", "optimized_random_routes"));
+        String LevelingGifPath = ReadStringOption(
+            Args,
+            "--render-leveling-gif=",
+            String.Empty);
+        Int32 LevelingGifPixelsPerBin = Math.Max(
+            1,
+            ReadIntOption(Args, "--leveling-gif-ppb=", 3));
         Stopwatch Timer = Stopwatch.StartNew();
 
         HaulBuilderOptions Options = new HaulBuilderOptions
@@ -540,6 +547,40 @@ internal static class HaulOptimizationBench
                     Group.Key,
                     Group.Count());
             }
+        }
+
+        if (!String.IsNullOrWhiteSpace(LevelingGifPath))
+        {
+            String GifPath = Path.GetFullPath(LevelingGifPath);
+            String? GifDirectory = Path.GetDirectoryName(GifPath);
+            if (!String.IsNullOrEmpty(GifDirectory))
+            {
+                Directory.CreateDirectory(GifDirectory);
+            }
+            Animate.AnimationPayload Animation =
+                Animate.AnimateLevelingSplitView(
+                    Grid,
+                    Route.OrderedPasses,
+                    new Animate.SplitLevelingOptions
+                    {
+                        PixelsPerBin = LevelingGifPixelsPerBin,
+                        TargetFrames = 100,
+                        EarlyPerPass = 0,
+                        GifMs = 100,
+                        Title = "The Shop 2 - optimized leveling progress",
+                    });
+            if (Animation.GifBytes == null)
+            {
+                throw new InvalidOperationException(
+                    "Leveling animation did not produce GIF bytes.");
+            }
+            File.WriteAllBytes(GifPath, Animation.GifBytes);
+            Console.WriteLine(String.Format(
+                CultureInfo.InvariantCulture,
+                "leveling_gif={0} frames={1} leveling_seconds=10.0 final_hold_seconds=4.0 total_seconds=14.0 bytes={2}",
+                GifPath,
+                Animation.FramePngBytes.Count,
+                Animation.GifBytes.Length));
         }
 
         if (!Exact || !Optimized.Validation.Success)

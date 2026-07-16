@@ -63,7 +63,7 @@
 
 **[0.2.14]** The edge checkpoint completes `1,168.456 BCY`, or `94.688%`, of the previously deferred matched edge work. The remaining guidance-related deferral is `65.549 BCY` cut and `65.549 BCY` fill, equal to `0.1405%` of required fill. The reported final cut deferral is `185.778 BCY` because it also includes the immutable `120.229 BCY` field cut surplus. These nine cycles remain unresolved work under section 12 and shall not be described as completed.
 
-**[0.2.15]** The edge-completion command is `dotnet DotNET/Bench/bin/Release/net8.0/Bench.dll --optimize-haul DotNET/TheShop2_2ft.agd northsouth 6 --defer-edge --complete-deferred-edge --edge-max-runs=12 --reorder-window=200 --flow-weight=1.0 --pair-2opt --exact`. `--render-random-routes=N --render-seed=S --render-dir=PATH` exports a deterministic random sample using the exact production lifecycle geometry rather than proxy polylines.
+**[0.2.15]** The edge-completion command is `dotnet DotNET/Bench/bin/Release/net8.0/Bench.dll --optimize-haul DotNET/TheShop2_2ft.agd northsouth 6 --defer-edge --complete-deferred-edge --edge-max-runs=12 --reorder-window=200 --flow-weight=1.0 --pair-2opt --exact`. `--render-random-routes=N --render-seed=S --render-dir=PATH` exports a deterministic random sample using the exact production lifecycle geometry rather than proxy polylines. `--render-leveling-gif=PATH` exports a 101-frame split cut/fill and topology replay with `100 ms` progress frames and a `4,000 ms` final hold, giving exactly `14.0 s` total duration.
 
 **[0.1.2]** Revisions follow semantic versioning: **MAJOR** denotes an incompatible normative change, **MINOR** a backward-compatible addition, and **PATCH** a clarification that does not change an obligation.
 
