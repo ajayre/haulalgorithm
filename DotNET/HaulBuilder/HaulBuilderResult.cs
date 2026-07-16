@@ -157,6 +157,12 @@ namespace HaulBuilder
         /// </summary>
         public Pivot.PivotCsvData? PivotCsvData { get; set; }
 
+        /// <summary>Gets or sets loaded-haul distance added by the pivot arm.</summary>
+        public Double PivotExtraHaulM { get; set; }
+
+        /// <summary>Gets or sets final-guidance time added by pivot avoidance.</summary>
+        public Double PivotAddedTimeS { get; set; }
+
         /// <summary>
         /// Gets rendered PNG bytes by logical artifact key.
         /// </summary>

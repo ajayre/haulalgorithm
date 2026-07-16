@@ -212,6 +212,47 @@ public static class GuidancePlanner
         return new BuildResult(Lifecycle, Timing, Guidance, SummaryTime, Passes);
     }
 
+    /// <summary>
+    /// Applies buffered static and per-route obstacles to an existing exact
+    /// guidance plan, then retimes the resulting final geometry.
+    /// </summary>
+    static public (BuildResult Plan, GuidanceObstacleRouter.Result Routing)
+        ApplyObstacleRouting
+        (
+        BuildResult Source,
+        Route Route,
+        Grid Grid,
+        AgdField Field,
+        Double HeadingDeg,
+        HaulBuilderOptions Options,
+        ObstacleField? StaticObstacles = null,
+        IReadOnlyDictionary<Int32, ObstacleField>? PerRouteObstacles = null
+        )
+    {
+        if (Source == null) throw new ArgumentNullException(nameof(Source));
+        GuidanceObstacleRouter.Result Routed = GuidanceObstacleRouter.Apply(
+            Source.Lifecycle,
+            Grid,
+            Options.TurningCircleFt * 0.5 * Constants.FEET_TO_METERS,
+            StaticObstacles,
+            PerRouteObstacles);
+        if (ReferenceEquals(Routed.Lifecycle, Source.Lifecycle))
+        {
+            return (Source, Routed);
+        }
+        GuidanceTiming.Result Timing = GuidanceTiming.Estimate(
+            Routed.Lifecycle, new GuidanceTiming.Options(Options));
+        GuidanceResult Guidance = BuildGuidanceResult(
+            Routed.Lifecycle, Timing, Route, Grid, Field, HeadingDeg, Options);
+        GuidanceTime SummaryTime = BuildSummaryTime(Timing);
+        return (new BuildResult(
+            Routed.Lifecycle,
+            Timing,
+            Guidance,
+            SummaryTime,
+            Source.Passes), Routed);
+    }
+
     /// <summary>Adapts lifecycle geometry to the established waypoint export model.</summary>
     private static GuidanceResult BuildGuidanceResult
         (
@@ -332,6 +373,7 @@ public static class GuidancePlanner
                 case "HAUL": HaulDistanceM += SegmentDistanceM; break;
                 case "RETURN": ReturnDistanceM += SegmentDistanceM; break;
                 case "MOVE": RepositionDistanceM += SegmentDistanceM; break;
+                case "MANUAL_MOVE": RepositionDistanceM += SegmentDistanceM; break;
             }
             for (Int32 PointIndex = 0;
                 PointIndex < Segment.Points.Count;
@@ -429,7 +471,7 @@ public static class GuidancePlanner
             LifecyclePlanner.Phase.Cut => "CUT",
             LifecyclePlanner.Phase.Fill => "FILL",
             LifecyclePlanner.Phase.Grade => "GRADE",
-            LifecyclePlanner.Phase.ManualAssist => "MOVE",
+            LifecyclePlanner.Phase.ManualAssist => "MANUAL_MOVE",
             _ => Segment.Loaded ? "HAUL" : "RETURN",
         };
     }
@@ -451,6 +493,8 @@ public static class GuidancePlanner
             "HAUL" => "Travel loaded",
             "RETURN" => "Travel unloaded",
             "MOVE" => "Operator-supervised guidance",
+            "MANUAL_MOVE" =>
+                "MANUAL MOVE: operator must verify and drive clear of obstruction",
             _ => "Begin guidance",
         };
     }

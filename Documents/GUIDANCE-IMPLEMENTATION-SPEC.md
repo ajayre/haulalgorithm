@@ -462,6 +462,30 @@ Manual assist fallback:
 5. Set `Automatic=false`, `Phase=ManualAssist`, and `Blade=Up`.
 6. If this also fails, return `Success=false`. Do not emit a chord or out-of-field fallback.
 
+### 9.1 Buffered obstruction overlay
+
+After the nominal lifecycle is connected and before final-centerline timing, apply
+the equipment-width-buffered static exclusion field and, when enabled, the
+parked-pivot obstacle field for the owning route.
+
+1. Blade-down `CUT`, `FILL`, and `GRADE` geometry is never rerouted.
+2. Every chord of every blade-up segment is tested against the exact buffered
+   polygon interior; fixed-count sampling is not sufficient.
+3. A blocked blade-up segment is replanned on a grid masked by the buffered
+   obstruction using the same forward-only minimum-radius transit planner.
+4. The replanned polyline remains automatic only if every chord is proven clear
+   of the exact buffered geometry and the transit planner certifies its radius,
+   containment, and alignment.
+5. A visibility-only fallback, an endpoint inside a buffer, an uncertifiable
+   turn, or any otherwise high-risk obstruction move is an explicit blade-up
+   `ManualAssist` segment. Export it as action `MANUAL_MOVE`, never as ordinary
+   `MOVE`, with an instruction requiring the operator to verify clearance.
+6. Recompute guidance distance, curvature, payload timing, route timing, field
+   efficiency allowance, and productivity from the final rerouted lifecycle.
+7. With a pivot enabled, choose the arm schedule lexicographically: first
+   minimize arm/work conflicts, then minimize pivot reposition cost. Saving a
+   pivot move shall never create an otherwise avoidable scraper conflict.
+
 ## 10. Exact pass lifecycle algorithm
 
 Implement the following in `GuidancePlanner.BuildRoute`. Build the whole route in one call.

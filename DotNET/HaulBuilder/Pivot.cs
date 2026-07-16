@@ -1046,7 +1046,7 @@ namespace HaulBuilder
         }
 
         /// <summary>
-        /// Plans a globally optimal pivot bearing schedule by dynamic programming.
+        /// Plans a guidance-first pivot bearing schedule by dynamic programming.
         /// </summary>
         /// <param name="grid">Field grid.</param>
         /// <param name="orderedPasses">Passes in executed route order.</param>
@@ -1063,7 +1063,8 @@ namespace HaulBuilder
             Double moveCost = 25.0
             )
         {
-            // The DP trades off arm moves against pass detours exactly like the Python recurrence.
+            // The DP first minimizes arm/work conflicts, then minimizes reposition
+            // cost among schedules with the same conflict count.
             Int32 PassCount = orderedPasses.Count;
             PivotPlan Plan = new PivotPlan(geometry, nBins, moveCost);
             if (PassCount <= 0)
@@ -1081,12 +1082,22 @@ namespace HaulBuilder
                 }
             }
 
+            // Guidance safety is the primary objective.  One avoidable arm/work
+            // conflict therefore costs more than moving at every pass; move cost
+            // only selects the least disruptive schedule among equally clear
+            // alternatives.  A conflict remains possible only when all bearings
+            // are blocked for that pass.
+            Double SafeMoveCost = Math.Max(0.0, moveCost);
+            Double ConflictPenalty =
+                (SafeMoveCost * (PassCount + 1)) + 1.0;
             Double[,] Detour = new Double[PassCount, nBins];
             for (Int32 PassIndex = 0; PassIndex < PassCount; PassIndex += 1)
             {
                 for (Int32 Bin = 0; Bin < nBins; Bin += 1)
                 {
-                    Detour[PassIndex, Bin] = (Blocked[PassIndex, Bin] ? 1.0 : 0.0);
+                    Detour[PassIndex, Bin] = Blocked[PassIndex, Bin]
+                        ? ConflictPenalty
+                        : 0.0;
                 }
             }
 
@@ -1107,7 +1118,7 @@ namespace HaulBuilder
                 for (Int32 Bin = 0; Bin < nBins; Bin += 1)
                 {
                     Double Hold = Dp[PassIndex - 1, Bin];
-                    Double Move = (MinPrev + moveCost);
+                    Double Move = (MinPrev + SafeMoveCost);
                     Dp[PassIndex, Bin] = (Detour[PassIndex, Bin] + Math.Min(Hold, Move));
                 }
             }

@@ -476,11 +476,13 @@ namespace HaulBuilder
 
             BuildZoneSequence(Result, Grid, Field, Route, Opt);
             BuildPairs(Result, Grid, Field, Route, Opt);
+            // Pivot positions must exist before guidance so the final lifecycle can
+            // route around the held arm for each executed haul route.
+            BuildPivot(Result, Grid, Route, Obstacles, Opt);
             BuildGuidance(Result, Grid, Field, Route, Obstacles, HeadingDeg, Opt,
                 PrecomputedGuidancePlan);
             BuildTimingAndMetrics(Result, Grid, PassResult, Route, HeadingDeg, FlowAligned, Opt);
             BuildAnimations(Result, Grid, Route, Opt);
-            BuildPivot(Result, Grid, Route, Obstacles, Opt);
 
             // TEMP: route-2 parity diagnostics — remove after host settings are aligned.
             LogRoute2ParityDebug(Result, Opt, Grid, HeadingDeg, FlowAligned, ScraperBcy, StripList.Count);
@@ -910,6 +912,54 @@ namespace HaulBuilder
                     headingDeg,
                     options,
                     Diagnostic: Message => result.Messages.Add(Message));
+
+            if (obstacles.Active)
+            {
+                (Plan, GuidanceObstacleRouter.Result StaticRouting) =
+                    GuidancePlanner.ApplyObstacleRouting(
+                        Plan,
+                        route,
+                        grid,
+                        field,
+                        headingDeg,
+                        options,
+                        obstacles);
+                result.Messages.Add(String.Format(
+                    CultureInfo.InvariantCulture,
+                    "Guidance routed {0} blade-up move(s) around exclusion polygons; {1} high-risk move(s) require manual control; added distance {2:F1} m.",
+                    StaticRouting.StaticDetourCount,
+                    StaticRouting.ManualMoveCount,
+                    StaticRouting.AddedDistanceM));
+            }
+
+            Dictionary<Int32, ObstacleField>? GuidanceArmObstacles =
+                ToGuidanceObstacleFields(result.ArmObstacles);
+            if ((GuidanceArmObstacles != null)
+                && (GuidanceArmObstacles.Count > 0))
+            {
+                Double BeforePivotS = Plan.Timing.TotalSeconds;
+                result.PivotExtraHaulM = CalculatePivotExtraHaulM(
+                    route, obstacles, GuidanceArmObstacles);
+                (Plan, GuidanceObstacleRouter.Result PivotRouting) =
+                    GuidancePlanner.ApplyObstacleRouting(
+                        Plan,
+                        route,
+                        grid,
+                        field,
+                        headingDeg,
+                        options,
+                        obstacles,
+                        GuidanceArmObstacles);
+                result.PivotAddedTimeS = Math.Max(
+                    0.0, Plan.Timing.TotalSeconds - BeforePivotS);
+                result.Messages.Add(String.Format(
+                    CultureInfo.InvariantCulture,
+                    "Guidance routed {0} blade-up move(s) around the parked pivot arm; {1} high-risk move(s) require manual control; added {2:F1} m and {3:F1} s.",
+                    PivotRouting.PivotDetourCount,
+                    PivotRouting.ManualMoveCount,
+                    PivotRouting.AddedDistanceM,
+                    result.PivotAddedTimeS));
+            }
             GuidanceResult Guidance = Plan.Guidance;
             result.Guidance = Guidance;
             result.GuidancePoints.AddRange(Guidance.Points);
@@ -924,6 +974,43 @@ namespace HaulBuilder
             }
 
             BuildPairSamples(result, grid, Guidance.Points, options);
+        }
+
+        private static Double CalculatePivotExtraHaulM(
+            Route route,
+            ObstacleField staticObstacles,
+            IReadOnlyDictionary<Int32, ObstacleField> armObstacles)
+        {
+            Double ExtraM = 0.0;
+            for (Int32 Index = 0; Index < route.OrderedPasses.Count; Index += 1)
+            {
+                Int32 RouteNumber = Index + 1;
+                if (!armObstacles.TryGetValue(
+                    RouteNumber, out ObstacleField? Field)
+                    || (Field == null))
+                {
+                    continue;
+                }
+                Pass Pass = route.OrderedPasses[Index];
+                Double CombinedM = Field.PathLength(
+                    Pass.CutEndXy, Pass.FillStartXy);
+                Double StaticM = staticObstacles.Active
+                    ? staticObstacles.PathLength(
+                        Pass.CutEndXy, Pass.FillStartXy)
+                    : SegmentDistance(
+                        Pass.CutEndXy, Pass.FillStartXy);
+                ExtraM += Math.Max(0.0, CombinedM - StaticM);
+            }
+            return ExtraM;
+        }
+
+        private static Double SegmentDistance(
+            (Double X, Double Y) first,
+            (Double X, Double Y) second)
+        {
+            Double Dx = second.X - first.X;
+            Double Dy = second.Y - first.Y;
+            return Math.Sqrt((Dx * Dx) + (Dy * Dy));
         }
 
         private static void BuildPairSamples
@@ -1070,6 +1157,8 @@ namespace HaulBuilder
                 AverageMoveDistanceYards = AvgMoveYd,
                 HeadingDeg = flowAligned ? null : headingDeg,
                 FlowAligned = flowAligned,
+                PivotExtraHaulM = result.PivotExtraHaulM,
+                PivotAddedTimeS = result.PivotAddedTimeS,
                 ManualCleanupBcy = result.DeferredWorkSummary?.ManualCleanupBcy
                     ?? 0.0,
                 DeferredCutBcy = result.DeferredWorkSummary?.DeferredCutBcy
@@ -1124,14 +1213,30 @@ namespace HaulBuilder
             Pivot.Grid PivotGrid = ToPivotGrid(grid);
             List<Pivot.Pass> PivotPasses = ToPivotPasses(route.OrderedPasses);
             Pivot.ObstacleField PivotObstacles = ToPivotObstacleField(obstacles);
-            Pivot.PivotGeometry Geometry = Pivot.ComputePivotGeometry(PivotGrid, options.PivotWheelbaseFt, options.PivotClearanceFt, null);
+            (Double X, Double Y)? PivotCenter = ResolvePivotCenter(
+                result, grid, options.PivotCenter);
+            Pivot.PivotGeometry Geometry = Pivot.ComputePivotGeometry(
+                PivotGrid,
+                options.PivotWheelbaseFt,
+                options.PivotClearanceFt,
+                PivotCenter);
             Pivot.PivotPlan Plan = Pivot.PlanPivot(PivotGrid, PivotPasses, Geometry, 720, options.PivotMoveCost);
             Dictionary<Int32, Pivot.ObstacleField> Arm = Pivot.BuildArmObstacles(Geometry, Plan, PivotObstacles, ((options.EquipmentWidthFt * Constants.FEET_TO_METERS) / 2.0));
+            (Int32 Routed, Double ExtraHaulM, Int32 UnderArm, _) =
+                Pivot.PivotDetourStats(PivotPasses, Arm);
             result.PivotGeometry = Geometry;
             result.PivotPlan = Plan;
             result.ArmObstacles = Arm;
+            result.PivotExtraHaulM = ExtraHaulM;
             result.PivotCsvData = Pivot.WritePivotCsv(Plan);
             result.CsvTextByName["pivot"] = BuildPivotCsv(result.PivotCsvData);
+            result.Messages.Add(String.Format(
+                CultureInfo.InvariantCulture,
+                "Pivot schedule selected {0} position(s), {1} move(s), {2} loaded-haul detour candidate(s), and {3} work-under-arm conflict(s).",
+                Plan.Positions.Count,
+                Plan.MoveCount,
+                Routed,
+                UnderArm));
 
             String PivotDir = Path.Combine(Path.GetTempPath(), "haulbuilder_pivot_png_" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(PivotDir);
@@ -1186,6 +1291,40 @@ namespace HaulBuilder
             return new Pivot.Grid(grid.GridSizeM, grid.MinX, grid.MinY, grid.Zone, grid.IsNorthern, grid.Existing, grid.Target, grid.Valid);
         }
 
+        private static (Double X, Double Y)? ResolvePivotCenter(
+            HaulBuilderResult result,
+            Grid grid,
+            String? specification)
+        {
+            if (String.IsNullOrWhiteSpace(specification)) return null;
+            String[] Parts = specification.Split(',');
+            if ((Parts.Length != 2)
+                || !Double.TryParse(
+                    Parts[0].Trim(), NumberStyles.Float,
+                    CultureInfo.InvariantCulture, out Double Lat)
+                || !Double.TryParse(
+                    Parts[1].Trim(), NumberStyles.Float,
+                    CultureInfo.InvariantCulture, out Double Lon))
+            {
+                throw new ArgumentException(
+                    "PivotCenter must be formatted as lat,lon.",
+                    nameof(specification));
+            }
+            UtmCoord Center = Agd.UtmFromLatlon(Lat, Lon);
+            if ((Center.Zone != grid.Zone)
+                || (Center.IsNorthern != grid.IsNorthern))
+            {
+                result.Messages.Add(String.Format(
+                    CultureInfo.InvariantCulture,
+                    "Pivot center projects to UTM zone {0}{1}, while the field uses {2}{3}; continuing with projected coordinates.",
+                    Center.Zone,
+                    Center.IsNorthern ? "N" : "S",
+                    grid.Zone,
+                    grid.IsNorthern ? "N" : "S"));
+            }
+            return (Center.Easting, Center.Northing);
+        }
+
         private static List<Pivot.Pass> ToPivotPasses
             (
             IReadOnlyList<Pass> passes
@@ -1231,6 +1370,41 @@ namespace HaulBuilder
             }
 
             return Pivot.ObstacleField.FromZones(Zones);
+        }
+
+        private static Dictionary<Int32, ObstacleField>?
+            ToGuidanceObstacleFields
+            (
+            Dictionary<Int32, Pivot.ObstacleField>? obstacles
+            )
+        {
+            if ((obstacles == null) || (obstacles.Count == 0)) return null;
+            Dictionary<Pivot.ObstacleField, ObstacleField> Cache =
+                new Dictionary<Pivot.ObstacleField, ObstacleField>();
+            Dictionary<Int32, ObstacleField> Result =
+                new Dictionary<Int32, ObstacleField>();
+            foreach (KeyValuePair<Int32, Pivot.ObstacleField> Entry in obstacles)
+            {
+                if (!Cache.TryGetValue(Entry.Value, out ObstacleField? Field))
+                {
+                    List<ExclusionZone> Zones = new List<ExclusionZone>();
+                    foreach (Pivot.ExclusionZone Zone in Entry.Value.Zones)
+                    {
+                        List<(Double X, Double Y)> Ring =
+                            new List<(Double X, Double Y)>(Zone.Ring);
+                        List<(Double X, Double Y)> BufferRing =
+                            new List<(Double X, Double Y)>(Zone.BufferRing);
+                        Zones.Add(new ExclusionZone(
+                            Ring,
+                            BufferRing,
+                            Zone.BBox));
+                    }
+                    Field = ObstacleField.FromZones(Zones);
+                    Cache[Entry.Value] = Field;
+                }
+                Result[Entry.Key] = Field;
+            }
+            return Result;
         }
 
         private static List<List<(Double Lat, Double Lon)>> ParsePolygonSpecs

@@ -356,7 +356,8 @@ namespace HaulBuilder
         public Double PivotClearanceFt { get; set; }
 
         /// <summary>
-        /// Gets or sets pivot move cost in detour-equivalent passes.
+        /// Gets or sets the pivot reposition penalty used after the scheduler has
+        /// minimized guidance conflicts. Field guidance clearance has priority.
         /// </summary>
         public Double PivotMoveCost { get; set; }
 

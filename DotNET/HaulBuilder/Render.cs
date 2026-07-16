@@ -1060,6 +1060,7 @@ namespace HaulBuilder
             if (action == "GRADE") return new Rgba32(40, 160, 40, 200);
             if (action == "HAUL") return new Rgba32(200, 0, 200, 90);
             if (action == "MOVE") return new Rgba32(255, 140, 0, 120);
+            if (action == "MANUAL_MOVE") return new Rgba32(255, 80, 0, 220);
             return new Rgba32(120, 120, 120, 70);
         }
 

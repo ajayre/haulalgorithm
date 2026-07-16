@@ -393,6 +393,7 @@ namespace HaulBuilder
         private const String FILL = "FILL";
         private const String GRADE = "GRADE";
         private const String MOVE = "MOVE";
+        private const String MANUAL_MOVE = "MANUAL_MOVE";
         private const Double EPSILON = 1e-12;
         private const Double DEFAULT_TURNING_CIRCLE_FT = 50.0;
 
@@ -1051,7 +1052,8 @@ namespace HaulBuilder
                 {
                     GradeS += (GradeV > 0.0) ? (Segment / GradeV) : 0.0;
                 }
-                else if ((Point.Action == HAUL) || (Point.Action == MOVE))
+                else if ((Point.Action == HAUL) || (Point.Action == MOVE)
+                    || (Point.Action == MANUAL_MOVE))
                 {
                     HaulS += MoveTime(Segment, HaulVMax, accelTimeS, decelTimeS);
                 }
@@ -5775,6 +5777,10 @@ namespace HaulBuilder
             {
                 return $"Raise blade, drive to next pocket, lower blade, {D} mm";
             }
+            if (action == MANUAL_MOVE)
+            {
+                return "MANUAL MOVE: verify and drive clear of obstruction";
+            }
             return String.Empty;
         }
 
@@ -5843,7 +5849,9 @@ namespace HaulBuilder
             )
         {
             // Keep travel-state categorization centralized for detours and blade labels.
-            return (action == START) || (action == RETURN) || (action == HAUL) || (action == MOVE);
+            return (action == START) || (action == RETURN)
+                || (action == HAUL) || (action == MOVE)
+                || (action == MANUAL_MOVE);
         }
 
         /// <summary>

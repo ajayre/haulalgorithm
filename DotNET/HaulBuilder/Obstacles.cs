@@ -266,24 +266,111 @@ namespace HaulBuilder
             Int32 Samples = 24
             )
         {
-            // Reject quickly with bbox, then sample interior points.
+            // Reject quickly with bbox, then split the candidate segment at every
+            // polygon-boundary crossing.  Testing the midpoint of each resulting
+            // interval is exact for a straight-edged polygon and avoids the old
+            // fixed-sample test missing a small obstruction on a long haul leg.
             if (!Obstacles.SegmentIntersectsAabb(A, B, Bbox))
             {
                 return false;
             }
 
-            for (Int32 K = 1; K < Samples; K += 1)
+            if (StrictlyInside(A) || StrictlyInside(B))
             {
-                Double T = K / (Double)Samples;
-                Double X = A.X + ((B.X - A.X) * T);
-                Double Y = A.Y + ((B.Y - A.Y) * T);
-                if (Obstacles.PointInRing(X, Y, BufferRing))
+                return true;
+            }
+
+            List<Double> Breaks = new List<Double> { 0.0, 1.0 };
+            for (Int32 Index = 0; Index < BufferRing.Count; Index += 1)
+            {
+                (Double X, Double Y) C = BufferRing[Index];
+                (Double X, Double Y) D = BufferRing[(Index + 1) % BufferRing.Count];
+                if (TrySegmentIntersectionParameter(A, B, C, D, out Double T))
                 {
-                    return true;
+                    Breaks.Add(Math.Max(0.0, Math.Min(1.0, T)));
                 }
             }
 
+            Breaks.Sort();
+            Double Previous = Breaks[0];
+            for (Int32 Index = 1; Index < Breaks.Count; Index += 1)
+            {
+                Double Current = Breaks[Index];
+                if (Current - Previous <= 1e-10) continue;
+                Double T = 0.5 * (Previous + Current);
+                if (StrictlyInside((
+                    A.X + ((B.X - A.X) * T),
+                    A.Y + ((B.Y - A.Y) * T))))
+                {
+                    return true;
+                }
+                Previous = Current;
+            }
+
             return false;
+        }
+
+        /// <summary>Tests polygon interior while treating its perimeter as clear.</summary>
+        private Boolean StrictlyInside
+            (
+            (Double X, Double Y) Point
+            )
+        {
+            for (Int32 Index = 0; Index < BufferRing.Count; Index += 1)
+            {
+                if (PointOnSegment(
+                    Point,
+                    BufferRing[Index],
+                    BufferRing[(Index + 1) % BufferRing.Count]))
+                {
+                    return false;
+                }
+            }
+            return Obstacles.PointInRing(Point.X, Point.Y, BufferRing);
+        }
+
+        /// <summary>Finds the parameter on AB at a non-collinear CD crossing.</summary>
+        private static Boolean TrySegmentIntersectionParameter
+            (
+            (Double X, Double Y) A,
+            (Double X, Double Y) B,
+            (Double X, Double Y) C,
+            (Double X, Double Y) D,
+            out Double T
+            )
+        {
+            Double Rx = B.X - A.X;
+            Double Ry = B.Y - A.Y;
+            Double Sx = D.X - C.X;
+            Double Sy = D.Y - C.Y;
+            Double Denominator = (Rx * Sy) - (Ry * Sx);
+            if (Math.Abs(Denominator) <= 1e-12)
+            {
+                T = 0.0;
+                return false;
+            }
+            Double Qx = C.X - A.X;
+            Double Qy = C.Y - A.Y;
+            T = ((Qx * Sy) - (Qy * Sx)) / Denominator;
+            Double U = ((Qx * Ry) - (Qy * Rx)) / Denominator;
+            return (T >= -1e-10) && (T <= 1.0 + 1e-10)
+                && (U >= -1e-10) && (U <= 1.0 + 1e-10);
+        }
+
+        /// <summary>Tests whether a point lies on a closed segment.</summary>
+        private static Boolean PointOnSegment
+            (
+            (Double X, Double Y) Point,
+            (Double X, Double Y) A,
+            (Double X, Double Y) B
+            )
+        {
+            Double Cross = ((Point.X - A.X) * (B.Y - A.Y))
+                - ((Point.Y - A.Y) * (B.X - A.X));
+            if (Math.Abs(Cross) > 1e-8) return false;
+            Double Dot = ((Point.X - A.X) * (Point.X - B.X))
+                + ((Point.Y - A.Y) * (Point.Y - B.Y));
+            return Dot <= 1e-8;
         }
     }
 
