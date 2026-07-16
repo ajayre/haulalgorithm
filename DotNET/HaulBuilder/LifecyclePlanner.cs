@@ -21,7 +21,7 @@ namespace HaulBuilder
         private const Int32 FILL_ENVELOPE_MINIMUM_FRAGMENT_COUNT = 4;
         private const Double FILL_ENVELOPE_HEADING_BIN_DEG = 5.0;
         private const Int32 FILL_ENVELOPE_PROXIMITY_HEADING_LIMIT = 8;
-        private const Int32 FILL_ENVELOPE_SEQUENCE_CANDIDATE_LIMIT = 3;
+        private const Int32 FILL_ENVELOPE_SEQUENCE_CANDIDATE_LIMIT = 8;
         private const Double MANUAL_CONNECTOR_PENALTY_M = 100000.0;
         private const Double LOADED_FILL_OVERLAP_PENALTY_M = 100000.0;
         private const Double LOADED_FILL_ALIGNMENT_TOLERANCE_DEG = 20.0;
