@@ -66,6 +66,10 @@ internal static class HaulOptimizationBench
             String.Equals(Arg, "--pair-2opt", StringComparison.OrdinalIgnoreCase));
         Boolean PairAuction = Args.Any(Arg =>
             String.Equals(Arg, "--pair-auction", StringComparison.OrdinalIgnoreCase));
+        Boolean MultiRouteExchange = Args.Any(Arg => String.Equals(
+            Arg,
+            "--multi-route-exchange",
+            StringComparison.OrdinalIgnoreCase));
         Int32 ReorderWindow = ReadIntOption(Args, "--reorder-window=", 200);
         Int32 EdgeMaximumRunsPerKind = Math.Max(
             1,
@@ -77,6 +81,21 @@ internal static class HaulOptimizationBench
             Args, "--pair-2opt-rounds=", 8);
         Int32 PairTwoOptSeed = ReadIntOption(
             Args, "--pair-2opt-seed=", 0);
+        Int32 MultiRouteExchangeRounds = Math.Max(
+            1,
+            ReadIntOption(Args, "--multi-route-exchange-rounds=", 2));
+        Int32 MultiRouteExchangeGroupRoutes = Math.Max(
+            3,
+            ReadIntOption(Args, "--multi-route-exchange-group-routes=", 8));
+        Int32 MultiRouteExchangeMaximumGroups = Math.Max(
+            1,
+            ReadIntOption(Args, "--multi-route-exchange-max-groups=", 100));
+        Double MultiRouteExchangeMinimumImprovementM = Math.Max(
+            0.0,
+            ReadDoubleOption(
+                Args,
+                "--multi-route-exchange-min-improvement-m=",
+                1.0));
         Int32 OmitCompactFailures = ReadIntOption(
             Args, "--omit-compact-failures=", 0);
         HaulDifficultCycleFilter.OmissionPriority OmissionPriority =
@@ -236,6 +255,33 @@ internal static class HaulOptimizationBench
                 .Concat(EdgeCandidatePasses)
                 .ToList();
         }
+        HaulMultiRouteExchangeOptimizer.Result? MultiRouteExchangeResult = null;
+        if (MultiRouteExchange)
+        {
+            MultiRouteExchangeResult = HaulMultiRouteExchangeOptimizer.Optimize(
+                CandidatePasses,
+                Grid,
+                Grid.MaxDepthMm / 1000.0,
+                MultiRouteExchangeRounds,
+                MultiRouteExchangeGroupRoutes,
+                MultiRouteExchangeMaximumGroups,
+                MinimumImprovementM:
+                    MultiRouteExchangeMinimumImprovementM,
+                BladeWidthM: Options.BladeWidthMm / 1000.0,
+                GradeReturn: !Options.NoGradeReturn,
+                Obstacles: Obstacles.EMPTY_OBSTACLES);
+            CandidatePasses = MultiRouteExchangeResult.Passes;
+            if (CompleteDeferredEdge)
+            {
+                Int32 InteriorCount = InteriorCandidatePasses.Count;
+                InteriorCandidatePasses = CandidatePasses
+                    .Take(InteriorCount)
+                    .ToList();
+                EdgeCandidatePasses = CandidatePasses
+                    .Skip(InteriorCount)
+                    .ToList();
+            }
+        }
         Int32 OmittedCompactCycles = 0;
         if (OmitCompactFailures > 0)
         {
@@ -368,6 +414,7 @@ internal static class HaulOptimizationBench
         Console.WriteLine("defer_edge_work={0}", DeferEdgeWork);
         Console.WriteLine("complete_deferred_edge={0}", CompleteDeferredEdge);
         Console.WriteLine("edge_maximum_runs_per_kind={0}", EdgeMaximumRunsPerKind);
+        Console.WriteLine("multi_route_exchange={0}", MultiRouteExchange);
         Console.WriteLine(String.Format(
             CultureInfo.InvariantCulture,
             "flow_penalty_weight={0:F3}",
@@ -545,6 +592,24 @@ internal static class HaulOptimizationBench
         foreach (String Issue in Optimized.Validation.Issues.Take(20))
         {
             Console.WriteLine("validation_issue={0}", Issue);
+        }
+        if (MultiRouteExchangeResult != null)
+        {
+            HaulPlanValidation ExchangeValidation = Ledger.ValidateComplete(
+                CandidatePasses,
+                MaximumLoadBcy,
+                Grid.MaxDepthMm / 1000.0,
+                AllowDeferredWork: true);
+            Console.WriteLine(String.Format(
+                CultureInfo.InvariantCulture,
+                "multi_route_exchange_groups={0} rejected={1} routes_changed={2} before_m={3:F3} after_m={4:F3} conservation={5} validation={6}",
+                MultiRouteExchangeResult.AcceptedGroups,
+                MultiRouteExchangeResult.RejectedGroups,
+                MultiRouteExchangeResult.RoutesChanged,
+                MultiRouteExchangeResult.BeforeM,
+                MultiRouteExchangeResult.AfterM,
+                MultiRouteExchangeResult.ConservationValidated,
+                ExchangeValidation.Success));
         }
         Console.WriteLine(String.Format(
             CultureInfo.InvariantCulture,

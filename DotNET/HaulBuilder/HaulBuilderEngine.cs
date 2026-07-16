@@ -105,6 +105,24 @@ namespace HaulBuilder
                         Obstacles: Obstacles);
                     OptimizedPasses = PairRefinement.Passes;
                 }
+                HaulMultiRouteExchangeOptimizer.Result? MultiRouteExchange = null;
+                if (Opt.EnableHaulMultiRouteExchange)
+                {
+                    MultiRouteExchange = HaulMultiRouteExchangeOptimizer.Optimize(
+                        OptimizedPasses,
+                        Grid,
+                        Grid.MaxDepthMm / 1000.0,
+                        Opt.HaulOptimizationMultiRouteExchangeRounds,
+                        Opt.HaulOptimizationMultiRouteExchangeGroupRoutes,
+                        Opt.HaulOptimizationMultiRouteExchangeMaximumGroups,
+                        MinimumImprovementM:
+                            Opt.HaulOptimizationMultiRouteExchangeMinimumImprovementM,
+                        BladeWidthM: Opt.BladeWidthMm / 1000.0,
+                        GradeReturn: !Opt.NoGradeReturn,
+                        Obstacles: Obstacles);
+                    OptimizedPasses = MultiRouteExchange.Passes;
+                    Result.HaulMultiRouteExchange = MultiRouteExchange;
+                }
                 HaulDifficultCycleFilter.Result? DifficultFilter = null;
                 if (Opt.HaulOptimizationMaximumCompactOmissions > 0)
                 {
@@ -117,7 +135,9 @@ namespace HaulBuilder
                         Opt.HaulOptimizationCompactOmissionPriority);
                     OptimizedPasses = DifficultFilter.Passes;
                 }
-                if ((PairRefinement != null) || (DifficultFilter != null))
+                if ((PairRefinement != null)
+                    || (MultiRouteExchange != null)
+                    || (DifficultFilter != null))
                 {
                     IReadOnlyList<HaulDeferredWork> Deferred =
                         DifficultFilter == null
@@ -182,6 +202,18 @@ namespace HaulBuilder
                         Optimized.PairRefinementSwaps,
                         Optimized.PairRefinementBeforeM,
                         Optimized.PairRefinementAfterM));
+                }
+                if ((MultiRouteExchange != null)
+                    && (MultiRouteExchange.AcceptedGroups > 0))
+                {
+                    Result.Messages.Add(String.Format(
+                        CultureInfo.InvariantCulture,
+                        "Multi-route exchange committed {0} closed groups across {1} routes and reduced its compactness proxy from {2:F1} m to {3:F1} m; exact conservation={4}.",
+                        MultiRouteExchange.AcceptedGroups,
+                        MultiRouteExchange.RoutesChanged,
+                        MultiRouteExchange.BeforeM,
+                        MultiRouteExchange.AfterM,
+                        MultiRouteExchange.ConservationValidated));
                 }
                 if (Optimized.CompactOmittedCycles > 0)
                 {
@@ -1160,6 +1192,11 @@ namespace HaulBuilder
                 HaulOptimizationDeferEdgeWork = options.HaulOptimizationDeferEdgeWork,
                 HaulOptimizationPairRefinementRounds = options.HaulOptimizationPairRefinementRounds,
                 HaulOptimizationPairMetric = options.HaulOptimizationPairMetric,
+                EnableHaulMultiRouteExchange = options.EnableHaulMultiRouteExchange,
+                HaulOptimizationMultiRouteExchangeRounds = options.HaulOptimizationMultiRouteExchangeRounds,
+                HaulOptimizationMultiRouteExchangeGroupRoutes = options.HaulOptimizationMultiRouteExchangeGroupRoutes,
+                HaulOptimizationMultiRouteExchangeMaximumGroups = options.HaulOptimizationMultiRouteExchangeMaximumGroups,
+                HaulOptimizationMultiRouteExchangeMinimumImprovementM = options.HaulOptimizationMultiRouteExchangeMinimumImprovementM,
                 HaulOptimizationReorderWindow = options.HaulOptimizationReorderWindow,
                 HaulOptimizationMaximumCompactOmissions = options.HaulOptimizationMaximumCompactOmissions,
                 HaulOptimizationCompactOmissionPriority = options.HaulOptimizationCompactOmissionPriority,
@@ -1263,6 +1300,35 @@ namespace HaulBuilder
                 throw new ArgumentException(
                     "HaulOptimizationPairMetric is invalid.",
                     nameof(options));
+            }
+            if (options.EnableHaulMultiRouteExchange)
+            {
+                if (options.HaulOptimizationMultiRouteExchangeRounds <= 0)
+                {
+                    throw new ArgumentException(
+                        "HaulOptimizationMultiRouteExchangeRounds must be positive when multi-route exchange is enabled.",
+                        nameof(options));
+                }
+                if (options.HaulOptimizationMultiRouteExchangeGroupRoutes < 3)
+                {
+                    throw new ArgumentException(
+                        "HaulOptimizationMultiRouteExchangeGroupRoutes must be at least 3.",
+                        nameof(options));
+                }
+                if (options.HaulOptimizationMultiRouteExchangeMaximumGroups <= 0)
+                {
+                    throw new ArgumentException(
+                        "HaulOptimizationMultiRouteExchangeMaximumGroups must be positive.",
+                        nameof(options));
+                }
+                if (!Double.IsFinite(
+                        options.HaulOptimizationMultiRouteExchangeMinimumImprovementM)
+                    || (options.HaulOptimizationMultiRouteExchangeMinimumImprovementM < 0.0))
+                {
+                    throw new ArgumentException(
+                        "HaulOptimizationMultiRouteExchangeMinimumImprovementM must be finite and non-negative.",
+                        nameof(options));
+                }
             }
             if (options.HaulOptimizationReorderWindow < 0)
             {

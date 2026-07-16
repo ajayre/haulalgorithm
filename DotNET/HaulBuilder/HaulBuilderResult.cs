@@ -60,6 +60,9 @@ namespace HaulBuilder
         /// <summary>Gets or sets the global optimizer allocation and ledger diagnostics.</summary>
         public HaulOptimizationResult? HaulOptimization { get; set; }
 
+        /// <summary>Gets or sets optional multi-route fragment-exchange diagnostics.</summary>
+        public HaulMultiRouteExchangeOptimizer.Result? HaulMultiRouteExchange { get; set; }
+
         /// <summary>
         /// Gets or sets the isolated-edge-patch omission audit applied before routing.
         /// </summary>

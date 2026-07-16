@@ -63,6 +63,10 @@ namespace HaulBuilder
             HaulOptimizationPairRefinementRounds = 8;
             HaulOptimizationPairMetric =
                 HaulPairDistanceRefiner.PairMetric.Centroid;
+            HaulOptimizationMultiRouteExchangeRounds = 2;
+            HaulOptimizationMultiRouteExchangeGroupRoutes = 8;
+            HaulOptimizationMultiRouteExchangeMaximumGroups = 100;
+            HaulOptimizationMultiRouteExchangeMinimumImprovementM = 1.0;
             HaulOptimizationReorderWindow = 200;
             HaulOptimizationCompactOmissionPriority =
                 HaulDifficultCycleFilter.OmissionPriority
@@ -411,6 +415,27 @@ namespace HaulBuilder
 
         /// <summary>Gets or sets the geometry proxy used for equal-load pair refinement.</summary>
         public HaulPairDistanceRefiner.PairMetric HaulOptimizationPairMetric { get; set; }
+
+        /// <summary>
+        /// Gets or sets whether the optional, slower multi-route fragment
+        /// exchange pass is enabled.
+        /// </summary>
+        public Boolean EnableHaulMultiRouteExchange { get; set; }
+
+        /// <summary>Gets or sets bounded multi-route exchange rounds.</summary>
+        public Int32 HaulOptimizationMultiRouteExchangeRounds { get; set; }
+
+        /// <summary>Gets or sets the maximum routes pooled in one transaction.</summary>
+        public Int32 HaulOptimizationMultiRouteExchangeGroupRoutes { get; set; }
+
+        /// <summary>Gets or sets the maximum committed route-group transactions.</summary>
+        public Int32 HaulOptimizationMultiRouteExchangeMaximumGroups { get; set; }
+
+        /// <summary>
+        /// Gets or sets the minimum compactness/connection improvement required
+        /// to commit one route-group transaction, in metres.
+        /// </summary>
+        public Double HaulOptimizationMultiRouteExchangeMinimumImprovementM { get; set; }
 
         /// <summary>Gets or sets the route-refinement window used by optimized plans.</summary>
         public Int32 HaulOptimizationReorderWindow { get; set; }
