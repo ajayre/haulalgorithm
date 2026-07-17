@@ -400,6 +400,56 @@ namespace HaulBuilder
                 }
             }
 
+            if (Opt.Ponding.Audit || Opt.Ponding.Optimize)
+            {
+                Result.Ponding = Ponding.Run(
+                    Grid,
+                    PassResult.Passes,
+                    Route,
+                    Opt.Ponding,
+                    Opt.UnloadedTravelSpeedMph,
+                    Opt.TurnSpeedMph,
+                    Opt.MinimumTurningDiameterFt,
+                    Obstacles,
+                    ActiveReorderWindow > 0 ? ActiveReorderWindow : 50);
+                PondingRunResult PondingResult = Result.Ponding;
+                PondingAuditResult? FinalAudit = PondingResult.FinalAudit;
+                if (FinalAudit != null && PondingResult.Outlets != null)
+                {
+                    Result.CsvTextByName["ponding"] = Ponding.BuildCsv(
+                        FinalAudit, PondingResult.Outlets.Count);
+                    if (PondingResult.Before != null
+                        && PondingResult.After != null
+                        && !ReferenceEquals(PondingResult.Before, PondingResult.After))
+                        Result.CsvTextByName["ponding_before"] = Ponding.BuildCsv(
+                            PondingResult.Before, PondingResult.Outlets.Count);
+                    if (Opt.Ponding.IncludeMap)
+                        Result.PngBytesByName["ponding"] =
+                            Ponding.RenderWorstCheckpointPng(
+                                Grid, PondingResult.Outlets,
+                                FinalAudit.WorstCheckpoint,
+                                Opt.Ponding.MapPixelsPerCell);
+                    Result.Messages.Add(String.Format(
+                        CultureInfo.InvariantCulture,
+                        "Ponding summary: peak={0:F2} BCY at pass {1}, max_depth={2:F3} m, outlets={3}, T={4:F1}->{5:F1} s, P={6:F2}->{7:F2} BCY, relocations={8}, analyser_failures={9}, weight={10:F1}.",
+                        FinalAudit.PeakVolumeBcy,
+                        FinalAudit.WorstCheckpoint.PassIndex,
+                        FinalAudit.WorstCheckpoint.Metrics.MaxPondDepthM,
+                        PondingResult.Outlets.Count,
+                        PondingResult.TransitionCostBeforeS,
+                        PondingResult.TransitionCostAfterS,
+                        PondingResult.Before?.PeakVolumeBcy
+                            ?? FinalAudit.PeakVolumeBcy,
+                        FinalAudit.PeakVolumeBcy,
+                        PondingResult.RelocationsAccepted,
+                        FinalAudit.AnalyserFailures,
+                        Opt.Ponding.Weight));
+                }
+                Result.Messages.AddRange(PondingResult.Warnings);
+                if (Opt.Ponding.Optimize)
+                    PrecomputedGuidancePlan = null;
+            }
+
             BuildZoneSequence(Result, Grid, Field, Route, Opt);
             BuildPairs(Result, Grid, Field, Route, Opt);
             // Pivot positions must exist before guidance so the final lifecycle can
@@ -1419,8 +1469,32 @@ namespace HaulBuilder
                 RandomSeed = Options.RandomSeed,
             };
             CopyOptimization(Options.Optimization, Copy.Optimization);
+            CopyPonding(Options.Ponding, Copy.Ponding);
             Copy.ExcludePolygonSpecs.AddRange(Options.ExcludePolygonSpecs);
             return Copy;
+        }
+
+        private static void CopyPonding(
+            PondingOptions Source,
+            PondingOptions Destination)
+        {
+            Destination.Optimize = Source.Optimize;
+            Destination.Audit = Source.Audit;
+            Destination.NoImplicitAudit = Source.NoImplicitAudit;
+            Destination.TargetSpillOutlets = Source.TargetSpillOutlets;
+            Destination.SpillToleranceFt = Source.SpillToleranceFt;
+            Destination.Weight = Source.Weight;
+            Destination.CheckpointInterval = Source.CheckpointInterval;
+            Destination.WhiteBoxToolsPath = Source.WhiteBoxToolsPath;
+            Destination.WhiteBoxToolsWorkDirectory = Source.WhiteBoxToolsWorkDirectory;
+            Destination.WarnDepthFt = Source.WarnDepthFt;
+            Destination.WarnVolumeBcy = Source.WarnVolumeBcy;
+            Destination.DesignRainfallIn = Source.DesignRainfallIn;
+            Destination.FailOnWarn = Source.FailOnWarn;
+            Destination.IncludeMap = Source.IncludeMap;
+            Destination.MapPixelsPerCell = Source.MapPixelsPerCell;
+            Destination.OutletSpecs.AddRange(Source.OutletSpecs);
+            Destination.OutletPolygonSpecs.AddRange(Source.OutletPolygonSpecs);
         }
 
         /// <summary>
@@ -1566,6 +1640,35 @@ namespace HaulBuilder
             }
 
             ValidateOptimizationOptions(Options);
+            ValidatePondingOptions(Options.Ponding);
+        }
+
+        private static void ValidatePondingOptions(PondingOptions Options)
+        {
+            if (!Double.IsFinite(Options.SpillToleranceFt)
+                || Options.SpillToleranceFt < 0.0)
+                throw new ArgumentOutOfRangeException(
+                    nameof(Options.SpillToleranceFt));
+            if (!Double.IsFinite(Options.Weight) || Options.Weight < 0.0)
+                throw new ArgumentOutOfRangeException(nameof(Options.Weight));
+            if (Options.CheckpointInterval < 0)
+                throw new ArgumentOutOfRangeException(
+                    nameof(Options.CheckpointInterval));
+            if (!Double.IsFinite(Options.WarnDepthFt)
+                || Options.WarnDepthFt < 0.0)
+                throw new ArgumentOutOfRangeException(
+                    nameof(Options.WarnDepthFt));
+            if (!Double.IsFinite(Options.WarnVolumeBcy)
+                || Options.WarnVolumeBcy < 0.0)
+                throw new ArgumentOutOfRangeException(
+                    nameof(Options.WarnVolumeBcy));
+            if (!Double.IsFinite(Options.DesignRainfallIn)
+                || Options.DesignRainfallIn < 0.0)
+                throw new ArgumentOutOfRangeException(
+                    nameof(Options.DesignRainfallIn));
+            if (Options.MapPixelsPerCell <= 0)
+                throw new ArgumentOutOfRangeException(
+                    nameof(Options.MapPixelsPerCell));
         }
 
         /// <summary>

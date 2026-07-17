@@ -53,6 +53,7 @@ namespace HaulBuilder.Tests
                 nameof(HaulBuilderOptions.MinimumTurningDiameterFt),
                 nameof(HaulBuilderOptions.Optimization),
                 nameof(HaulBuilderOptions.PixelsPerCell),
+                nameof(HaulBuilderOptions.Ponding),
                 nameof(HaulBuilderOptions.PivotAnimationStride),
                 nameof(HaulBuilderOptions.PivotCenter),
                 nameof(HaulBuilderOptions.PivotClearanceFt),
@@ -110,6 +111,47 @@ namespace HaulBuilder.Tests
             Assert.Equal(
                 Expected.OrderBy(Name => Name),
                 PublicProperties(typeof(HaulOptimizationOptions)));
+        }
+
+        /// <summary>
+        /// Verifies ponding options expose the supported C# controls and remain
+        /// disabled unless a caller explicitly enables audit or optimization.
+        /// </summary>
+
+        [Fact]
+        public void PondingOptionsExposeSupportedInputsWithSafeDefaults
+            (
+            )
+        {
+            String[] Expected =
+            {
+                nameof(PondingOptions.Audit),
+                nameof(PondingOptions.CheckpointInterval),
+                nameof(PondingOptions.DesignRainfallIn),
+                nameof(PondingOptions.FailOnWarn),
+                nameof(PondingOptions.IncludeMap),
+                nameof(PondingOptions.MapPixelsPerCell),
+                nameof(PondingOptions.NoImplicitAudit),
+                nameof(PondingOptions.Optimize),
+                nameof(PondingOptions.OutletPolygonSpecs),
+                nameof(PondingOptions.OutletSpecs),
+                nameof(PondingOptions.SpillToleranceFt),
+                nameof(PondingOptions.TargetSpillOutlets),
+                nameof(PondingOptions.WarnDepthFt),
+                nameof(PondingOptions.WarnVolumeBcy),
+                nameof(PondingOptions.Weight),
+                nameof(PondingOptions.WhiteBoxToolsPath),
+                nameof(PondingOptions.WhiteBoxToolsWorkDirectory),
+            };
+            PondingOptions Options = new PondingOptions();
+
+            Assert.Equal(
+                Expected.OrderBy(Name => Name),
+                PublicProperties(typeof(PondingOptions)));
+            Assert.False(Options.Audit);
+            Assert.False(Options.Optimize);
+            Assert.True(Options.TargetSpillOutlets);
+            Assert.Equal(3600.0, Options.Weight);
         }
 
         /// <summary>

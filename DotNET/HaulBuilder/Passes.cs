@@ -105,6 +105,18 @@ namespace HaulBuilder
         /// Gets or sets a value indicating whether fill knot was reduced.
         /// </summary>
         public Boolean FillKnotReduced { get; set; }
+
+        /// <summary>Gets or sets the shallowest ponding layer touched by this pass.</summary>
+        public Int32? PondingLayerMin { get; set; }
+
+        /// <summary>Gets or sets the deepest ponding layer touched by this pass.</summary>
+        public Int32? PondingLayerMax { get; set; }
+
+        /// <summary>Gets or sets audited pond depth immediately after this pass.</summary>
+        public Double? MaxPondDepthM { get; set; }
+
+        /// <summary>Gets or sets audited closed-depression volume immediately after this pass.</summary>
+        public Double? ClosedDepressionVolumeBcy { get; set; }
     }
 
     /// <summary>

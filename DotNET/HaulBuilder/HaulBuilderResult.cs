@@ -87,6 +87,9 @@ namespace HaulBuilder
         /// </summary>
         public Route? Route { get; set; }
 
+        /// <summary>Gets or sets optional ponding audit and optimization results.</summary>
+        public PondingRunResult? Ponding { get; set; }
+
         /// <summary>
         /// Gets zone sequencing summary rows.
         /// </summary>

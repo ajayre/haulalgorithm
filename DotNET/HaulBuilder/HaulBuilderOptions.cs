@@ -46,6 +46,7 @@ namespace HaulBuilder
             PivotAnimationStride = 15;
             EquipmentWidthFt = 14.0;
             Optimization = new HaulOptimizationOptions();
+            Ponding = new PondingOptions();
             ExcludePolygonSpecs = new List<String>();
             RandomSeed = Constants.DEFAULT_SEED;
         }
@@ -189,6 +190,9 @@ namespace HaulBuilder
 
         /// <summary>Gets current optimizer tuning. Production defaults are measured.</summary>
         public HaulOptimizationOptions Optimization { get; }
+
+        /// <summary>Gets ponding-aware audit and sequencing options.</summary>
+        public PondingOptions Ponding { get; }
 
         /// <summary>Gets exclusion polygons as <c>lat,lon;lat,lon;...</c>.</summary>
         public List<String> ExcludePolygonSpecs { get; }
