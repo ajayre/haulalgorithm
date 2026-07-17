@@ -8,18 +8,18 @@ namespace HaulBuilder
     /// </summary>
     static public class GuidanceTiming
     {
-        private const Double ANGLE_TOLERANCE_RAD = 1e-6;
-        private const Double AREA_TOLERANCE_M2 = 1e-12;
+        private const Double ANGLE_TOLERANCE_RAD = Constants.GEOMETRY_COMPARISON_TOLERANCE;
+        private const Double AREA_TOLERANCE_M2 = Constants.STRICT_NUMERIC_COMPARISON_TOLERANCE;
         private const Double COLLINEAR_RELATIVE_TOLERANCE = 1e-8;
-        private const Double CONTINUITY_TOLERANCE_M = 1e-6;
-        private const Double DEFAULT_CURVATURE_EVALUATION_SPACING_M = 0.5;
+        private const Double CONTINUITY_TOLERANCE_M = Constants.GEOMETRY_COMPARISON_TOLERANCE;
+        private const Double DEFAULT_CURVATURE_EVALUATION_SPACING_M = Constants.HALF_SCALE;
         private const Double DEFAULT_RADIUS_TOLERANCE_FRACTION = 0.02;
-        private const Double DIAMETER_TO_RADIUS = 0.5;
-        private const Double INTERPOLATION_TOLERANCE_M = 1e-12;
-        private const Double MINIMUM_EDGE_LENGTH_M = 1e-9;
-        private const Double RADIUS_TOLERANCE_M = 1e-6;
+        private const Double DIAMETER_TO_RADIUS = Constants.HALF_SCALE;
+        private const Double INTERPOLATION_TOLERANCE_M = Constants.STRICT_NUMERIC_COMPARISON_TOLERANCE;
+        private const Double MINIMUM_EDGE_LENGTH_M = Constants.NUMERIC_COMPARISON_TOLERANCE;
+        private const Double RADIUS_TOLERANCE_M = Constants.GEOMETRY_COMPARISON_TOLERANCE;
         private const Double RECONCILIATION_RELATIVE_TOLERANCE = 1e-8;
-        private const Double SPEED_LIMIT_TOLERANCE_MPS = 1e-9;
+        private const Double SPEED_LIMIT_TOLERANCE_MPS = Constants.NUMERIC_COMPARISON_TOLERANCE;
 
         /// <summary>One final-geometry vertex tighter than the configured tractor radius.</summary>
         public sealed class CurveViolation

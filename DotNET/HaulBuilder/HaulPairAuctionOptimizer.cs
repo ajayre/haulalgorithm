@@ -10,9 +10,9 @@ namespace HaulBuilder
     /// Solves a global equal-volume cut/fill assignment with a deterministic
     /// epsilon-auction algorithm over depth-weighted centroids.
     /// </summary>
-    public static class HaulPairAuctionOptimizer
+    static public class HaulPairAuctionOptimizer
     {
-        private const Double LOAD_GROUP_PRECISION_BCY = 1e-6;
+        private const Double LOAD_GROUP_PRECISION_BCY = Constants.GEOMETRY_COMPARISON_TOLERANCE;
 
         /// <summary>Global assignment output and audit metrics.</summary>
         public sealed class Result
@@ -50,7 +50,7 @@ namespace HaulBuilder
             (
             IReadOnlyList<Pass> Source,
             Grid Grid,
-            Double EpsilonM = 0.25,
+            Double EpsilonM = Constants.QUARTER_SCALE,
             ObstacleField? Obstacles = null
             )
         {
@@ -160,6 +160,13 @@ namespace HaulBuilder
             return new Result(Output, BeforeM, AfterM, BidCount);
         }
 
+        /// <summary>
+        /// Executes the centroid operation.
+        /// </summary>
+        /// <param name="Cells">The cells used by the operation.</param>
+        /// <param name="Grid">Field grid used by the operation.</param>
+        /// <returns>The resulting centroid.</returns>
+
         private static (Double X, Double Y) Centroid
             (
             IReadOnlyList<((Int32 Bx, Int32 By) Cell, Double DepthM)> Cells,
@@ -181,6 +188,13 @@ namespace HaulBuilder
                 ? (0.0, 0.0)
                 : (SumX / Weight, SumY / Weight);
         }
+
+        /// <summary>
+        /// Executes the distance operation.
+        /// </summary>
+        /// <param name="First">The first used by the operation.</param>
+        /// <param name="Second">The second used by the operation.</param>
+        /// <returns>The resulting distance.</returns>
 
         private static Double Distance
             (

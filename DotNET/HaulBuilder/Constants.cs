@@ -3,7 +3,7 @@ namespace HaulBuilder
     /// <summary>
     /// Physical unit conversions and default parameters for the haul algorithm (spec §6.2–§6.4).
     /// </summary>
-    public static class Constants
+    static public class Constants
     {
         /// <summary>
         /// Assembly version string exposed to callers and CLI parity checks.
@@ -24,6 +24,90 @@ namespace HaulBuilder
         /// Miles per hour to metres per second.
         /// </summary>
         public const Double MPH_TO_MPS = 0.44704;
+
+        /// <summary>
+        /// Millimetres in one metre.
+        /// </summary>
+        internal const Double MILLIMETERS_PER_METER = 1000.0;
+
+        /// <summary>
+        /// Degrees in one undirected half-turn axis.
+        /// </summary>
+        internal const Double DEGREES_PER_HALF_TURN = 180.0;
+
+        /// <summary>
+        /// Degrees in one complete turn.
+        /// </summary>
+        internal const Double DEGREES_PER_TURN = 360.0;
+
+        /// <summary>
+        /// Degrees in one right-angle quarter turn.
+        /// </summary>
+        internal const Double DEGREES_PER_QUARTER_TURN = 90.0;
+
+        /// <summary>
+        /// Degrees in three quarters of a complete turn.
+        /// </summary>
+        internal const Double DEGREES_PER_THREE_QUARTER_TURN = 270.0;
+
+        /// <summary>
+        /// Positive offset used before reducing a signed angle modulo one turn.
+        /// </summary>
+        internal const Double ANGLE_NORMALIZATION_OFFSET_DEGREES = 540.0;
+
+        /// <summary>
+        /// Seconds in one hour.
+        /// </summary>
+        internal const Double SECONDS_PER_HOUR = 3600.0;
+
+        /// <summary>
+        /// Metres in one statute mile.
+        /// </summary>
+        internal const Double METERS_PER_MILE = 1609.344;
+
+        /// <summary>
+        /// Scale factor that selects one half of a value or interval.
+        /// </summary>
+        internal const Double HALF_SCALE = 0.5;
+
+        /// <summary>
+        /// Scale factor that selects one quarter of a value or interval.
+        /// </summary>
+        internal const Double QUARTER_SCALE = 0.25;
+
+        /// <summary>
+        /// Default tolerance for floating-point comparisons in geometry and
+        /// optimization logic.
+        /// </summary>
+        internal const Double NUMERIC_COMPARISON_TOLERANCE = 1e-9;
+
+        /// <summary>
+        /// Stricter tolerance used where near-exact floating-point equality is
+        /// required.
+        /// </summary>
+        internal const Double STRICT_NUMERIC_COMPARISON_TOLERANCE = 1e-12;
+
+        /// <summary>
+        /// Tolerance used when comparing independently calculated geometry in
+        /// metres or unit-vector space.
+        /// </summary>
+        internal const Double GEOMETRY_COMPARISON_TOLERANCE = 1e-6;
+
+        /// <summary>
+        /// Coarser tolerance used when joining sampled paths and angular
+        /// constructions.
+        /// </summary>
+        internal const Double PATH_JOIN_COMPARISON_TOLERANCE = 1e-3;
+
+        /// <summary>
+        /// Maximum value of an eight-bit color or alpha channel.
+        /// </summary>
+        internal const Byte MAX_COLOR_CHANNEL = 255;
+
+        /// <summary>
+        /// Bit mask selecting the low eight bits of a packed value.
+        /// </summary>
+        internal const Byte BYTE_MASK = 0xFF;
 
         /// <summary>
         /// Default square grid cell edge length in feet (matches effective blade width).

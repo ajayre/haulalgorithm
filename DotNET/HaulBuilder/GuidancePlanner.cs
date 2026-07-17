@@ -17,7 +17,7 @@ namespace HaulBuilder
 /// <summary>
 /// Builds production coverage, forward-only connectors, lifecycle guidance, and diagnostics.
 /// </summary>
-public static class GuidancePlanner
+static public class GuidancePlanner
 {
     private const Int32 FIRST_ROUTE_INDEX = 7;
     private const Int32 LAST_ROUTE_INDEX = 9;
@@ -30,12 +30,29 @@ public static class GuidancePlanner
     private const Double FAST_ACCELERATION_SCALE = 2.0;
     private const Double HIGH_OPERATIONAL_AVAILABILITY = 0.9;
     private const Double LOW_OPERATIONAL_AVAILABILITY = 0.7;
-    private const Double MEDIAN_PERCENTILE = 0.5;
+    private const Double MEDIAN_PERCENTILE = Constants.HALF_SCALE;
     private const Double PERCENTILE_90 = 0.9;
     private const Double PERCENTILE_99 = 0.99;
-    private const Double SECONDS_PER_HOUR = 3600.0;
+    private const Int32 DIAGNOSTIC_ROUTE_LIMIT = 20;
+    private const Int32 CURVE_VIOLATION_DIAGNOSTIC_LIMIT = 50;
+    private const Int32 DEFAULT_DIAGNOSTIC_PIXELS_PER_BIN = 40;
+    private const Int32 DEFAULT_DIAGNOSTIC_PADDING_CELLS = 8;
+    private const Int32 COMPACT_DIAGNOSTIC_PADDING_CELLS = 6;
+    private const Double DIRECTION_ARROW_SPACING_CELLS = 6.0;
+    private const Double PERCENT_SCALE = 100.0;
+    private const Double PROGRESS_REPORT_INTERVAL_S = 5.0;
+    private const Double MINIMUM_PROGRESS_DURATION_S = 0.001;
+    private const Int32 FINAL_ANIMATION_HOLD_MS = 2500;
+    private const Double GIF_CENTISECOND_MS = 10.0;
+    private const Double DRIVEN_PATH_SAMPLE_SPACING_M = 0.10;
+    private const Double GEOMETRY_MATCH_TOLERANCE_M = Constants.GEOMETRY_COMPARISON_TOLERANCE;
+    private const Double ENDPOINT_MATCH_TOLERANCE_M = 0.01;
+    private const Double HEADING_MATCH_TOLERANCE_DEG = 0.1;
+    private const Int32 CANDIDATE_PROGRESS_INTERVAL = 10000;
+    private const Int32 OMISSION_PROGRESS_INTERVAL = 25;
+    private const Double SECONDS_PER_HOUR = Constants.SECONDS_PER_HOUR;
     private const Double SLOW_OPERATING_SPEED_SCALE = 0.9;
-    private const Double SLOW_ACCELERATION_SCALE = 0.5;
+    private const Double SLOW_ACCELERATION_SCALE = Constants.HALF_SCALE;
     private static readonly AsyncLocal<GeometrySettings?> CurrentGeometry =
         new AsyncLocal<GeometrySettings?>();
 
@@ -63,7 +80,7 @@ public static class GuidancePlanner
     /// <summary>Gets the active or default minimum turning radius.</summary>
     private static Double PlanningMinimumRadiusM =>
         CurrentGeometry.Value?.MinimumRadiusM
-        ?? Constants.DEFAULT_TURNING_CIRCLE_FT * 0.5 * Constants.FEET_TO_METERS;
+        ?? Constants.DEFAULT_TURNING_CIRCLE_FT * Constants.HALF_SCALE * Constants.FEET_TO_METERS;
 
     /// <summary>Gets the active or default lineup distance.</summary>
     private static Double PlanningPreferredLineupM =>
@@ -153,8 +170,10 @@ public static class GuidancePlanner
         if (Grid == null) throw new ArgumentNullException(nameof(Grid));
         if (Field == null) throw new ArgumentNullException(nameof(Field));
         if (Options == null) throw new ArgumentNullException(nameof(Options));
-        Double BladeM = Options.BladeWidthMm / 1000.0;
+        Double BladeM = Options.BladeWidthMm / Constants.MILLIMETERS_PER_METER;
         List<String> PlanningDiagnostics = new List<String>();
+        // Records a diagnostic for both the result and the optional live sink.
+        // Message: Human-readable planning diagnostic.
         void ReportDiagnostic(String Message)
         {
             PlanningDiagnostics.Add(Message);
@@ -163,7 +182,7 @@ public static class GuidancePlanner
         GeometrySettings? PreviousGeometry = CurrentGeometry.Value;
         List<LifecyclePlanner.PassPlan> Passes;
         CurrentGeometry.Value = new GeometrySettings(
-            Options.MinimumTurningDiameterFt * 0.5 * Constants.FEET_TO_METERS,
+            Options.MinimumTurningDiameterFt * Constants.HALF_SCALE * Constants.FEET_TO_METERS,
             Options.EquipmentLengthFt * Constants.FEET_TO_METERS);
         try
         {
@@ -184,8 +203,8 @@ public static class GuidancePlanner
             Passes,
             true,
             Options.EquipmentLengthFt * Constants.FEET_TO_METERS,
-            Options.MinimumTurningDiameterFt * 0.5 * Constants.FEET_TO_METERS,
-            Math.Min(0.5, Grid.GridSizeM),
+            Options.MinimumTurningDiameterFt * Constants.HALF_SCALE * Constants.FEET_TO_METERS,
+            Math.Min(Constants.HALF_SCALE, Grid.GridSizeM),
             Grid,
             FillSequencesPrepared: true);
         if (!Lifecycle.Success)
@@ -227,7 +246,7 @@ public static class GuidancePlanner
         GuidanceObstacleRouter.Result Routed = GuidanceObstacleRouter.Apply(
             Source.Lifecycle,
             Grid,
-            Options.MinimumTurningDiameterFt * 0.5 * Constants.FEET_TO_METERS,
+            Options.MinimumTurningDiameterFt * Constants.HALF_SCALE * Constants.FEET_TO_METERS,
             StaticObstacles,
             PerRouteObstacles);
         if (ReferenceEquals(Routed.Lifecycle, Source.Lifecycle))
@@ -276,6 +295,8 @@ public static class GuidancePlanner
         Int32 TurnCount = 0;
         Double TurnAngleRad = 0.0;
 
+        // Appends one waypoint while preserving segment and turn metrics.
+        // Point, pass, action, blade, and depth describe the waypoint to append.
         void AppendPoint
             (
             (Double X, Double Y) Point,
@@ -296,7 +317,7 @@ public static class GuidancePlanner
                 return;
             }
             Double SegmentM = Distance(PendingPoint, Point);
-            if (SegmentM <= 1e-9) return;
+            if (SegmentM <= Constants.NUMERIC_COMPARISON_TOLERANCE) return;
             if (HasPreviousPoint)
             {
                 Double ChangeDeg = HeadingChangeDeg(
@@ -304,7 +325,7 @@ public static class GuidancePlanner
                 if (ChangeDeg >= Options.WaypointTurnThresholdDeg)
                 {
                     TurnCount += 1;
-                    TurnAngleRad += ChangeDeg * Math.PI / 180.0;
+                    TurnAngleRad += ChangeDeg * Math.PI / Constants.DEGREES_PER_HALF_TURN;
                 }
             }
             (Double Lat, Double Lon) LatLon =
@@ -351,9 +372,9 @@ public static class GuidancePlanner
             Double DepthMm = Segment.Phase switch
             {
                 LifecyclePlanner.Phase.Cut when CutDepthM.Length > 0 =>
-                    1000.0 * CutDepthM[DepthIndex],
+                    Constants.MILLIMETERS_PER_METER * CutDepthM[DepthIndex],
                 LifecyclePlanner.Phase.Fill when FillDepthM.Length > 0 =>
-                    1000.0 * FillDepthM[DepthIndex],
+                    Constants.MILLIMETERS_PER_METER * FillDepthM[DepthIndex],
                 _ => 0.0,
             };
             Double SegmentDistanceM = PolylineDistance(Segment.Points);
@@ -396,7 +417,7 @@ public static class GuidancePlanner
         }
         return new GuidanceResult(
             Points,
-            Options.BladeWidthMm / 1000.0,
+            Options.BladeWidthMm / Constants.MILLIMETERS_PER_METER,
             Grid.GridSizeM,
             HeadingDeg,
             Route.OrderedPasses.Count,
@@ -465,6 +486,9 @@ public static class GuidancePlanner
             : Cells.Average(Cell => Math.Abs(Cell.DepthM));
     }
 
+    /// <summary>
+    /// Stores one waypoint used by diagnostic guidance rendering.
+    /// </summary>
     private sealed class DisplayPoint
     {
         /// <summary>
@@ -495,6 +519,9 @@ public static class GuidancePlanner
         public Double DepthMm { get; }
     }
 
+    /// <summary>
+    /// Stores a rendered diagnostic trajectory and its connector totals.
+    /// </summary>
     private sealed class DisplayTrajectory
     {
         /// <summary>
@@ -548,7 +575,7 @@ public static class GuidancePlanner
         Directory.CreateDirectory(OutputDirectory);
 
         (AgdField Field, Grid Grid, Route Route, Double HeadingDeg, EdgePatchOmissionResult EdgeOmission) Plan = BuildRoute(AgdPath);
-        Double BladeM = Constants.DEFAULT_BLADE_WIDTH_MM / 1000.0;
+        Double BladeM = Constants.DEFAULT_BLADE_WIDTH_MM / Constants.MILLIMETERS_PER_METER;
         Boolean Conserved = true;
         List<LifecyclePlanner.PassPlan> LifecyclePasses =
             new List<LifecyclePlanner.PassPlan>();
@@ -643,9 +670,9 @@ public static class GuidancePlanner
                 FillRuns,
                 RoutePoints,
                 BladeM,
-                pixelsPerBin: 40,
-                padCells: 6,
-                manualAssistRuns: ManualAssistRuns);
+                PixelsPerBin: DEFAULT_DIAGNOSTIC_PIXELS_PER_BIN,
+                PadCells: COMPACT_DIAGNOSTIC_PADDING_CELLS,
+                ManualAssistRuns: ManualAssistRuns);
             String OutputPath = Path.Combine(
                 OutputDirectory,
                 String.Format(CultureInfo.InvariantCulture, "route_{0:D2}.png", RouteIndex + 1));
@@ -726,6 +753,8 @@ public static class GuidancePlanner
         String ProgressStage = String.Empty;
         Stopwatch StageTimer = Stopwatch.StartNew();
         Stopwatch ProgressWriteTimer = Stopwatch.StartNew();
+        // Persists throttled progress without delaying the planning pipeline.
+        // Stage and counts identify the current unit of planning work.
         void WriteProgress(String Stage, Int32 Completed, Int32 Total)
         {
             lock (ProgressLock)
@@ -740,11 +769,11 @@ public static class GuidancePlanner
                 Boolean Complete = (Total == 0) || (Completed >= Total);
                 Boolean PassStart = Stage.Contains(" pass=", StringComparison.Ordinal);
                 if (!Complete && !PassStart && (Completed > 0)
-                    && (ProgressWriteTimer.Elapsed < TimeSpan.FromSeconds(5.0)))
+                    && (ProgressWriteTimer.Elapsed < TimeSpan.FromSeconds(PROGRESS_REPORT_INTERVAL_S)))
                 {
                     return;
                 }
-                Double StageSeconds = Math.Max(StageTimer.Elapsed.TotalSeconds, 0.001);
+                Double StageSeconds = Math.Max(StageTimer.Elapsed.TotalSeconds, MINIMUM_PROGRESS_DURATION_S);
                 Double Rate = Completed / StageSeconds;
                 Double EtaSeconds = (Rate > 0.0)
                     ? Math.Max(0, Total - Completed) / Rate
@@ -759,7 +788,7 @@ public static class GuidancePlanner
                     Environment.NewLine,
                     Completed,
                     Total,
-                    Total > 0 ? 100.0 * Completed / Total : 100.0,
+                    Total > 0 ? PERCENT_SCALE * Completed / Total : PERCENT_SCALE,
                     Rate,
                     StageTimer.Elapsed.ToString("c", CultureInfo.InvariantCulture),
                     Eta,
@@ -774,7 +803,7 @@ public static class GuidancePlanner
         {
             Console.SetOut(TextWriter.Null);
             Plan = BuildRoute(AgdPath);
-            Double BladeM = Constants.DEFAULT_BLADE_WIDTH_MM / 1000.0;
+            Double BladeM = Constants.DEFAULT_BLADE_WIDTH_MM / Constants.MILLIMETERS_PER_METER;
             Passes = BuildWholePlanPasses(
                 Plan.Route, Plan.Grid, BladeM, true,
                 PassLimit,
@@ -791,7 +820,7 @@ public static class GuidancePlanner
                 true,
                 PlanningPreferredLineupM,
                 PlanningMinimumRadiusM,
-                Math.Min(0.5, Plan.Grid.GridSizeM),
+                Math.Min(Constants.HALF_SCALE, Plan.Grid.GridSizeM),
                 Plan.Grid,
                 (Completed, Total) => WriteProgress(
                     "lifecycle", Completed, Total),
@@ -926,7 +955,7 @@ public static class GuidancePlanner
         Int32 ValidFieldCells = 0;
         Int32 ActiveWorkCells = 0;
         Double[,] Delta = Plan.Grid.Delta();
-        Double WorkToleranceM = Constants.DEFAULT_TOLERANCE_MM / 1000.0;
+        Double WorkToleranceM = Constants.DEFAULT_TOLERANCE_MM / Constants.MILLIMETERS_PER_METER;
         for (Int32 By = 0; By < Plan.Grid.Height; By += 1)
         {
             for (Int32 Bx = 0; Bx < Plan.Grid.Width; Bx += 1)
@@ -966,8 +995,8 @@ public static class GuidancePlanner
             Lifecycle.ManualAssistCount,
             Manual.Count,
             ManualDistanceM,
-            ManualDistanceM / 1609.344,
-            Lifecycle.DistanceM > 0.0 ? 100.0 * ManualDistanceM / Lifecycle.DistanceM : 0.0));
+            ManualDistanceM / Constants.METERS_PER_MILE,
+            Lifecycle.DistanceM > 0.0 ? PERCENT_SCALE * ManualDistanceM / Lifecycle.DistanceM : 0.0));
         Report.AppendLine(String.Format(
             CultureInfo.InvariantCulture,
             "manual_exterior={0} manual_in_field_alignment={1} manual_beyond_allowance={2}",
@@ -978,7 +1007,7 @@ public static class GuidancePlanner
             CultureInfo.InvariantCulture,
             "manual_length_m_min={0:F1} median={1:F1} p90={2:F1} max={3:F1}",
             Percentile(ManualDistancesM, 0.0),
-            Percentile(ManualDistancesM, 0.5),
+            Percentile(ManualDistancesM, Constants.HALF_SCALE),
             Percentile(ManualDistancesM, 0.9),
             Percentile(ManualDistancesM, 1.0)));
         Report.AppendLine(String.Format(
@@ -986,7 +1015,7 @@ public static class GuidancePlanner
             "total_segments={0} total_distance_m={1:F1} total_distance_mi={2:F2} deterministic_drive_hours={3:F3} scheduled_hours_at_80_percent_operational_availability={4:F3}",
             Lifecycle.Segments.Count,
             Lifecycle.DistanceM,
-            Lifecycle.DistanceM / 1609.344,
+            Lifecycle.DistanceM / Constants.METERS_PER_MILE,
             (Timing.MotionSeconds + Timing.EventSeconds) / SECONDS_PER_HOUR,
             Timing.TotalSeconds / SECONDS_PER_HOUR));
         Report.AppendLine(String.Format(
@@ -1005,7 +1034,7 @@ public static class GuidancePlanner
             Timing.CurvatureConstraintCount,
             Timing.CurvatureLimitedDistanceM,
             Timing.DistanceM > 0.0
-                ? 100.0 * Timing.CurvatureLimitedDistanceM / Timing.DistanceM
+                ? PERCENT_SCALE * Timing.CurvatureLimitedDistanceM / Timing.DistanceM
                 : 0.0,
             Timing.ForcedStopCount,
             Timing.MinimumObservedCurveRadiusM,
@@ -1080,7 +1109,7 @@ public static class GuidancePlanner
                 "  {0}: distance_m={1:F1} distance_mi={2:F3} hours={3:F4} average_mph={4:F3}",
                 Phase,
                 PhaseDistanceM,
-                PhaseDistanceM / 1609.344,
+                PhaseDistanceM / Constants.METERS_PER_MILE,
                 PhaseSeconds / SECONDS_PER_HOUR,
                 PhaseSeconds > 0.0
                     ? PhaseDistanceM / PhaseSeconds / Constants.MPH_TO_MPS
@@ -1112,7 +1141,7 @@ public static class GuidancePlanner
                 "  route={0} distance_m={1:F1} distance_mi={2:F3} drive_hours={3:F4} average_mph={4:F3}",
                 RouteNumber,
                 RouteDistanceM,
-                RouteDistanceM / 1609.344,
+                RouteDistanceM / Constants.METERS_PER_MILE,
                 RouteSeconds / SECONDS_PER_HOUR,
                 RouteSeconds > 0.0
                     ? RouteDistanceM / RouteSeconds / Constants.MPH_TO_MPS
@@ -1122,7 +1151,7 @@ public static class GuidancePlanner
         foreach (KeyValuePair<Int32, Double> RouteTime in Timing.RouteSeconds
             .Where(Item => Item.Key > 0)
             .OrderByDescending(Item => Item.Value)
-            .Take(20))
+            .Take(DIAGNOSTIC_ROUTE_LIMIT))
         {
             Timing.RouteDistanceM.TryGetValue(
                 RouteTime.Key, out Double RouteDistanceM);
@@ -1145,7 +1174,7 @@ public static class GuidancePlanner
             BeyondAllowanceSegments));
         Report.AppendLine("operator_rounded_tight_vertices:");
         foreach (GuidanceTiming.CurveViolation Violation in
-            Timing.CurveViolations.OrderBy(Violation => Violation.RadiusM).Take(50))
+            Timing.CurveViolations.OrderBy(Violation => Violation.RadiusM).Take(CURVE_VIOLATION_DIAGNOSTIC_LIMIT))
         {
             Report.AppendLine(String.Format(
                 CultureInfo.InvariantCulture,
@@ -1169,10 +1198,10 @@ public static class GuidancePlanner
             GuidanceOmittedCells.Count,
             GuidanceOmittedCells.Count * Plan.Grid.AreaM2,
             ValidFieldCells > 0
-                ? 100.0 * GuidanceOmittedCells.Count / ValidFieldCells
+                ? PERCENT_SCALE * GuidanceOmittedCells.Count / ValidFieldCells
                 : 0.0,
             ActiveWorkCells > 0
-                ? 100.0 * GuidanceOmittedCells.Count / ActiveWorkCells
+                ? PERCENT_SCALE * GuidanceOmittedCells.Count / ActiveWorkCells
                 : 0.0));
         Report.AppendLine(String.Format(
             CultureInfo.InvariantCulture,
@@ -1181,7 +1210,7 @@ public static class GuidancePlanner
             ActiveWorkCells,
             AllAffectedCells.Count,
             ValidFieldCells > 0
-                ? 100.0 * AllAffectedCells.Count / ValidFieldCells
+                ? PERCENT_SCALE * AllAffectedCells.Count / ValidFieldCells
                 : 0.0,
             StraightCoverageShortfallM));
         Report.AppendLine(String.Format(
@@ -1203,7 +1232,7 @@ public static class GuidancePlanner
             TransitCache.RetainedEntries,
             TransitCache.Clears,
             (TransitCache.Hits + TransitCache.Misses) > 0
-                ? 100.0 * TransitCache.Hits
+                ? PERCENT_SCALE * TransitCache.Hits
                     / (TransitCache.Hits + TransitCache.Misses)
                 : 0.0));
         Report.AppendLine(String.Format(
@@ -1247,7 +1276,7 @@ public static class GuidancePlanner
             LifecyclePlanner.Phase Previous,
             LifecyclePlanner.Phase Next) Item in Manual
                 .OrderByDescending(Item => Item.DistanceM)
-                .Take(20))
+                .Take(DIAGNOSTIC_ROUTE_LIMIT))
         {
             (Double X, Double Y) Start = Item.Segment.Points[0];
             (Double X, Double Y) End =
@@ -1305,7 +1334,7 @@ public static class GuidancePlanner
         Stopwatch Timer = Stopwatch.StartNew();
         (AgdField Field, Grid Grid, Route Route, Double HeadingDeg,
             EdgePatchOmissionResult EdgeOmission) Plan = BuildRoute(AgdPath);
-        Double BladeM = Constants.DEFAULT_BLADE_WIDTH_MM / 1000.0;
+        Double BladeM = Constants.DEFAULT_BLADE_WIDTH_MM / Constants.MILLIMETERS_PER_METER;
         Int32 PassCount = Plan.Route.OrderedPasses.Count;
         CoveragePlanner.PlanResult?[] Cuts =
             new CoveragePlanner.PlanResult?[PassCount];
@@ -1392,7 +1421,7 @@ public static class GuidancePlanner
             new ConnectorPlanner.Pose(
                 Values[3], Values[4], Values[5]);
         Double RadiusM = PlanningMinimumRadiusM;
-        Double SampleSpacingM = Math.Min(0.5, Plan.Grid.GridSizeM);
+        Double SampleSpacingM = Math.Min(Constants.HALF_SCALE, Plan.Grid.GridSizeM);
         foreach (Boolean AllowForwardDetour in new[] { false, true })
         {
             Stopwatch Timer = Stopwatch.StartNew();
@@ -1418,9 +1447,9 @@ public static class GuidancePlanner
                 Timer.Elapsed.TotalSeconds,
                 Result.FailureReason));
         }
-        foreach (Double HeadingDeg in new[] { 0.0, 90.0, 180.0, 270.0 })
+        foreach (Double HeadingDeg in new[] { 0.0, 90.0, Constants.DEGREES_PER_HALF_TURN, 270.0 })
         {
-            Double HeadingRad = HeadingDeg * Math.PI / 180.0;
+            Double HeadingRad = HeadingDeg * Math.PI / Constants.DEGREES_PER_HALF_TURN;
             Double ClearanceM = 0.0;
             for (Double DistanceM = SampleSpacingM;
                 DistanceM <= 100.0;
@@ -1528,7 +1557,7 @@ public static class GuidancePlanner
         }
 
         (AgdField Field, Grid Grid, Route Route, Double HeadingDeg, EdgePatchOmissionResult EdgeOmission) Plan = BuildRoute(AgdPath);
-        Double BladeM = Constants.DEFAULT_BLADE_WIDTH_MM / 1000.0;
+        Double BladeM = Constants.DEFAULT_BLADE_WIDTH_MM / Constants.MILLIMETERS_PER_METER;
         List<LifecyclePlanner.PassPlan> AllPasses =
             BuildWholePlanPasses(
                 Plan.Route, Plan.Grid, BladeM, true, LastRouteNumber);
@@ -1551,7 +1580,7 @@ public static class GuidancePlanner
             true,
             PlanningPreferredLineupM,
             PlanningMinimumRadiusM,
-            Math.Min(0.5, Plan.Grid.GridSizeM),
+            Math.Min(Constants.HALF_SCALE, Plan.Grid.GridSizeM),
             Plan.Grid);
         if (!Lifecycle.Success)
         {
@@ -1672,8 +1701,8 @@ public static class GuidancePlanner
                 RunSequencer.SequencedRun First = Pass.Cut.Runs[0];
                 return (
                     (
-                        0.5 * (First.Run.StartXy.X + First.Run.EndXy.X),
-                        0.5 * (First.Run.StartXy.Y + First.Run.EndXy.Y)),
+                        Constants.HALF_SCALE * (First.Run.StartXy.X + First.Run.EndXy.X),
+                        Constants.HALF_SCALE * (First.Run.StartXy.Y + First.Run.EndXy.Y)),
                     (FirstRouteNumber + Index).ToString(CultureInfo.InvariantCulture));
             })
             .ToList();
@@ -1684,12 +1713,12 @@ public static class GuidancePlanner
             FillRuns,
             RoutePoints,
             BladeM,
-            pixelsPerBin: 40,
-            padCells: 8,
-            manualAssistRuns: ManualAssistRuns,
-            routeMarkers: RouteMarkers,
-            drawDirectionArrows: true,
-            directionArrowSpacingM: 6.0 * Plan.Grid.GridSizeM);
+            PixelsPerBin: DEFAULT_DIAGNOSTIC_PIXELS_PER_BIN,
+            PadCells: DEFAULT_DIAGNOSTIC_PADDING_CELLS,
+            ManualAssistRuns: ManualAssistRuns,
+            RouteMarkers: RouteMarkers,
+            DrawDirectionArrows: true,
+            DirectionArrowSpacingM: DIRECTION_ARROW_SPACING_CELLS * Plan.Grid.GridSizeM);
         File.WriteAllBytes(OutputPath, Png);
         if (WriteGif)
         {
@@ -1790,8 +1819,8 @@ public static class GuidancePlanner
             CoveragePlanner.Run First = CutPlan.Runs[0];
             RouteMarkers.Add((
                 (
-                    0.5 * (First.StartXy.X + First.EndXy.X),
-                    0.5 * (First.StartXy.Y + First.EndXy.Y)),
+                    Constants.HALF_SCALE * (First.StartXy.X + First.EndXy.X),
+                    Constants.HALF_SCALE * (First.StartXy.Y + First.EndXy.Y)),
                 RouteNumber.ToString(CultureInfo.InvariantCulture)));
         }
 
@@ -1801,12 +1830,12 @@ public static class GuidancePlanner
             FillRuns,
             RoutePoints,
             BladeM,
-            pixelsPerBin: 40,
-            padCells: 8,
-            manualAssistRuns: ManualAssistRuns,
-            routeMarkers: RouteMarkers,
-            drawDirectionArrows: true,
-            directionArrowSpacingM: 6.0 * Grid.GridSizeM);
+            PixelsPerBin: DEFAULT_DIAGNOSTIC_PIXELS_PER_BIN,
+            PadCells: DEFAULT_DIAGNOSTIC_PADDING_CELLS,
+            ManualAssistRuns: ManualAssistRuns,
+            RouteMarkers: RouteMarkers,
+            DrawDirectionArrows: true,
+            DirectionArrowSpacingM: DIRECTION_ARROW_SPACING_CELLS * Grid.GridSizeM);
         File.WriteAllBytes(OutputPath, Png);
     }
 
@@ -1846,13 +1875,13 @@ public static class GuidancePlanner
                 FillRuns,
                 Route,
                 BladeM,
-                pixelsPerBin: 20,
-                padCells: 8,
-                manualAssistRuns: ManualRuns,
-                routeMarkers: Markers,
-                drawDirectionArrows: true,
-                directionArrowSpacingM: 6.0 * Grid.GridSizeM,
-                boundsPoints: FixedBounds));
+                PixelsPerBin: 20,
+                PadCells: DEFAULT_DIAGNOSTIC_PADDING_CELLS,
+                ManualAssistRuns: ManualRuns,
+                RouteMarkers: Markers,
+                DrawDirectionArrows: true,
+                DirectionArrowSpacingM: DIRECTION_ARROW_SPACING_CELLS * Grid.GridSizeM,
+                BoundsPoints: FixedBounds));
         }
 
         using Image<Rgba32> Gif = Image.Load<Rgba32>(Frames[0]);
@@ -1863,7 +1892,7 @@ public static class GuidancePlanner
             ImageFrame<Rgba32> Added = Gif.Frames.AddFrame(Frame.Frames.RootFrame);
             SetGifDelay(
                 Added,
-                FrameIndex == Frames.Count - 1 ? 2500 : FRAME_DELAY_MS);
+                FrameIndex == Frames.Count - 1 ? FINAL_ANIMATION_HOLD_MS : FRAME_DELAY_MS);
         }
         Gif.Metadata.GetGifMetadata().RepeatCount = 0;
         Gif.Save(GifPath, new GifEncoder());
@@ -1902,7 +1931,7 @@ public static class GuidancePlanner
                 (Double X, Double Y) Start = Segment.Points[PointIndex - 1];
                 (Double X, Double Y) End = Segment.Points[PointIndex];
                 Double LegM = Distance(Start, End);
-                if (LegM <= RemainingM + 1e-9)
+                if (LegM <= RemainingM + Constants.NUMERIC_COMPARISON_TOLERANCE)
                 {
                     AppendDistinct(Route, End);
                     if (Manual != null) AppendDistinct(Manual, End);
@@ -1910,7 +1939,7 @@ public static class GuidancePlanner
                     continue;
                 }
 
-                if (LegM > 1e-12)
+                if (LegM > Constants.STRICT_NUMERIC_COMPARISON_TOLERANCE)
                 {
                     Double Fraction = RemainingM / LegM;
                     (Double X, Double Y) Partial = (
@@ -1923,7 +1952,7 @@ public static class GuidancePlanner
                 return (Route, ManualRuns);
             }
             if ((Manual != null) && (Manual.Count >= 2)) ManualRuns.Add(Manual);
-            if (RemainingM <= 1e-9) return (Route, ManualRuns);
+            if (RemainingM <= Constants.NUMERIC_COMPARISON_TOLERANCE) return (Route, ManualRuns);
         }
         return (Route, ManualRuns);
     }
@@ -1936,7 +1965,7 @@ public static class GuidancePlanner
         )
     {
         if ((Points.Count == 0)
-            || (Distance(Points[Points.Count - 1], Point) > 1e-9))
+            || (Distance(Points[Points.Count - 1], Point) > Constants.NUMERIC_COMPARISON_TOLERANCE))
         {
             Points.Add(Point);
         }
@@ -1951,7 +1980,7 @@ public static class GuidancePlanner
     {
         Frame.Metadata.GetGifMetadata().FrameDelay = Math.Max(
             1,
-            (Int32)Math.Round(DelayMs / 10.0, MidpointRounding.AwayFromZero));
+            (Int32)Math.Round(DelayMs / GIF_CENTISECOND_MS, MidpointRounding.AwayFromZero));
     }
 
     /// <summary>
@@ -1974,7 +2003,7 @@ public static class GuidancePlanner
         (Double X, Double Y) MaximumGapStart = (0.0, 0.0);
         (Double X, Double Y) MaximumGapEnd = (0.0, 0.0);
         List<(Double X, Double Y)> DrivenPoints = new List<(Double X, Double Y)>();
-        Double CheckSpacingM = Math.Min(0.10, Grid.GridSizeM / 4.0);
+        Double CheckSpacingM = Math.Min(DRIVEN_PATH_SAMPLE_SPACING_M, Grid.GridSizeM / 4.0);
         FieldEdgePolicy EdgePolicy =
             new FieldEdgePolicy(Grid, EdgeAllowanceM);
 
@@ -1984,7 +2013,7 @@ public static class GuidancePlanner
             foreach ((Double X, Double Y) Point in Segment.Points)
             {
                 if ((DrivenPoints.Count == 0)
-                    || (Distance(DrivenPoints[DrivenPoints.Count - 1], Point) > 1e-6))
+                    || (Distance(DrivenPoints[DrivenPoints.Count - 1], Point) > GEOMETRY_MATCH_TOLERANCE_M))
                 {
                     DrivenPoints.Add(Point);
                 }
@@ -2007,7 +2036,7 @@ public static class GuidancePlanner
                     CheckSpacingM,
                     EdgePolicy);
                 BeyondAllowanceInterpolatedCount += BeyondAllowanceOnLeg;
-                if ((BeyondAllowanceOnLeg > 0) && (ReportedOutsideLegs < 20))
+                if ((BeyondAllowanceOnLeg > 0) && (ReportedOutsideLegs < DIAGNOSTIC_ROUTE_LIMIT))
                 {
                     Console.WriteLine(String.Format(
                         CultureInfo.InvariantCulture,
@@ -2047,7 +2076,7 @@ public static class GuidancePlanner
             Int32 BeyondAllowanceAcrossBoundary = CountBeyondAllowanceAlongLine(
                 A, B, CheckSpacingM, EdgePolicy);
             BeyondAllowanceInterpolatedCount += BeyondAllowanceAcrossBoundary;
-            if ((BeyondAllowanceAcrossBoundary > 0) && (ReportedOutsideLegs < 20))
+            if ((BeyondAllowanceAcrossBoundary > 0) && (ReportedOutsideLegs < DIAGNOSTIC_ROUTE_LIMIT))
             {
                 Console.WriteLine(String.Format(
                     CultureInfo.InvariantCulture,
@@ -2088,7 +2117,7 @@ public static class GuidancePlanner
             MaximumBoundaryGapAfterSegment,
             MaximumHeadingChangeDeg,
             CuspCount));
-        if (MaximumBoundaryGapM > 1e-6)
+        if (MaximumBoundaryGapM > GEOMETRY_MATCH_TOLERANCE_M)
         {
             Console.WriteLine(String.Format(
                 CultureInfo.InvariantCulture,
@@ -2226,7 +2255,7 @@ public static class GuidancePlanner
                     FillSequence,
                     CutExit,
                     PlanningMinimumRadiusM,
-                    Math.Min(0.5, Grid.GridSizeM),
+                    Math.Min(Constants.HALF_SCALE, Grid.GridSizeM),
                     Grid);
             }
         }
@@ -2262,7 +2291,7 @@ public static class GuidancePlanner
                 CutSequence.Runs[CutSequence.Runs.Count - 1].ExitPose,
                 FillSequence.Runs[0].EntryPose,
                 PlanningMinimumRadiusM,
-                Math.Min(0.5, Grid.GridSizeM),
+                Math.Min(Constants.HALF_SCALE, Grid.GridSizeM),
                 Grid);
             if (Connector.Success) DistanceM += Connector.LengthM;
         }
@@ -2331,9 +2360,11 @@ public static class GuidancePlanner
         {
             Stopwatch PassTimer = Stopwatch.StartNew();
             Stopwatch StageTimer = Stopwatch.StartNew();
+            // Reports slow per-pass stages while avoiding noise from fast stages.
+            // Stage: Name of the completed planning stage.
             void ReportStage(String Stage)
             {
-                if (StageTimer.Elapsed >= TimeSpan.FromSeconds(0.25))
+                if (StageTimer.Elapsed >= TimeSpan.FromSeconds(Constants.QUARTER_SCALE))
                 {
                     Diagnostic?.Invoke(String.Format(
                         CultureInfo.InvariantCulture,
@@ -2526,7 +2557,7 @@ public static class GuidancePlanner
                                 CandidateFillSequence,
                                 CandidateCutExit,
                                 PlanningMinimumRadiusM,
-                                Math.Min(0.5, Grid.GridSizeM),
+                                Math.Min(Constants.HALF_SCALE, Grid.GridSizeM),
                                 Grid);
                     }
                     if (!CandidateFillSequence.Success
@@ -2856,7 +2887,7 @@ public static class GuidancePlanner
                     FillSequence,
                     FillInbound,
                     PlanningMinimumRadiusM,
-                    Math.Min(0.5, Grid.GridSizeM),
+                    Math.Min(Constants.HALF_SCALE, Grid.GridSizeM),
                     Grid);
             }
             ReportStage("continuous_fill_compaction");
@@ -2972,7 +3003,7 @@ public static class GuidancePlanner
                     FillSequence,
                     FillInbound,
                     PlanningMinimumRadiusM,
-                    Math.Min(0.5, Grid.GridSizeM),
+                    Math.Min(Constants.HALF_SCALE, Grid.GridSizeM),
                     Grid);
             }
             ReportStage("post_flexible_fill_compaction");
@@ -3021,13 +3052,13 @@ public static class GuidancePlanner
                         new ConnectorPlanner.Pose(
                             LastFill.Run.EndXy.X,
                             LastFill.Run.EndXy.Y,
-                            LastFill.Run.HeadingDeg + 180.0);
+                            LastFill.Run.HeadingDeg + Constants.DEGREES_PER_HALF_TURN);
                     TransitPlanner.Result GradeTurn =
                         TransitPlanner.Connect(
                             LastFill.ExitPose,
                             GradeEntry,
                             PlanningMinimumRadiusM,
-                            Math.Min(0.5, Grid.GridSizeM),
+                            Math.Min(Constants.HALF_SCALE, Grid.GridSizeM),
                             Grid,
                             EdgeAllowanceM: Grid.GridSizeM,
                             AllowForwardDetour: true);
@@ -3076,7 +3107,7 @@ public static class GuidancePlanner
                         FillSequence.Runs[0].EntryPose,
                         PlanningPreferredLineupM,
                         PlanningMinimumRadiusM,
-                        Math.Min(0.5, Grid.GridSizeM),
+                        Math.Min(Constants.HALF_SCALE, Grid.GridSizeM),
                         Grid,
                         AllowForwardDetour: true);
                 if (DetourCutSequence.Success
@@ -3368,7 +3399,7 @@ public static class GuidancePlanner
                                 LateGradeFillSequence,
                                 LateGradeRecoveryStart,
                                 PlanningMinimumRadiusM,
-                                Math.Min(0.5, Grid.GridSizeM),
+                                Math.Min(Constants.HALF_SCALE, Grid.GridSizeM),
                                 Grid)
                             : LateGradeFillSequence;
                     if (PreparedLateGradeFill.Success
@@ -3582,7 +3613,7 @@ public static class GuidancePlanner
                     CutSequence.Runs[CutSequence.Runs.Count - 1].ExitPose,
                     FillSequence.Runs[0].EntryPose,
                     PlanningMinimumRadiusM,
-                    Math.Min(0.5, Grid.GridSizeM),
+                    Math.Min(Constants.HALF_SCALE, Grid.GridSizeM),
                     Grid);
                 Diagnostic?.Invoke(String.Format(
                     CultureInfo.InvariantCulture,
@@ -3610,7 +3641,7 @@ public static class GuidancePlanner
                             FillSequence.Runs,
                             PlanningPreferredLineupM,
                             PlanningMinimumRadiusM,
-                            Math.Min(0.5, Grid.GridSizeM),
+                            Math.Min(Constants.HALF_SCALE, Grid.GridSizeM),
                             Grid);
                     Current = GradeRuns[GradeRuns.Count - 1].ExitPose;
                 }
@@ -3620,7 +3651,7 @@ public static class GuidancePlanner
         Int32 ReportedFailures = 0;
         for (Int32 PassIndex = 0; PassIndex < PassCount; PassIndex += 1)
         {
-            if ((Failures[PassIndex] != null) && (ReportedFailures < 20))
+            if ((Failures[PassIndex] != null) && (ReportedFailures < DIAGNOSTIC_ROUTE_LIMIT))
             {
                 Diagnostic?.Invoke(Failures[PassIndex]!);
                 ReportedFailures += 1;
@@ -3649,12 +3680,12 @@ public static class GuidancePlanner
                 FillSequence,
                 null,
                 PlanningMinimumRadiusM,
-                Math.Min(0.5, Grid.GridSizeM),
+                Math.Min(Constants.HALF_SCALE, Grid.GridSizeM),
                 Grid);
         return LifecyclePlanner.SupportsPreparedGradeReturn(
             Candidate,
             PlanningMinimumRadiusM,
-            Math.Min(0.5, Grid.GridSizeM),
+            Math.Min(Constants.HALF_SCALE, Grid.GridSizeM),
             Grid,
             out _,
             RetainResults);
@@ -3674,7 +3705,7 @@ public static class GuidancePlanner
         )
     {
         Double RadiusM = PlanningMinimumRadiusM;
-        Double SampleM = Math.Min(0.5, Grid.GridSizeM);
+        Double SampleM = Math.Min(Constants.HALF_SCALE, Grid.GridSizeM);
         ConnectorPlanner.Pose? First = Cut.Runs.Count > 0
             ? Cut.Runs[0].EntryPose
             : Fill.Runs.Count > 0
@@ -3815,7 +3846,7 @@ public static class GuidancePlanner
             End,
             PlanningPreferredLineupM,
             PlanningMinimumRadiusM,
-            Math.Min(0.5, Grid.GridSizeM),
+            Math.Min(Constants.HALF_SCALE, Grid.GridSizeM),
             Grid);
     }
 
@@ -3834,7 +3865,7 @@ public static class GuidancePlanner
             End,
             PlanningPreferredLineupM,
             PlanningMinimumRadiusM,
-            Math.Min(0.5, Grid.GridSizeM),
+            Math.Min(Constants.HALF_SCALE, Grid.GridSizeM),
             Grid);
     }
 
@@ -3894,7 +3925,7 @@ public static class GuidancePlanner
                     Seed,
                     CutExit,
                     PlanningMinimumRadiusM,
-                    Math.Min(0.5, Grid.GridSizeM),
+                    Math.Min(Constants.HALF_SCALE, Grid.GridSizeM),
                     Grid);
             if (!Prepared.Success || (Prepared.Runs.Count == 0)) continue;
             String Key = SequenceDirectionSignature(Prepared);
@@ -3913,7 +3944,7 @@ public static class GuidancePlanner
             if (SeedIndex == 0) BaselineScoreM = ScoreM;
             if ((ManualAssists > BestManualAssists)
                 || ((ManualAssists == BestManualAssists)
-                    && (ScoreM >= SelectedScoreM - 1e-9)))
+                    && (ScoreM >= SelectedScoreM - Constants.NUMERIC_COMPARISON_TOLERANCE)))
             {
                 continue;
             }
@@ -3945,7 +3976,7 @@ public static class GuidancePlanner
         if (!LifecyclePlanner.SupportsPreparedGradeReturn(
             Fill,
             PlanningMinimumRadiusM,
-            Math.Min(0.5, Grid.GridSizeM),
+            Math.Min(Constants.HALF_SCALE, Grid.GridSizeM),
             Grid,
             out _))
         {
@@ -3955,7 +3986,7 @@ public static class GuidancePlanner
             CutExit,
             Fill.Runs[0].EntryPose,
             PlanningMinimumRadiusM,
-            Math.Min(0.5, Grid.GridSizeM),
+            Math.Min(Constants.HALF_SCALE, Grid.GridSizeM),
             Grid,
             EdgeAllowanceM: Grid.GridSizeM,
             AllowForwardDetour: true);
@@ -3965,13 +3996,13 @@ public static class GuidancePlanner
                 Fill.Runs,
                 PlanningPreferredLineupM,
                 PlanningMinimumRadiusM,
-                Math.Min(0.5, Grid.GridSizeM),
+                Math.Min(Constants.HALF_SCALE, Grid.GridSizeM),
                 Grid);
         TransitPlanner.Result TurnToGrade = TransitPlanner.Connect(
             Fill.Runs[Fill.Runs.Count - 1].ExitPose,
             GradeRuns[0].EntryPose,
             PlanningMinimumRadiusM,
-            Math.Min(0.5, Grid.GridSizeM),
+            Math.Min(Constants.HALF_SCALE, Grid.GridSizeM),
             Grid,
             EdgeAllowanceM: Grid.GridSizeM,
             AllowForwardDetour: true);
@@ -3983,7 +4014,7 @@ public static class GuidancePlanner
                 GradeRuns[GradeRuns.Count - 1].ExitPose,
                 NextWorkEntry.Value,
                 PlanningMinimumRadiusM,
-                Math.Min(0.5, Grid.GridSizeM),
+                Math.Min(Constants.HALF_SCALE, Grid.GridSizeM),
                 Grid,
                 EdgeAllowanceM: Grid.GridSizeM,
                 AllowForwardDetour: true);
@@ -4046,9 +4077,9 @@ public static class GuidancePlanner
         // Internal shortfalls are worked blade-down by AppendSequenceConnector.
         // A shortfall at the outer ends has no adjoining work connector and would
         // therefore change the completed cut surface, so reject it transactionally.
-        if ((Recovered.Runs[0].StartCoverageShortfallM > 1e-9)
+        if ((Recovered.Runs[0].StartCoverageShortfallM > Constants.NUMERIC_COMPARISON_TOLERANCE)
             || (Recovered.Runs[Recovered.Runs.Count - 1]
-                .EndCoverageShortfallM > 1e-9))
+                .EndCoverageShortfallM > Constants.NUMERIC_COMPARISON_TOLERANCE))
         {
             return new RunSequencer.Result(
                 false,
@@ -4360,7 +4391,7 @@ public static class GuidancePlanner
                 Sequence,
                 Start,
                 PlanningMinimumRadiusM,
-                Math.Min(0.5, Grid.GridSizeM),
+                Math.Min(Constants.HALF_SCALE, Grid.GridSizeM),
                 Grid);
         }
         return Sequence.Success
@@ -4382,7 +4413,7 @@ public static class GuidancePlanner
             Cut.Runs[Cut.Runs.Count - 1].ExitPose,
             Fill.Runs[0].EntryPose,
             PlanningMinimumRadiusM,
-            Math.Min(0.5, Grid.GridSizeM),
+            Math.Min(Constants.HALF_SCALE, Grid.GridSizeM),
             Grid);
         return Connector.Success;
     }
@@ -4402,7 +4433,7 @@ public static class GuidancePlanner
             Start,
             Sequence.Runs[0].EntryPose,
             PlanningMinimumRadiusM,
-            Math.Min(0.5, Grid.GridSizeM),
+            Math.Min(Constants.HALF_SCALE, Grid.GridSizeM),
             Grid,
             AllowForwardDetour: AllowForwardDetour);
         return Connector.Success;
@@ -4422,7 +4453,7 @@ public static class GuidancePlanner
             Sequence.Runs[Sequence.Runs.Count - 1].ExitPose,
             End,
             PlanningMinimumRadiusM,
-            Math.Min(0.5, Grid.GridSizeM),
+            Math.Min(Constants.HALF_SCALE, Grid.GridSizeM),
             Grid);
         return Connector.Success;
     }
@@ -4494,7 +4525,7 @@ public static class GuidancePlanner
                     Double Score = CurrentCandidate.Score + NextCandidate.Score;
                     if ((OmittedCells > BestOmittedCells)
                         || ((OmittedCells == BestOmittedCells)
-                            && (Score >= BestScore - 1e-9)))
+                            && (Score >= BestScore - Constants.NUMERIC_COMPARISON_TOLERANCE)))
                     {
                         continue;
                     }
@@ -4536,7 +4567,7 @@ public static class GuidancePlanner
             new List<ConnectorPlanner.Pose>();
         Double LineupM = PlanningPreferredLineupM;
         Double MinimumRadiusM = PlanningMinimumRadiusM;
-        Double SampleSpacingM = Math.Min(0.5, Grid.GridSizeM);
+        Double SampleSpacingM = Math.Min(Constants.HALF_SCALE, Grid.GridSizeM);
         foreach (CoveragePlanner.Run Run in Runs)
         {
             CoveragePlanner.Run Reverse = ReverseRun(Run);
@@ -4557,7 +4588,7 @@ public static class GuidancePlanner
                 "{0:X16}:{1:X16}:{2:X16}",
                 BitConverter.DoubleToInt64Bits(Pose.X),
                 BitConverter.DoubleToInt64Bits(Pose.Y),
-                BitConverter.DoubleToInt64Bits(Pose.HeadingDeg % 360.0)))
+                BitConverter.DoubleToInt64Bits(Pose.HeadingDeg % Constants.DEGREES_PER_TURN)))
             .Select(Group => Group.First())
             .ToList();
     }
@@ -4691,7 +4722,7 @@ public static class GuidancePlanner
                 ConnectorPlanner.Pose CutEntryTarget =
                     CutEntryTargets[TargetIndex];
                 CandidateAttempts += 1;
-                if ((CandidateAttempts % 10000) == 0)
+                if ((CandidateAttempts % CANDIDATE_PROGRESS_INTERVAL) == 0)
                 {
                     Diagnostic?.Invoke(String.Format(
                         CultureInfo.InvariantCulture,
@@ -4729,7 +4760,7 @@ public static class GuidancePlanner
                                     PreviousFillSequenceCandidate,
                                     PreviousCutExit,
                                     PlanningMinimumRadiusM,
-                                    Math.Min(0.5, Grid.GridSizeM),
+                                    Math.Min(Constants.HALF_SCALE, Grid.GridSizeM),
                                     Grid);
                     }
                     if (!PreviousFillSequenceCandidate.Success
@@ -4787,7 +4818,7 @@ public static class GuidancePlanner
                                     FillSequence,
                                     CutExit,
                                     PlanningMinimumRadiusM,
-                                    Math.Min(0.5, Grid.GridSizeM),
+                                    Math.Min(Constants.HALF_SCALE, Grid.GridSizeM),
                                     Grid);
                         }
                         if (!FillSequence.Success
@@ -4807,7 +4838,7 @@ public static class GuidancePlanner
                             + FillCandidate.Score;
                         if ((OmittedCells > BestOmittedCells)
                             || ((OmittedCells == BestOmittedCells)
-                                && (Score >= BestScore - 1e-9)))
+                                && (Score >= BestScore - Constants.NUMERIC_COMPARISON_TOLERANCE)))
                         {
                             continue;
                         }
@@ -5013,20 +5044,20 @@ public static class GuidancePlanner
         ConnectorPlanner.Pose Second
         )
     {
-        return (Math.Abs(First.X - Second.X) <= 0.01)
-            && (Math.Abs(First.Y - Second.Y) <= 0.01)
+        return (Math.Abs(First.X - Second.X) <= ENDPOINT_MATCH_TOLERANCE_M)
+            && (Math.Abs(First.Y - Second.Y) <= ENDPOINT_MATCH_TOLERANCE_M)
             && (Math.Abs(NormalizeHeading(First.HeadingDeg - Second.HeadingDeg))
                 <= 0.1
                 || Math.Abs(
-                    NormalizeHeading(First.HeadingDeg - Second.HeadingDeg) - 360.0)
+                    NormalizeHeading(First.HeadingDeg - Second.HeadingDeg) - Constants.DEGREES_PER_TURN)
                     <= 0.1);
     }
 
     /// <summary>Normalizes a heading to [0, 360).</summary>
     private static Double NormalizeHeading(Double HeadingDeg)
     {
-        Double Output = HeadingDeg % 360.0;
-        return Output < 0.0 ? Output + 360.0 : Output;
+        Double Output = HeadingDeg % Constants.DEGREES_PER_TURN;
+        return Output < 0.0 ? Output + Constants.DEGREES_PER_TURN : Output;
     }
 
     /// <summary>Reverses a coverage run without changing its assigned work cells.</summary>
@@ -5042,7 +5073,7 @@ public static class GuidancePlanner
             Cells,
             Run.EndXy,
             Run.StartXy,
-            Run.HeadingDeg + 180.0,
+            Run.HeadingDeg + Constants.DEGREES_PER_HALF_TURN,
             Run.MaximumLateralErrorM);
     }
 
@@ -5053,7 +5084,7 @@ public static class GuidancePlanner
         )
     {
         return new ConnectorPlanner.Pose(
-            Pose.X, Pose.Y, Pose.HeadingDeg + 180.0);
+            Pose.X, Pose.Y, Pose.HeadingDeg + Constants.DEGREES_PER_HALF_TURN);
     }
 
     /// <summary>
@@ -5112,7 +5143,7 @@ public static class GuidancePlanner
                         {
                             continue;
                         }
-                        if (CandidatePlan.Score >= BestScore - 1e-9) continue;
+                        if (CandidatePlan.Score >= BestScore - Constants.NUMERIC_COMPARISON_TOLERANCE) continue;
                         BestPlan = CandidatePlan;
                         BestSequence = CandidateSequence;
                         BestScore = CandidatePlan.Score;
@@ -5161,11 +5192,11 @@ public static class GuidancePlanner
         SelectedFillSequence = FillSequence;
         FieldEdgePolicy EdgePolicy =
             new FieldEdgePolicy(Grid, Grid.GridSizeM);
-        const Int32 MaximumCompactEdgeRunCells = 2;
+        const Int32 MAXIMUM_COMPACT_EDGE_RUN_CELLS = 2;
         List<CoveragePlanner.Run> CompactEndpointEdgeRuns =
             OrderedCoverageCandidates(Cells, Grid, BladeM)
                 .SelectMany(Candidate => Candidate.Runs)
-                .Where(Run => Run.Cells.Count <= MaximumCompactEdgeRunCells)
+                .Where(Run => Run.Cells.Count <= MAXIMUM_COMPACT_EDGE_RUN_CELLS)
                 .Where(Run => EdgePolicy.IsFieldPointNearOuterEdge(
                         Run.StartXy.X, Run.StartXy.Y)
                     || EdgePolicy.IsFieldPointNearOuterEdge(
@@ -5186,7 +5217,7 @@ public static class GuidancePlanner
             .OrderBy(Entry => Entry.Cell.Bx)
             .ThenBy(Entry => Entry.Cell.By)
             .ToList();
-        const Int32 MaximumOmissionSetsPerTier = 128;
+        const Int32 MAXIMUM_OMISSION_SETS_PER_TIER = 128;
         Int32 MaximumAdditionalOmissions = Math.Min(6, EdgeCells.Count);
         ConnectorPlanner.Pose FillEntry =
             FillSequence.Runs[0].EntryPose;
@@ -5221,7 +5252,7 @@ public static class GuidancePlanner
         List<Int32[]> PreferredRunSubsetSets = PreferredRunRemovalSets
             .SelectMany(Set => Enumerable.Range(1, Set.Length)
                 .SelectMany(Count => EnumerateIndexCombinations(
-                    Set.Length, Count, MaximumOmissionSetsPerTier)
+                    Set.Length, Count, MAXIMUM_OMISSION_SETS_PER_TIER)
                     .Select(Subset => Subset.Select(Index => Set[Index])
                         .OrderBy(Index => Index)
                         .ToArray())))
@@ -5258,12 +5289,12 @@ public static class GuidancePlanner
                         .Concat(EnumerateIndexCombinations(
                             EdgeCells.Count,
                             OmissionCount,
-                            MaximumOmissionSetsPerTier));
+                            MAXIMUM_OMISSION_SETS_PER_TIER));
             foreach (Int32[] RemovedIndices in CandidateRemovalSets)
             {
                 String RemovalKey = String.Join(",", RemovedIndices);
                 if (!SeenSets.Add(RemovalKey)) continue;
-                if (OmissionSets >= MaximumOmissionSetsPerTier) break;
+                if (OmissionSets >= MAXIMUM_OMISSION_SETS_PER_TIER) break;
                 OmissionSets += 1;
                 if (PreferredRunRemovalKeys.Contains(RemovalKey))
                 {
@@ -5293,14 +5324,14 @@ public static class GuidancePlanner
                                 EdgeCells[Index].Cell.Bx,
                                 EdgeCells[Index].Cell.By)))));
                 }
-                if ((OmissionSets % 25) == 0)
+                if ((OmissionSets % OMISSION_PROGRESS_INTERVAL) == 0)
                 {
                     Diagnostic?.Invoke(String.Format(
                         CultureInfo.InvariantCulture,
                         "whole_plan edge_cut_omission_progress removed={0} sets_tested={1} limit={2}",
                         OmissionCount,
                         OmissionSets,
-                        MaximumOmissionSetsPerTier));
+                        MAXIMUM_OMISSION_SETS_PER_TIER));
                 }
                 HashSet<(Int32 Bx, Int32 By)> RemovedCells = RemovedIndices
                     .Select(Index => EdgeCells[Index].Cell)
@@ -5308,7 +5339,7 @@ public static class GuidancePlanner
                 List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Remaining = Cells
                     .Where(Entry => !RemovedCells.Contains(Entry.Cell))
                     .ToList();
-                const Int32 MaximumDetourCoverageCandidates = 1;
+                const Int32 MAXIMUM_DETOUR_COVERAGE_CANDIDATES = 1;
                 Boolean JointFillRecoveryAttempted = false;
                 List<CoveragePlanner.PlanResult>
                     DetourCoverageCandidates =
@@ -5388,7 +5419,7 @@ public static class GuidancePlanner
                             }
                         }
                         if (DetourCoverageCandidates.Count
-                            < MaximumDetourCoverageCandidates)
+                            < MAXIMUM_DETOUR_COVERAGE_CANDIDATES)
                         {
                             DetourCoverageCandidates.Add(Candidate);
                         }
@@ -5425,7 +5456,7 @@ public static class GuidancePlanner
                             FillEntry,
                             PlanningPreferredLineupM,
                             PlanningMinimumRadiusM,
-                            Math.Min(0.5, Grid.GridSizeM),
+                            Math.Min(Constants.HALF_SCALE, Grid.GridSizeM),
                             Grid,
                             AllowForwardDetour: true);
                     if (!Sequence.Success
@@ -5509,7 +5540,7 @@ public static class GuidancePlanner
                 "whole_plan edge_cut_omission_tier removed={0} sets_tested={1} selected=False truncated={2}",
                 OmissionCount,
                 OmissionSets,
-                OmissionSets >= MaximumOmissionSetsPerTier));
+                OmissionSets >= MAXIMUM_OMISSION_SETS_PER_TIER));
         }
         SelectedPlan = CoveragePlanner.Plan(
             new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>(), Grid, BladeM);
@@ -5533,6 +5564,8 @@ public static class GuidancePlanner
     {
         Dictionary<String, Int32[]> Sets =
             new Dictionary<String, Int32[]>(StringComparer.Ordinal);
+        // Adds one unique, bounded edge-removal candidate to the search set.
+        // CellsToRemove: Edge cells proposed for omission.
         void AddSet(IEnumerable<(Int32 Bx, Int32 By)> CellsToRemove)
         {
             Int32[] Indices = CellsToRemove
@@ -5700,7 +5733,7 @@ public static class GuidancePlanner
             GradeReturn,
             PlanningPreferredLineupM,
             PlanningMinimumRadiusM,
-            Math.Min(0.5, Grid.GridSizeM),
+            Math.Min(Constants.HALF_SCALE, Grid.GridSizeM),
             Grid);
         GuidanceTiming.Result Timing = GuidanceTiming.Estimate(
             Lifecycle,
@@ -5806,7 +5839,7 @@ public static class GuidancePlanner
             {
                 for (Int32 PointIndex = Points.Count - 1; PointIndex > 0; PointIndex -= 1)
                 {
-                    if (Distance(Points[PointIndex - 1], Points[PointIndex]) <= 1e-9) continue;
+                    if (Distance(Points[PointIndex - 1], Points[PointIndex]) <= Constants.NUMERIC_COMPARISON_TOLERANCE) continue;
                     return BearingDeg(Points[PointIndex - 1], Points[PointIndex]);
                 }
             }
@@ -5814,7 +5847,7 @@ public static class GuidancePlanner
             {
                 for (Int32 PointIndex = 1; PointIndex < Points.Count; PointIndex += 1)
                 {
-                    if (Distance(Points[PointIndex - 1], Points[PointIndex]) <= 1e-9) continue;
+                    if (Distance(Points[PointIndex - 1], Points[PointIndex]) <= Constants.NUMERIC_COMPARISON_TOLERANCE) continue;
                     return BearingDeg(Points[PointIndex - 1], Points[PointIndex]);
                 }
             }
@@ -5830,7 +5863,7 @@ public static class GuidancePlanner
         )
     {
         if (!Double.IsFinite(First) || !Double.IsFinite(Second)) return Double.NaN;
-        Double Difference = ((First - Second + 540.0) % 360.0) - 180.0;
+        Double Difference = ((First - Second + Constants.ANGLE_NORMALIZATION_OFFSET_DEGREES) % Constants.DEGREES_PER_TURN) - Constants.DEGREES_PER_HALF_TURN;
         return Math.Abs(Difference);
     }
 
@@ -5855,7 +5888,7 @@ public static class GuidancePlanner
             ScraperBcy,
             0,
             null,
-            0.5,
+            Constants.HALF_SCALE,
             50.0,
             Constants.DEFAULT_MAX_DROP_HOP_FT * Constants.FEET_TO_METERS,
             Flow,
@@ -5949,7 +5982,7 @@ public static class GuidancePlanner
             End,
             PlanningPreferredLineupM,
             PlanningMinimumRadiusM,
-            Math.Min(0.5, Grid.GridSizeM),
+            Math.Min(Constants.HALF_SCALE, Grid.GridSizeM),
             Grid);
         return Sequence.Success
             ? Sequence.Runs.Select(Sequenced => Sequenced.Run).ToList()
@@ -5968,7 +6001,7 @@ public static class GuidancePlanner
         RunSequencer.SequencedRun Prepared = RunSequencer.Prepare(
             Run,
             PlanningPreferredLineupM,
-            Math.Min(0.5, Grid.GridSizeM),
+            Math.Min(Constants.HALF_SCALE, Grid.GridSizeM),
             Grid);
         return Prepared.EntryPose;
     }
@@ -5985,7 +6018,7 @@ public static class GuidancePlanner
         RunSequencer.SequencedRun Prepared = RunSequencer.Prepare(
             Run,
             PlanningPreferredLineupM,
-            Math.Min(0.5, Grid.GridSizeM),
+            Math.Min(Constants.HALF_SCALE, Grid.GridSizeM),
             Grid);
         return Prepared.ExitPose;
     }
@@ -6113,7 +6146,7 @@ public static class GuidancePlanner
             RunSequencer.SequencedRun Prepared = RunSequencer.Prepare(
                 Run,
                 PlanningPreferredLineupM,
-                Math.Min(0.5, Grid.GridSizeM),
+                Math.Min(Constants.HALF_SCALE, Grid.GridSizeM),
                 Grid);
             if (PreviousRun == null)
             {
@@ -6136,7 +6169,7 @@ public static class GuidancePlanner
                         PreviousRun.ExitPose.HeadingDeg),
                     Prepared.EntryPose,
                     PlanningMinimumRadiusM,
-                    Math.Min(0.5, Grid.GridSizeM),
+                    Math.Min(Constants.HALF_SCALE, Grid.GridSizeM),
                     Grid);
                 if (Connector.Success)
                 {
@@ -6172,7 +6205,7 @@ public static class GuidancePlanner
             Output.Add(new DisplayPoint("LINEUP", "UP", Run.StartXy, 0.0));
             Double DepthMm = Run.Cells.Count == 0
                 ? 0.0
-                : 1000.0 * Run.Cells.Average(Cell => Math.Abs(Cell.DepthM));
+                : Constants.MILLIMETERS_PER_METER * Run.Cells.Average(Cell => Math.Abs(Cell.DepthM));
             Output.Add(new DisplayPoint(WorkAction, "DOWN", Run.EndXy, DepthMm));
             Output.Add(new DisplayPoint(
                 "LINEUP",
@@ -6222,8 +6255,8 @@ public static class GuidancePlanner
     {
         Double First = Math.Atan2(B.Y - A.Y, B.X - A.X);
         Double Second = Math.Atan2(C.Y - B.Y, C.X - B.X);
-        Double Delta = Math.Abs((Second - First) * 180.0 / Math.PI);
-        return Delta > 180.0 ? 360.0 - Delta : Delta;
+        Double Delta = Math.Abs((Second - First) * Constants.DEGREES_PER_HALF_TURN / Math.PI);
+        return Delta > Constants.DEGREES_PER_HALF_TURN ? Constants.DEGREES_PER_TURN - Delta : Delta;
     }
 
     /// <summary>
@@ -6235,8 +6268,8 @@ public static class GuidancePlanner
         (Double X, Double Y) B
         )
     {
-        Double HeadingDeg = Math.Atan2(B.X - A.X, B.Y - A.Y) * 180.0 / Math.PI;
-        return (HeadingDeg + 360.0) % 360.0;
+        Double HeadingDeg = Math.Atan2(B.X - A.X, B.Y - A.Y) * Constants.DEGREES_PER_HALF_TURN / Math.PI;
+        return (HeadingDeg + Constants.DEGREES_PER_TURN) % Constants.DEGREES_PER_TURN;
     }
 
     /// <summary>

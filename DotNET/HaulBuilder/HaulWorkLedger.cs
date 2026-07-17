@@ -9,7 +9,15 @@ namespace HaulBuilder
     /// </summary>
     public sealed class HaulWorkLedger
     {
-        private const Double DEPTH_TOLERANCE_M = 1e-9;
+        private const Double DEPTH_TOLERANCE_M = Constants.NUMERIC_COMPARISON_TOLERANCE;
+
+        /// <summary>
+        /// Initializes a new Haul Work Ledger instance.
+        /// </summary>
+        /// <param name="Grid">Field grid used by the operation.</param>
+        /// <param name="ToleranceM">The tolerance m used by the operation.</param>
+        /// <param name="RequiredCutDepthM">The required cut depth m used by the operation.</param>
+        /// <param name="RequiredFillDepthM">The required fill depth m used by the operation.</param>
 
         private HaulWorkLedger
             (
@@ -61,7 +69,7 @@ namespace HaulBuilder
             )
         {
             if (Grid == null) throw new ArgumentNullException(nameof(Grid));
-            Double ToleranceM = ToleranceMm / 1000.0;
+            Double ToleranceM = ToleranceMm / Constants.MILLIMETERS_PER_METER;
             Double[,] Cut = new Double[Grid.Height, Grid.Width];
             Double[,] Fill = new Double[Grid.Height, Grid.Width];
             for (Int32 By = 0; By < Grid.Height; By += 1)
@@ -100,11 +108,11 @@ namespace HaulBuilder
             }
             (Double[,] AssignedCut, Double[,] AssignedFill) =
                 Accumulate(AssignedPasses);
-            Double[,] Cut = new Double[Grid.Height, Grid.Width];
-            Double[,] Fill = new Double[Grid.Height, Grid.Width];
-            for (Int32 By = 0; By < Grid.Height; By += 1)
+            Double[,] Cut = new Double[this.Grid.Height, this.Grid.Width];
+            Double[,] Fill = new Double[this.Grid.Height, this.Grid.Width];
+            for (Int32 By = 0; By < this.Grid.Height; By += 1)
             {
-                for (Int32 Bx = 0; Bx < Grid.Width; Bx += 1)
+                for (Int32 Bx = 0; Bx < this.Grid.Width; Bx += 1)
                 {
                     Double CutRemainingM = RequiredCutDepthM[By, Bx]
                         - AssignedCut[By, Bx];
@@ -120,7 +128,7 @@ namespace HaulBuilder
                     Fill[By, Bx] = Math.Max(0.0, FillRemainingM);
                 }
             }
-            return new HaulWorkLedger(Grid, ToleranceM, Cut, Fill);
+            return new HaulWorkLedger(this.Grid, ToleranceM, Cut, Fill);
         }
 
         /// <summary>Returns assigned cut and fill depths accumulated by physical cell.</summary>
@@ -130,8 +138,8 @@ namespace HaulBuilder
             )
         {
             if (Passes == null) throw new ArgumentNullException(nameof(Passes));
-            Double[,] Cut = new Double[Grid.Height, Grid.Width];
-            Double[,] Fill = new Double[Grid.Height, Grid.Width];
+            Double[,] Cut = new Double[this.Grid.Height, this.Grid.Width];
+            Double[,] Fill = new Double[this.Grid.Height, this.Grid.Width];
             foreach (Pass Pass in Passes)
             {
                 foreach (((Int32 Bx, Int32 By) Cell, Double DepthM) Entry in Pass.CutCells)
@@ -171,6 +179,9 @@ namespace HaulBuilder
                 FillBcyPerDepthM);
             return Output;
 
+            // Adds the cut or fill contribution for every valid field cell to
+            // the ledger totals.
+
             void AddKind
                 (
                 HaulLaneBuilder.WorkKind Kind,
@@ -179,10 +190,10 @@ namespace HaulBuilder
                 Double BcyPerDepthM
                 )
             {
-                Double MaximumDepthM = Grid.MaxDepthMm / 1000.0;
-                for (Int32 By = 0; By < Grid.Height; By += 1)
+                Double MaximumDepthM = this.Grid.MaxDepthMm / Constants.MILLIMETERS_PER_METER;
+                for (Int32 By = 0; By < this.Grid.Height; By += 1)
                 {
-                    for (Int32 Bx = 0; Bx < Grid.Width; Bx += 1)
+                    for (Int32 Bx = 0; Bx < this.Grid.Width; Bx += 1)
                     {
                         Double RemainingM = Required[By, Bx] - Assigned[By, Bx];
                         if (RemainingM < -DEPTH_TOLERANCE_M)
@@ -231,9 +242,9 @@ namespace HaulBuilder
             (Double[,] AssignedCut, Double[,] AssignedFill) = Accumulate(PassList);
             Double MaximumCutErrorM = 0.0;
             Double MaximumFillErrorM = 0.0;
-            for (Int32 By = 0; By < Grid.Height; By += 1)
+            for (Int32 By = 0; By < this.Grid.Height; By += 1)
             {
-                for (Int32 Bx = 0; Bx < Grid.Width; Bx += 1)
+                for (Int32 Bx = 0; Bx < this.Grid.Width; Bx += 1)
                 {
                     Double CutErrorM = Math.Abs(AssignedCut[By, Bx] - RequiredCutDepthM[By, Bx]);
                     Double FillErrorM = Math.Abs(AssignedFill[By, Bx] - RequiredFillDepthM[By, Bx]);
@@ -306,15 +317,21 @@ namespace HaulBuilder
                 MaximumFillErrorM);
         }
 
+        /// <summary>
+        /// Executes the validate entry operation.
+        /// </summary>
+        /// <param name="Cell">The cell used by the operation.</param>
+        /// <param name="DepthM">The depth m used by the operation.</param>
+
         private void ValidateEntry
             (
             (Int32 Bx, Int32 By) Cell,
             Double DepthM
             )
         {
-            if ((Cell.Bx < 0) || (Cell.Bx >= Grid.Width)
-                || (Cell.By < 0) || (Cell.By >= Grid.Height)
-                || !Grid.Valid[Cell.By, Cell.Bx])
+            if ((Cell.Bx < 0) || (Cell.Bx >= this.Grid.Width)
+                || (Cell.By < 0) || (Cell.By >= this.Grid.Height)
+                || !this.Grid.Valid[Cell.By, Cell.Bx])
             {
                 throw new InvalidOperationException("Haul plan contains an invalid work cell.");
             }
@@ -323,6 +340,12 @@ namespace HaulBuilder
                 throw new InvalidOperationException("Haul plan contains an invalid work depth.");
             }
         }
+
+        /// <summary>
+        /// Executes the sum operation.
+        /// </summary>
+        /// <param name="Values">The values used by the operation.</param>
+        /// <returns>The resulting sum.</returns>
 
         private static Double Sum
             (

@@ -11,7 +11,7 @@ namespace HaulBuilder
     /// Splits only compact-infeasible allocations into smaller exactly balanced
     /// cycles, retaining every cut and fill depth entry without approximation.
     /// </summary>
-    public static class HaulCycleSplitRepair
+    static public class HaulCycleSplitRepair
     {
         private const Double DEPTH_TOLERANCE_M = 1e-10;
 
@@ -146,6 +146,13 @@ namespace HaulBuilder
                 SplitCycles,
                 Output.Count - Source.Count);
         }
+
+        /// <summary>
+        /// Executes the split entries operation.
+        /// </summary>
+        /// <param name="Entries">The entries used by the operation.</param>
+        /// <param name="PartCount">Count limit applied by the operation.</param>
+        /// <returns>The resulting split entries.</returns>
 
         private static List<List<((Int32 Bx, Int32 By) Cell, Double DepthM)>>
             SplitEntries

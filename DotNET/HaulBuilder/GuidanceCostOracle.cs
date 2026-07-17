@@ -6,7 +6,7 @@ namespace HaulBuilder
     /// Side-effect-free adapter that evaluates immutable route candidates through
     /// the production guidance and timing implementation.
     /// </summary>
-    public static class GuidanceCostOracle
+    static public class GuidanceCostOracle
     {
         /// <summary>Exact candidate result returned by production guidance.</summary>
         public sealed class Result
@@ -34,19 +34,19 @@ namespace HaulBuilder
             public String FailureReason { get; }
 
             /// <summary>Gets deterministic motion and event seconds.</summary>
-            public Double DeterministicSeconds => Plan == null
+            public Double DeterministicSeconds => this.Plan == null
                 ? Double.PositiveInfinity
-                : Plan.Timing.MotionSeconds + Plan.Timing.EventSeconds;
+                : this.Plan.Timing.MotionSeconds + this.Plan.Timing.EventSeconds;
 
             /// <summary>Gets scheduled seconds including operational availability.</summary>
-            public Double ScheduledSeconds => Plan == null
+            public Double ScheduledSeconds => this.Plan == null
                 ? Double.PositiveInfinity
-                : Plan.Timing.TotalSeconds;
+                : this.Plan.Timing.TotalSeconds;
 
             /// <summary>Gets final centerline distance.</summary>
-            public Double DistanceM => Plan == null
+            public Double DistanceM => this.Plan == null
                 ? Double.PositiveInfinity
-                : Plan.Timing.DistanceM;
+                : this.Plan.Timing.DistanceM;
         }
 
         /// <summary>Evaluates a complete route with the production implementation.</summary>

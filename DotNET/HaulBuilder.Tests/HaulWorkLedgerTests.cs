@@ -4,11 +4,21 @@ using System.Linq;
 
 namespace HaulBuilder.Tests
 {
+    /// <summary>
+    /// Contains automated checks for haul work ledger.
+    /// </summary>
+
     public sealed class HaulWorkLedgerTests
     {
+        /// <summary>
+        /// Verifies heading input normalizes to an undirected axis.
+        /// </summary>
+        /// <param name="InputDeg">The input deg used by the operation.</param>
+        /// <param name="ExpectedDeg">The expected deg used by the operation.</param>
+
         [Theory]
         [InlineData(0.0, 0.0)]
-        [InlineData(180.0, 0.0)]
+        [InlineData(Constants.DEGREES_PER_HALF_TURN, 0.0)]
         [InlineData(270.0, 90.0)]
         [InlineData(-90.0, 90.0)]
         [InlineData(217.5, 37.5)]
@@ -23,6 +33,10 @@ namespace HaulBuilder.Tests
                 HaulLaneBuilder.NormalizeAxisHeadingDeg(InputDeg),
                 12);
         }
+
+        /// <summary>
+        /// Verifies arbitrary axis conserves layers and opposite bearing is identical.
+        /// </summary>
 
         [Fact]
         public void ArbitraryAxisConservesLayersAndOppositeBearingIsIdentical
@@ -61,6 +75,10 @@ namespace HaulBuilder.Tests
                 12);
         }
 
+        /// <summary>
+        /// Verifies cardinal user axis reuses the existing lane cover.
+        /// </summary>
+
         [Fact]
         public void CardinalUserAxisReusesTheExistingLaneCover
             (
@@ -78,10 +96,14 @@ namespace HaulBuilder.Tests
             HaulLaneBuilder.Inventory User = HaulLaneBuilder.Build(
                 Ledger,
                 HaulLaneBuilder.LaneAxis.UserHeading,
-                HeadingAxisDeg: 180.0);
+                HeadingAxisDeg: Constants.DEGREES_PER_HALF_TURN);
 
             Assert.Equal(LaneSignature(Existing), LaneSignature(User));
         }
+
+        /// <summary>
+        /// Verifies arbitrary axis covers every layer on arectangular field.
+        /// </summary>
 
         [Fact]
         public void ArbitraryAxisCoversEveryLayerOnARectangularField
@@ -115,6 +137,10 @@ namespace HaulBuilder.Tests
                 Lane => Assert.Equal(37.5, Lane.AxisHeadingDeg, 12));
         }
 
+        /// <summary>
+        /// Verifies layers recombine to the exact required depth.
+        /// </summary>
+
         [Fact]
         public void LayersRecombineToTheExactRequiredDepth
             (
@@ -139,6 +165,10 @@ namespace HaulBuilder.Tests
                 Inventory.CutLanes.SelectMany(Lane => Lane.Entries),
                 Entry => Assert.InRange(Entry.DepthM, 0.0, 0.061000000001));
         }
+
+        /// <summary>
+        /// Verifies deferred ledger exactly reconciles unassigned layers.
+        /// </summary>
 
         [Fact]
         public void DeferredLedgerExactlyReconcilesUnassignedLayers
@@ -184,6 +214,10 @@ namespace HaulBuilder.Tests
             Assert.All(Deferred, Entry => Assert.Equal("TEST_DEFERRED", Entry.Reason));
         }
 
+        /// <summary>
+        /// Verifies residual ledger contains only unassigned work.
+        /// </summary>
+
         [Fact]
         public void ResidualLedgerContainsOnlyUnassignedWork
             (
@@ -224,9 +258,21 @@ namespace HaulBuilder.Tests
                 12);
         }
 
+        /// <summary>
+        /// Builds grid.
+        /// </summary>
+        /// <returns>The resulting grid.</returns>
+
         private static Grid MakeGrid
             (
             ) => MakeGrid(10, 10);
+
+        /// <summary>
+        /// Builds grid.
+        /// </summary>
+        /// <param name="Width">The width used by the operation.</param>
+        /// <param name="Height">The height used by the operation.</param>
+        /// <returns>The resulting grid.</returns>
 
         private static Grid MakeGrid
             (
@@ -260,6 +306,12 @@ namespace HaulBuilder.Tests
                 61.0,
                 new List<List<(Double X, Double Y)>>());
         }
+
+        /// <summary>
+        /// Verifies lane signature.
+        /// </summary>
+        /// <param name="Inventory">The inventory used by the operation.</param>
+        /// <returns>The resulting lane signature.</returns>
 
         private static String LaneSignature
             (

@@ -178,7 +178,7 @@ namespace HaulBuilder.Tests
             )
         {
             List<(Double X, Double Y)> Points =
-                new List<(Double X, Double Y)> { (0.0, 0.0), (1000.0, 0.0) };
+                new List<(Double X, Double Y)> { (0.0, 0.0), (Constants.MILLIMETERS_PER_METER, 0.0) };
             GuidanceTiming.Options Options = new GuidanceTiming.Options
             {
                 LoadedTravelSpeedMph = 10.0,
@@ -193,8 +193,8 @@ namespace HaulBuilder.Tests
                 / Constants.MPH_TO_MPS, 9);
             Assert.Equal(13.0, Unloaded.DistanceM / Unloaded.ConstantSpeedSeconds
                 / Constants.MPH_TO_MPS, 9);
-            Assert.Equal(1000.0, Loaded.LoadedDistanceM, 9);
-            Assert.Equal(1000.0, Unloaded.UnloadedDistanceM, 9);
+            Assert.Equal(Constants.MILLIMETERS_PER_METER, Loaded.LoadedDistanceM, 9);
+            Assert.Equal(Constants.MILLIMETERS_PER_METER, Unloaded.UnloadedDistanceM, 9);
         }
 
         /// <summary>
@@ -212,7 +212,7 @@ namespace HaulBuilder.Tests
             };
             GuidanceTiming.Result Lineup = GuidanceTiming.Estimate(
                 MakeGuidance(LifecyclePlanner.Phase.LineupCut,
-                    new List<(Double X, Double Y)> { (0.0, 0.0), (1000.0, 0.0) }),
+                    new List<(Double X, Double Y)> { (0.0, 0.0), (Constants.MILLIMETERS_PER_METER, 0.0) }),
                 Options);
 
             Assert.Equal(13.0, Lineup.DistanceM / Lineup.ConstantSpeedSeconds

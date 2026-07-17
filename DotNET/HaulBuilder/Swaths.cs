@@ -15,50 +15,50 @@ namespace HaulBuilder
         /// <summary>
         /// Initializes a new instance of the <see cref="GuidancePoint"/> class.
         /// </summary>
-        /// <param name="seq">1-based global sequence number.</param>
-        /// <param name="passNo">1-based pass index in the optimized route.</param>
-        /// <param name="action">Move/action type on the inbound segment.</param>
-        /// <param name="blade">Blade state on the inbound segment.</param>
-        /// <param name="x">Smoothed steering easting in metres.</param>
-        /// <param name="y">Smoothed steering northing in metres.</param>
-        /// <param name="lat">Latitude.</param>
-        /// <param name="lon">Longitude.</param>
-        /// <param name="depthMm">Target depth in millimetres (magnitude).</param>
-        /// <param name="headingDeg">Bearing to next waypoint (0=N, 90=E).</param>
-        /// <param name="segDistM">Coverage distance from previous waypoint in metres.</param>
-        /// <param name="cumDistM">Cumulative coverage distance in metres.</param>
-        /// <param name="instruction">Plain-language operator instruction.</param>
+        /// <param name="Seq">1-based global sequence number.</param>
+        /// <param name="PassNo">1-based pass index in the optimized route.</param>
+        /// <param name="Action">Move/action type on the inbound segment.</param>
+        /// <param name="Blade">Blade state on the inbound segment.</param>
+        /// <param name="X">Smoothed steering easting in metres.</param>
+        /// <param name="Y">Smoothed steering northing in metres.</param>
+        /// <param name="Lat">Latitude.</param>
+        /// <param name="Lon">Longitude.</param>
+        /// <param name="DepthMm">Target depth in millimetres (magnitude).</param>
+        /// <param name="HeadingDeg">Bearing to next waypoint (0=N, 90=E).</param>
+        /// <param name="SegDistM">Coverage distance from previous waypoint in metres.</param>
+        /// <param name="CumDistM">Cumulative coverage distance in metres.</param>
+        /// <param name="Instruction">Plain-language operator instruction.</param>
         public GuidancePoint
             (
-            Int32 seq,
-            Int32 passNo,
-            String action,
-            String blade,
-            Double x,
-            Double y,
-            Double lat,
-            Double lon,
-            Double depthMm,
-            Double headingDeg,
-            Double segDistM,
-            Double cumDistM,
-            String instruction
+            Int32 Seq,
+            Int32 PassNo,
+            String Action,
+            String Blade,
+            Double X,
+            Double Y,
+            Double Lat,
+            Double Lon,
+            Double DepthMm,
+            Double HeadingDeg,
+            Double SegDistM,
+            Double CumDistM,
+            String Instruction
             )
         {
             // Persist all waypoint fields exactly as computed during guidance assembly.
-            Seq = seq;
-            PassNo = passNo;
-            Action = action;
-            Blade = blade;
-            X = x;
-            Y = y;
-            Lat = lat;
-            Lon = lon;
-            DepthMm = depthMm;
-            HeadingDeg = headingDeg;
-            SegDistM = segDistM;
-            CumDistM = cumDistM;
-            Instruction = instruction;
+            this.Seq = Seq;
+            this.PassNo = PassNo;
+            this.Action = Action;
+            this.Blade = Blade;
+            this.X = X;
+            this.Y = Y;
+            this.Lat = Lat;
+            this.Lon = Lon;
+            this.DepthMm = DepthMm;
+            this.HeadingDeg = HeadingDeg;
+            this.SegDistM = SegDistM;
+            this.CumDistM = CumDistM;
+            this.Instruction = Instruction;
         }
 
         /// <summary>
@@ -135,62 +135,62 @@ namespace HaulBuilder
         /// <summary>
         /// Initializes a new instance of the <see cref="GuidanceResult"/> class.
         /// </summary>
-        /// <param name="points">Ordered guidance waypoints.</param>
-        /// <param name="bladeWidthM">Blade width in metres.</param>
-        /// <param name="gridSizeM">Grid cell edge length in metres.</param>
-        /// <param name="headingDeg">Global fallback heading in degrees.</param>
-        /// <param name="nPasses">Total number of sequenced passes.</param>
-        /// <param name="returnDistM">Total RETURN distance in metres.</param>
-        /// <param name="haulDistM">Total HAUL distance in metres.</param>
-        /// <param name="cutDistM">Total CUT distance in metres.</param>
-        /// <param name="fillDistM">Total FILL distance in metres.</param>
-        /// <param name="gradeDistM">Total GRADE distance in metres.</param>
-        /// <param name="repositionDistM">Total MOVE distance in metres.</param>
-        /// <param name="plannedCutDistM">Planned centerline cut distance in metres.</param>
-        /// <param name="plannedFillDistM">Planned centerline fill distance in metres.</param>
-        /// <param name="routeHaulDistM">Optimizer haul objective total in metres.</param>
-        /// <param name="nTurns">Count of significant heading changes.</param>
-        /// <param name="turnAngleRad">Total significant heading change in radians.</param>
-        /// <param name="nRepairedSweeps">Count of sweep repairs applied.</param>
+        /// <param name="Points">Ordered guidance waypoints.</param>
+        /// <param name="BladeWidthM">Blade width in metres.</param>
+        /// <param name="GridSizeM">Grid cell edge length in metres.</param>
+        /// <param name="HeadingDeg">Global fallback heading in degrees.</param>
+        /// <param name="NPasses">Total number of sequenced passes.</param>
+        /// <param name="ReturnDistM">Total RETURN distance in metres.</param>
+        /// <param name="HaulDistM">Total HAUL distance in metres.</param>
+        /// <param name="CutDistM">Total CUT distance in metres.</param>
+        /// <param name="FillDistM">Total FILL distance in metres.</param>
+        /// <param name="GradeDistM">Total GRADE distance in metres.</param>
+        /// <param name="RepositionDistM">Total MOVE distance in metres.</param>
+        /// <param name="PlannedCutDistM">Planned centerline cut distance in metres.</param>
+        /// <param name="PlannedFillDistM">Planned centerline fill distance in metres.</param>
+        /// <param name="RouteHaulDistM">Optimizer haul objective total in metres.</param>
+        /// <param name="NTurns">Count of significant heading changes.</param>
+        /// <param name="TurnAngleRad">Total significant heading change in radians.</param>
+        /// <param name="NRepairedSweeps">Count of sweep repairs applied.</param>
         public GuidanceResult
             (
-            List<GuidancePoint> points,
-            Double bladeWidthM,
-            Double gridSizeM,
-            Double headingDeg,
-            Int32 nPasses,
-            Double returnDistM,
-            Double haulDistM,
-            Double cutDistM,
-            Double fillDistM,
-            Double gradeDistM,
-            Double repositionDistM,
-            Double plannedCutDistM,
-            Double plannedFillDistM,
-            Double routeHaulDistM,
-            Int32 nTurns,
-            Double turnAngleRad,
-            Int32 nRepairedSweeps
+            List<GuidancePoint> Points,
+            Double BladeWidthM,
+            Double GridSizeM,
+            Double HeadingDeg,
+            Int32 NPasses,
+            Double ReturnDistM,
+            Double HaulDistM,
+            Double CutDistM,
+            Double FillDistM,
+            Double GradeDistM,
+            Double RepositionDistM,
+            Double PlannedCutDistM,
+            Double PlannedFillDistM,
+            Double RouteHaulDistM,
+            Int32 NTurns,
+            Double TurnAngleRad,
+            Int32 NRepairedSweeps
             )
         {
             // Store complete summary metrics so timing and reporting can run independently.
-            Points = points;
-            BladeWidthM = bladeWidthM;
-            GridSizeM = gridSizeM;
-            HeadingDeg = headingDeg;
-            NPasses = nPasses;
-            ReturnDistM = returnDistM;
-            HaulDistM = haulDistM;
-            CutDistM = cutDistM;
-            FillDistM = fillDistM;
-            GradeDistM = gradeDistM;
-            RepositionDistM = repositionDistM;
-            PlannedCutDistM = plannedCutDistM;
-            PlannedFillDistM = plannedFillDistM;
-            RouteHaulDistM = routeHaulDistM;
-            NTurns = nTurns;
-            TurnAngleRad = turnAngleRad;
-            NRepairedSweeps = nRepairedSweeps;
+            this.Points = Points;
+            this.BladeWidthM = BladeWidthM;
+            this.GridSizeM = GridSizeM;
+            this.HeadingDeg = HeadingDeg;
+            this.NPasses = NPasses;
+            this.ReturnDistM = ReturnDistM;
+            this.HaulDistM = HaulDistM;
+            this.CutDistM = CutDistM;
+            this.FillDistM = FillDistM;
+            this.GradeDistM = GradeDistM;
+            this.RepositionDistM = RepositionDistM;
+            this.PlannedCutDistM = PlannedCutDistM;
+            this.PlannedFillDistM = PlannedFillDistM;
+            this.RouteHaulDistM = RouteHaulDistM;
+            this.NTurns = NTurns;
+            this.TurnAngleRad = TurnAngleRad;
+            this.NRepairedSweeps = NRepairedSweeps;
         }
 
         /// <summary>
@@ -287,8 +287,8 @@ namespace HaulBuilder
             )
         {
             // Keep parity with Python: if no planned sweep exists, return neutral factor.
-            Double Planned = PlannedCutDistM + PlannedFillDistM;
-            Double Actual = CutDistM + FillDistM;
+            Double Planned = this.PlannedCutDistM + this.PlannedFillDistM;
+            Double Actual = this.CutDistM + this.FillDistM;
             return (Planned > 0.0) ? (Actual / Planned) : 1.0;
         }
     }
@@ -301,38 +301,38 @@ namespace HaulBuilder
         /// <summary>
         /// Initializes a new instance of the <see cref="GuidanceTime"/> class.
         /// </summary>
-        /// <param name="totalS">Total time in seconds.</param>
-        /// <param name="loadingS">Loading time in seconds.</param>
-        /// <param name="dumpingS">Dumping time in seconds.</param>
-        /// <param name="gradingS">Grading time in seconds.</param>
-        /// <param name="haulingS">Hauling time in seconds.</param>
-        /// <param name="returningS">Returning time in seconds.</param>
-        /// <param name="turningS">Turning time in seconds.</param>
-        /// <param name="otherS">Non-productive overhead time in seconds.</param>
-        /// <param name="nTurns">Count of significant turns.</param>
+        /// <param name="TotalS">Total time in seconds.</param>
+        /// <param name="LoadingS">Loading time in seconds.</param>
+        /// <param name="DumpingS">Dumping time in seconds.</param>
+        /// <param name="GradingS">Grading time in seconds.</param>
+        /// <param name="HaulingS">Hauling time in seconds.</param>
+        /// <param name="ReturningS">Returning time in seconds.</param>
+        /// <param name="TurningS">Turning time in seconds.</param>
+        /// <param name="OtherS">Non-productive overhead time in seconds.</param>
+        /// <param name="NTurns">Count of significant turns.</param>
         public GuidanceTime
             (
-            Double totalS,
-            Double loadingS,
-            Double dumpingS,
-            Double gradingS,
-            Double haulingS,
-            Double returningS,
-            Double turningS,
-            Double otherS,
-            Int32 nTurns
+            Double TotalS,
+            Double LoadingS,
+            Double DumpingS,
+            Double GradingS,
+            Double HaulingS,
+            Double ReturningS,
+            Double TurningS,
+            Double OtherS,
+            Int32 NTurns
             )
         {
             // Persist timing breakdown by phase for reporting parity with Python.
-            TotalS = totalS;
-            LoadingS = loadingS;
-            DumpingS = dumpingS;
-            GradingS = gradingS;
-            HaulingS = haulingS;
-            ReturningS = returningS;
-            TurningS = turningS;
-            OtherS = otherS;
-            NTurns = nTurns;
+            this.TotalS = TotalS;
+            this.LoadingS = LoadingS;
+            this.DumpingS = DumpingS;
+            this.GradingS = GradingS;
+            this.HaulingS = HaulingS;
+            this.ReturningS = ReturningS;
+            this.TurningS = TurningS;
+            this.OtherS = OtherS;
+            this.NTurns = NTurns;
         }
 
         /// <summary>
@@ -384,7 +384,7 @@ namespace HaulBuilder
     /// <summary>
     /// Blade-scale swath and guidance construction utilities ported from Python.
     /// </summary>
-    public static class Swaths
+    static public class Swaths
     {
         private const String START = "START";
         private const String RETURN = "RETURN";
@@ -394,7 +394,7 @@ namespace HaulBuilder
         private const String GRADE = "GRADE";
         private const String MOVE = "MOVE";
         private const String MANUAL_MOVE = "MANUAL_MOVE";
-        private const Double EPSILON = 1e-12;
+        private const Double EPSILON = Constants.STRICT_NUMERIC_COMPARISON_TOLERANCE;
         private const Double DEFAULT_TURNING_CIRCLE_FT = 50.0;
 
         /// <summary>
@@ -424,39 +424,42 @@ namespace HaulBuilder
         /// <summary>
         /// Minimum sustained reverse travel (as a fraction of R) for a single-segment reverse exit.
         /// </summary>
-        private const Double UTURN_REVERSE_MIN_FRAC_R = 0.5;
+        private const Double UTURN_REVERSE_MIN_FRAC_R = Constants.HALF_SCALE;
 
+        /// <summary>
+        /// Stores raw and smoothed coordinates for one coverage waypoint.
+        /// </summary>
         private sealed class RawPoint
         {
             /// <summary>
             /// Initializes a new instance of the <see cref="RawPoint"/> class.
             /// </summary>
-            /// <param name="xr">Raw coverage easting.</param>
-            /// <param name="yr">Raw coverage northing.</param>
-            /// <param name="depthM">Depth in metres.</param>
-            /// <param name="action">Action for inbound leg.</param>
-            /// <param name="passNo">Pass number.</param>
-            /// <param name="xs">Smoothed steering easting.</param>
-            /// <param name="ys">Smoothed steering northing.</param>
+            /// <param name="Xr">Raw coverage easting.</param>
+            /// <param name="Yr">Raw coverage northing.</param>
+            /// <param name="DepthM">Depth in metres.</param>
+            /// <param name="Action">Action for inbound leg.</param>
+            /// <param name="PassNo">Pass number.</param>
+            /// <param name="Xs">Smoothed steering easting.</param>
+            /// <param name="Ys">Smoothed steering northing.</param>
             public RawPoint
                 (
-                Double xr,
-                Double yr,
-                Double depthM,
-                String action,
-                Int32 passNo,
-                Double xs,
-                Double ys
+                Double Xr,
+                Double Yr,
+                Double DepthM,
+                String Action,
+                Int32 PassNo,
+                Double Xs,
+                Double Ys
                 )
             {
                 // Keep both raw and smoothed coordinates so metrics and display stay decoupled.
-                Xr = xr;
-                Yr = yr;
-                DepthM = depthM;
-                Action = action;
-                PassNo = passNo;
-                Xs = xs;
-                Ys = ys;
+                this.Xr = Xr;
+                this.Yr = Yr;
+                this.DepthM = DepthM;
+                this.Action = Action;
+                this.PassNo = PassNo;
+                this.Xs = Xs;
+                this.Ys = Ys;
             }
 
             /// <summary>
@@ -498,67 +501,67 @@ namespace HaulBuilder
         /// <summary>
         /// Re-profiles tangled pass sweeps into boustrophedon lanes in place.
         /// </summary>
-        /// <param name="route">Route whose ordered passes are updated in place.</param>
-        /// <param name="grid">Grid geometry and cell-center projection utility.</param>
-        /// <param name="bladeWidthMm">Blade width in millimetres.</param>
-        /// <param name="hairpinMin">Minimum hairpin count that flags a knot.</param>
-        /// <param name="headingDeg">Fallback heading for non-flow passes.</param>
-        /// <param name="laneOverlap">Lane overlap fraction [0, 1).</param>
+        /// <param name="Route">Route whose ordered passes are updated in place.</param>
+        /// <param name="Grid">Grid geometry and cell-center projection utility.</param>
+        /// <param name="BladeWidthMm">Blade width in millimetres.</param>
+        /// <param name="HairpinMin">Minimum hairpin count that flags a knot.</param>
+        /// <param name="HeadingDeg">Fallback heading for non-flow passes.</param>
+        /// <param name="LaneOverlap">Lane overlap fraction [0, 1).</param>
         /// <returns>Number of cut/fill patches that were re-profiled.</returns>
         static public Int32 ReprofileKnots
             (
-            Route route,
-            Grid grid,
-            Double bladeWidthMm,
-            Int32 hairpinMin = 3,
-            Double headingDeg = 0.0,
-            Double laneOverlap = 0.0
+            Route Route,
+            Grid Grid,
+            Double BladeWidthMm,
+            Int32 HairpinMin = 3,
+            Double HeadingDeg = 0.0,
+            Double LaneOverlap = 0.0
             )
         {
             // Walk passes and only replace a sweep when the alternative strictly improves drivability.
-            Double BladeM = bladeWidthMm / 1000.0;
+            Double BladeM = BladeWidthMm / Constants.MILLIMETERS_PER_METER;
             Int32 Count = 0;
 
-            foreach (Pass Pass in route.OrderedPasses)
+            foreach (Pass Pass in Route.OrderedPasses)
             {
                 Boolean FlowPass = (Pass.CutHeadingDeg.HasValue || Pass.FillHeadingDeg.HasValue);
-                Double CutHeading = Pass.CutHeadingDeg.HasValue ? Pass.CutHeadingDeg.Value : headingDeg;
-                Double FillHeading = Pass.FillHeadingDeg.HasValue ? Pass.FillHeadingDeg.Value : headingDeg;
+                Double CutHeading = Pass.CutHeadingDeg.HasValue ? Pass.CutHeadingDeg.Value : HeadingDeg;
+                Double FillHeading = Pass.FillHeadingDeg.HasValue ? Pass.FillHeadingDeg.Value : HeadingDeg;
 
                 if (Pass.CutCells.Count > 3)
                 {
                     List<(Double X, Double Y, Double DepthM)> Rendered = RenderedLane
                         (
                         Pass.CutCells,
-                        grid,
+                        Grid,
                         BladeM,
                         FlowPass,
                         CutHeading,
-                        laneOverlap,
+                        LaneOverlap,
                         null,
                         Pass.FillStartXy
                         );
-                    Int32 CurrentHairpins = HardTurnCount(Rendered, grid, BladeM);
+                    Int32 CurrentHairpins = HardTurnCount(Rendered, Grid, BladeM);
                     // Intent: compact blade-width knots under-count after RDP; also flag raw reverses.
-                    Int32 KnotScore = Math.Max(CurrentHairpins, CellNearReverseCount(Pass.CutCells, grid));
+                    Int32 KnotScore = Math.Max(CurrentHairpins, CellNearReverseCount(Pass.CutCells, Grid));
 
-                    if (KnotScore >= hairpinMin)
+                    if (KnotScore >= HairpinMin)
                     {
                         List<((Int32 Bx, Int32 By) Cell, Double DepthM)> BCells = BoustrophedonCells
                             (
                             Pass.CutCells,
-                            grid,
+                            Grid,
                             BladeM,
                             null,
                             Pass.FillStartXy
                             );
-                        List<(Double X, Double Y, Double DepthM)> BLane = LaneDirect(BCells, grid, null, Pass.FillStartXy);
+                        List<(Double X, Double Y, Double DepthM)> BLane = LaneDirect(BCells, Grid, null, Pass.FillStartXy);
                         Int32 BScore = Math.Max(
-                            HardTurnCount(BLane, grid, BladeM),
-                            CellNearReverseCount(BCells, grid));
+                            HardTurnCount(BLane, Grid, BladeM),
+                            CellNearReverseCount(BCells, Grid));
                         // Intent: adopt only when total U-turn burden drops (lanes−1 vs knot score).
-                        Int32 CurrentProxy = Math.Max(KnotScore, PatchDrivableLanes(Pass.CutCells, grid, BladeM).Count - 1);
-                        Int32 BoustProxy = Math.Max(BScore, PatchDrivableLanes(BCells, grid, BladeM).Count - 1);
+                        Int32 CurrentProxy = Math.Max(KnotScore, PatchDrivableLanes(Pass.CutCells, Grid, BladeM).Count - 1);
+                        Int32 BoustProxy = Math.Max(BScore, PatchDrivableLanes(BCells, Grid, BladeM).Count - 1);
 
                         if (BoustProxy < CurrentProxy)
                         {
@@ -574,7 +577,7 @@ namespace HaulBuilder
                 if (Pass.CutCells.Count > 0)
                 {
                     (Int32 Bx, Int32 By) LastCut = Pass.CutCells[Pass.CutCells.Count - 1].Cell;
-                    CutEnd = grid.CellCenterXY(LastCut.Bx, LastCut.By);
+                    CutEnd = Grid.CellCenterXY(LastCut.Bx, LastCut.By);
                 }
 
                 if (Pass.FillCells.Count > 3)
@@ -582,33 +585,33 @@ namespace HaulBuilder
                     List<(Double X, Double Y, Double DepthM)> Rendered = RenderedLane
                         (
                         Pass.FillCells,
-                        grid,
+                        Grid,
                         BladeM,
                         FlowPass,
                         FillHeading,
-                        laneOverlap,
+                        LaneOverlap,
                         CutEnd,
                         null
                         );
-                    Int32 CurrentHairpins = HardTurnCount(Rendered, grid, BladeM);
-                    Int32 KnotScore = Math.Max(CurrentHairpins, CellNearReverseCount(Pass.FillCells, grid));
+                    Int32 CurrentHairpins = HardTurnCount(Rendered, Grid, BladeM);
+                    Int32 KnotScore = Math.Max(CurrentHairpins, CellNearReverseCount(Pass.FillCells, Grid));
 
-                    if (KnotScore >= hairpinMin)
+                    if (KnotScore >= HairpinMin)
                     {
                         List<((Int32 Bx, Int32 By) Cell, Double DepthM)> BCells = BoustrophedonCells
                             (
                             Pass.FillCells,
-                            grid,
+                            Grid,
                             BladeM,
                             CutEnd,
                             null
                             );
-                        List<(Double X, Double Y, Double DepthM)> BLane = LaneDirect(BCells, grid, CutEnd, null);
+                        List<(Double X, Double Y, Double DepthM)> BLane = LaneDirect(BCells, Grid, CutEnd, null);
                         Int32 BScore = Math.Max(
-                            HardTurnCount(BLane, grid, BladeM),
-                            CellNearReverseCount(BCells, grid));
-                        Int32 CurrentProxy = Math.Max(KnotScore, PatchDrivableLanes(Pass.FillCells, grid, BladeM).Count - 1);
-                        Int32 BoustProxy = Math.Max(BScore, PatchDrivableLanes(BCells, grid, BladeM).Count - 1);
+                            HardTurnCount(BLane, Grid, BladeM),
+                            CellNearReverseCount(BCells, Grid));
+                        Int32 CurrentProxy = Math.Max(KnotScore, PatchDrivableLanes(Pass.FillCells, Grid, BladeM).Count - 1);
+                        Int32 BoustProxy = Math.Max(BScore, PatchDrivableLanes(BCells, Grid, BladeM).Count - 1);
 
                         if (BoustProxy < CurrentProxy)
                         {
@@ -627,49 +630,49 @@ namespace HaulBuilder
         /// <summary>
         /// Builds the blade-scale guidance track from an optimized route.
         /// </summary>
-        /// <param name="grid">Grid geometry.</param>
-        /// <param name="field">AGD field metadata for coordinate conversion.</param>
-        /// <param name="route">Optimized route sequence.</param>
-        /// <param name="bladeWidthMm">Blade width in millimetres.</param>
-        /// <param name="headingDeg">Fallback global heading for non-flow passes.</param>
-        /// <param name="laneOverlap">Lane overlap fraction [0, 1).</param>
-        /// <param name="gradeReturn">Whether to include grade/compact return over fill.</param>
-        /// <param name="turnThresholdDeg">Minimum heading change counted as turn.</param>
-        /// <param name="smoothRoute">Whether to smooth steering geometry.</param>
-        /// <param name="turnRadiusM">Optional explicit turn radius in metres.</param>
-        /// <param name="smoothScale">Multiplier applied to smoothing sigma.</param>
-        /// <param name="obstacles">Optional static obstacle field for detours.</param>
-        /// <param name="armObstacles">Optional per-pass obstacle fields.</param>
-        /// <param name="equipmentLengthM">Straight lineup length before/after CUT/FILL (metres); 0 disables.</param>
+        /// <param name="Grid">Grid geometry.</param>
+        /// <param name="Field">AGD field metadata for coordinate conversion.</param>
+        /// <param name="Route">Optimized route sequence.</param>
+        /// <param name="BladeWidthMm">Blade width in millimetres.</param>
+        /// <param name="HeadingDeg">Fallback global heading for non-flow passes.</param>
+        /// <param name="LaneOverlap">Lane overlap fraction [0, 1).</param>
+        /// <param name="GradeReturn">Whether to include grade/compact return over fill.</param>
+        /// <param name="TurnThresholdDeg">Minimum heading change counted as turn.</param>
+        /// <param name="SmoothRoute">Whether to smooth steering geometry.</param>
+        /// <param name="TurnRadiusM">Optional explicit turn radius in metres.</param>
+        /// <param name="SmoothScale">Multiplier applied to smoothing sigma.</param>
+        /// <param name="Obstacles">Optional static obstacle field for detours.</param>
+        /// <param name="ArmObstacles">Optional per-pass obstacle fields.</param>
+        /// <param name="EquipmentLengthM">Straight lineup length before/after CUT/FILL (metres); 0 disables.</param>
         /// <returns>Complete guidance output and accounting metrics.</returns>
         static public GuidanceResult BuildGuidance
             (
-            Grid grid,
-            AgdField field,
-            Route route,
-            Double bladeWidthMm,
-            Double headingDeg,
-            Double laneOverlap = 0.0,
-            Boolean gradeReturn = true,
-            Double turnThresholdDeg = 60.0,
-            Boolean smoothRoute = true,
-            Double? turnRadiusM = null,
-            Double smoothScale = 0.7,
-            ObstacleField? obstacles = null,
-            Dictionary<Int32, ObstacleField>? armObstacles = null,
-            Double equipmentLengthM = -1.0
+            Grid Grid,
+            AgdField Field,
+            Route Route,
+            Double BladeWidthMm,
+            Double HeadingDeg,
+            Double LaneOverlap = 0.0,
+            Boolean GradeReturn = true,
+            Double TurnThresholdDeg = 60.0,
+            Boolean SmoothRoute = true,
+            Double? TurnRadiusM = null,
+            Double SmoothScale = 0.7,
+            ObstacleField? Obstacles = null,
+            Dictionary<Int32, ObstacleField>? ArmObstacles = null,
+            Double EquipmentLengthM = -1.0
             )
         {
             // Preserve Python accounting model: metrics use raw coverage path, not smoothed display path.
-            Double BladeM = bladeWidthMm / 1000.0;
-            ObstacleField Obstacles = obstacles ?? EMPTY_OBSTACLES;
-            Double HopThresh = Math.Max(3.0 * grid.GridSizeM, 2.0 * BladeM);
-            Double EffectiveTurnRadiusM = turnRadiusM.HasValue ? turnRadiusM.Value : (DEFAULT_TURNING_CIRCLE_FT * 0.5 * Constants.FEET_TO_METERS);
-            Double SigmaIdx = smoothRoute ? ((EffectiveTurnRadiusM / grid.GridSizeM) * smoothScale) : 0.0;
+            Double BladeM = BladeWidthMm / Constants.MILLIMETERS_PER_METER;
+            ObstacleField EffectiveObstacles = Obstacles ?? EMPTY_OBSTACLES;
+            Double HopThresh = Math.Max(3.0 * Grid.GridSizeM, 2.0 * BladeM);
+            Double EffectiveTurnRadiusM = TurnRadiusM.HasValue ? TurnRadiusM.Value : (DEFAULT_TURNING_CIRCLE_FT * Constants.HALF_SCALE * Constants.FEET_TO_METERS);
+            Double SigmaIdx = SmoothRoute ? ((EffectiveTurnRadiusM / Grid.GridSizeM) * SmoothScale) : 0.0;
             // Intent: default 43 ft lineup when caller leaves equipmentLengthM at the sentinel.
-            Double LineupM = (equipmentLengthM < 0.0)
+            Double LineupM = (EquipmentLengthM < 0.0)
                 ? (Constants.DEFAULT_EQUIPMENT_LENGTH_FT * Constants.FEET_TO_METERS)
-                : equipmentLengthM;
+                : EquipmentLengthM;
 
             List<GuidancePoint> Points = new List<GuidancePoint>();
             List<RawPoint> Raw = new List<RawPoint>();
@@ -685,33 +688,33 @@ namespace HaulBuilder
             Double RouteHaulDist = 0.0;
             Int32 RepairedSweeps = 0;
 
-            for (Int32 PassNo = 1; PassNo <= route.OrderedPasses.Count; PassNo += 1)
+            for (Int32 PassNo = 1; PassNo <= Route.OrderedPasses.Count; PassNo += 1)
             {
-                Pass Pass = route.OrderedPasses[PassNo - 1];
+                Pass Pass = Route.OrderedPasses[PassNo - 1];
                 RouteHaulDist += Pass.HaulDistanceM;
-                PlannedCutDist += SegLengthFromCells(Pass.CutCells, grid);
-                PlannedFillDist += SegLengthFromCells(Pass.FillCells, grid);
+                PlannedCutDist += SegLengthFromCells(Pass.CutCells, Grid);
+                PlannedFillDist += SegLengthFromCells(Pass.FillCells, Grid);
 
                 Boolean FlowPass = (Pass.CutHeadingDeg.HasValue || Pass.FillHeadingDeg.HasValue);
-                Double CutHeading = Pass.CutHeadingDeg.HasValue ? Pass.CutHeadingDeg.Value : headingDeg;
-                Double FillHeading = Pass.FillHeadingDeg.HasValue ? Pass.FillHeadingDeg.Value : headingDeg;
+                Double CutHeading = Pass.CutHeadingDeg.HasValue ? Pass.CutHeadingDeg.Value : HeadingDeg;
+                Double FillHeading = Pass.FillHeadingDeg.HasValue ? Pass.FillHeadingDeg.Value : HeadingDeg;
 
                 List<(Double X, Double Y, Double DepthM)> CutLane;
                 if (Pass.CutKnotReduced)
                 {
                     // Respect previously repaired order exactly to avoid re-tangling.
-                    CutLane = LaneDirect(Pass.CutCells, grid, null, Pass.FillStartXy);
+                    CutLane = LaneDirect(Pass.CutCells, Grid, null, Pass.FillStartXy);
                 }
                 else if (FlowPass)
                 {
-                    CutLane = LanesFlow(Pass.CutCells, grid, null, Pass.FillStartXy);
-                    (CutLane, Int32 Fixed) = RepairIfTangled(CutLane, Pass.CutCells, grid, BladeM, null, Pass.FillStartXy);
+                    CutLane = LanesFlow(Pass.CutCells, Grid, null, Pass.FillStartXy);
+                    (CutLane, Int32 Fixed) = RepairIfTangled(CutLane, Pass.CutCells, Grid, BladeM, null, Pass.FillStartXy);
                     RepairedSweeps += Fixed;
                 }
                 else
                 {
-                    CutLane = LanesMulti(Pass.CutCells, grid, BladeM, CutHeading, laneOverlap, null, Pass.FillStartXy);
-                    (CutLane, Int32 Fixed) = RepairIfTangled(CutLane, Pass.CutCells, grid, BladeM, null, Pass.FillStartXy);
+                    CutLane = LanesMulti(Pass.CutCells, Grid, BladeM, CutHeading, LaneOverlap, null, Pass.FillStartXy);
+                    (CutLane, Int32 Fixed) = RepairIfTangled(CutLane, Pass.CutCells, Grid, BladeM, null, Pass.FillStartXy);
                     RepairedSweeps += Fixed;
                 }
 
@@ -725,18 +728,18 @@ namespace HaulBuilder
                 List<(Double X, Double Y, Double DepthM)> FillLane;
                 if (Pass.FillKnotReduced)
                 {
-                    FillLane = LaneDirect(Pass.FillCells, grid, CutEndXy, null);
+                    FillLane = LaneDirect(Pass.FillCells, Grid, CutEndXy, null);
                 }
                 else if (FlowPass)
                 {
-                    FillLane = LanesFlow(Pass.FillCells, grid, CutEndXy, null);
-                    (FillLane, Int32 Fixed) = RepairIfTangled(FillLane, Pass.FillCells, grid, BladeM, CutEndXy, null);
+                    FillLane = LanesFlow(Pass.FillCells, Grid, CutEndXy, null);
+                    (FillLane, Int32 Fixed) = RepairIfTangled(FillLane, Pass.FillCells, Grid, BladeM, CutEndXy, null);
                     RepairedSweeps += Fixed;
                 }
                 else
                 {
-                    FillLane = LanesMulti(Pass.FillCells, grid, BladeM, FillHeading, laneOverlap, CutEndXy, null);
-                    (FillLane, Int32 Fixed) = RepairIfTangled(FillLane, Pass.FillCells, grid, BladeM, CutEndXy, null);
+                    FillLane = LanesMulti(Pass.FillCells, Grid, BladeM, FillHeading, LaneOverlap, CutEndXy, null);
+                    (FillLane, Int32 Fixed) = RepairIfTangled(FillLane, Pass.FillCells, Grid, BladeM, CutEndXy, null);
                     RepairedSweeps += Fixed;
                 }
 
@@ -785,7 +788,7 @@ namespace HaulBuilder
                     Raw.Add(new RawPoint(Step.X, Step.Y, Step.DepthM, Action, PassNo, FillDisp[i].X, FillDisp[i].Y));
                 }
 
-                if (gradeReturn && (FillLane.Count >= 2))
+                if (GradeReturn && (FillLane.Count >= 2))
                 {
                     List<(Double X, Double Y, Double DepthM)> Rev = new List<(Double X, Double Y, Double DepthM)>(FillLane);
                     List<(Double X, Double Y, Double DepthM)> RevDisp = new List<(Double X, Double Y, Double DepthM)>(FillDisp);
@@ -810,18 +813,18 @@ namespace HaulBuilder
 
             // Hard turning-radius bound on blade-down sweeps before obstacle detours.
             Raw = EnforceMinTurnRadius(
-                Raw, EffectiveTurnRadiusM, turnThresholdDeg, Math.Max(grid.GridSizeM, 0.5), grid, LineupM);
+                Raw, EffectiveTurnRadiusM, TurnThresholdDeg, Math.Max(Grid.GridSizeM, Constants.HALF_SCALE), Grid, LineupM);
             // Intent: straighten the train before and after each CUT/FILL run.
-            Double SampleM = Math.Max(grid.GridSizeM, 0.5);
-            Raw = EnforceEquipmentLineup(Raw, LineupM, SampleM, EffectiveTurnRadiusM, grid);
+            Double SampleM = Math.Max(Grid.GridSizeM, Constants.HALF_SCALE);
+            Raw = EnforceEquipmentLineup(Raw, LineupM, SampleM, EffectiveTurnRadiusM, Grid);
             // Intent: exit/entry spurs change HAUL/MOVE chords — re-apply R-bounded transit.
-            if (LineupM > 1e-6)
+            if (LineupM > Constants.GEOMETRY_COMPARISON_TOLERANCE)
             {
-                Raw = EnforceBladeUpTransitTurns(Raw, EffectiveTurnRadiusM, SampleM, grid);
-                Raw = RepairSharpSteeringBends(Raw, EffectiveTurnRadiusM, SampleM, grid);
+                Raw = EnforceBladeUpTransitTurns(Raw, EffectiveTurnRadiusM, SampleM, Grid);
+                Raw = RepairSharpSteeringBends(Raw, EffectiveTurnRadiusM, SampleM, Grid);
             }
 
-            if ((Raw.Count >= 2) && (Obstacles.Active || (armObstacles != null)))
+            if ((Raw.Count >= 2) && (EffectiveObstacles.Active || (ArmObstacles != null)))
             {
                 // Insert detour vertices only on blade-up legs so blade-down coverage remains untouched.
                 List<RawPoint> Detoured = new List<RawPoint> { Raw[0] };
@@ -830,9 +833,9 @@ namespace HaulBuilder
                 {
                     RawPoint Current = Raw[i];
                     RawPoint Previous = Detoured[Detoured.Count - 1];
-                    ObstacleField FieldForPass = Obstacles;
+                    ObstacleField FieldForPass = EffectiveObstacles;
 
-                    if ((armObstacles != null) && armObstacles.TryGetValue(Current.PassNo, out ObstacleField? Value) && (Value != null))
+                    if ((ArmObstacles != null) && ArmObstacles.TryGetValue(Current.PassNo, out ObstacleField? Value) && (Value != null))
                     {
                         FieldForPass = Value;
                     }
@@ -931,8 +934,8 @@ namespace HaulBuilder
                 }
 
                 String Blade = IsBladeUp(Entry.Action) ? "UP" : "DOWN";
-                Double DepthMm = Math.Abs(Entry.DepthM) * 1000.0;
-                (Double Lat, Double Lon) LatLon = LatLonFromUtm(field, Entry.Xs, Entry.Ys);
+                Double DepthMm = Math.Abs(Entry.DepthM) * Constants.MILLIMETERS_PER_METER;
+                (Double Lat, Double Lon) LatLon = LatLonFromUtm(Field, Entry.Xs, Entry.Ys);
 
                 Seq += 1;
                 Points.Add
@@ -967,15 +970,15 @@ namespace HaulBuilder
                 RawYs.Add(Entry.Yr);
             }
 
-            (Int32 TurnCount, Double TurnAngle) = TurnMetrics(RawXs, RawYs, grid.GridSizeM, BladeM, turnThresholdDeg);
+            (Int32 TurnCount, Double TurnAngle) = TurnMetrics(RawXs, RawYs, Grid.GridSizeM, BladeM, TurnThresholdDeg);
 
             return new GuidanceResult
                 (
                 Points,
                 BladeM,
-                grid.GridSizeM,
-                headingDeg,
-                route.OrderedPasses.Count,
+                Grid.GridSizeM,
+                HeadingDeg,
+                Route.OrderedPasses.Count,
                 ReturnDist,
                 HaulDist,
                 CutDist,
@@ -994,41 +997,41 @@ namespace HaulBuilder
         /// <summary>
         /// Estimates realistic execution time for a guidance result.
         /// </summary>
-        /// <param name="result">Guidance result with segment actions and distances.</param>
-        /// <param name="loadingSpeedMph">Loading speed in mph.</param>
-        /// <param name="haulSpeedMph">Hauling speed in mph.</param>
-        /// <param name="dumpingSpeedMph">Dumping speed in mph.</param>
-        /// <param name="returnSpeedMph">Returning speed in mph.</param>
-        /// <param name="gradeSpeedMph">Grading speed in mph.</param>
-        /// <param name="turnSpeedMph">Turning speed in mph.</param>
-        /// <param name="turningCircleFt">Turning circle in feet.</param>
-        /// <param name="accelTimeS">Acceleration phase time in seconds.</param>
-        /// <param name="decelTimeS">Deceleration phase time in seconds.</param>
-        /// <param name="fieldEfficiency">Field efficiency fraction in (0, 1].</param>
+        /// <param name="Result">Guidance result with segment actions and distances.</param>
+        /// <param name="LoadingSpeedMph">Loading speed in mph.</param>
+        /// <param name="HaulSpeedMph">Hauling speed in mph.</param>
+        /// <param name="DumpingSpeedMph">Dumping speed in mph.</param>
+        /// <param name="ReturnSpeedMph">Returning speed in mph.</param>
+        /// <param name="GradeSpeedMph">Grading speed in mph.</param>
+        /// <param name="TurnSpeedMph">Turning speed in mph.</param>
+        /// <param name="TurningCircleFt">Turning circle in feet.</param>
+        /// <param name="AccelTimeS">Acceleration phase time in seconds.</param>
+        /// <param name="DecelTimeS">Deceleration phase time in seconds.</param>
+        /// <param name="FieldEfficiency">Field efficiency fraction in (0, 1].</param>
         /// <returns>Detailed timing breakdown for the track.</returns>
         static internal GuidanceTime EstimateGuidanceTime
             (
-            GuidanceResult result,
-            Double loadingSpeedMph,
-            Double haulSpeedMph,
-            Double dumpingSpeedMph,
-            Double returnSpeedMph,
-            Double gradeSpeedMph,
-            Double turnSpeedMph,
-            Double turningCircleFt,
-            Double accelTimeS,
-            Double decelTimeS,
-            Double fieldEfficiency
+            GuidanceResult Result,
+            Double LoadingSpeedMph,
+            Double HaulSpeedMph,
+            Double DumpingSpeedMph,
+            Double ReturnSpeedMph,
+            Double GradeSpeedMph,
+            Double TurnSpeedMph,
+            Double TurningCircleFt,
+            Double AccelTimeS,
+            Double DecelTimeS,
+            Double FieldEfficiency
             )
         {
             // Match Python phase accounting exactly, including move-time model and efficiency scaling.
-            Double LoadV = loadingSpeedMph * Constants.MPH_TO_MPS;
-            Double HaulVMax = haulSpeedMph * Constants.MPH_TO_MPS;
-            Double DumpV = dumpingSpeedMph * Constants.MPH_TO_MPS;
-            Double ReturnVMax = returnSpeedMph * Constants.MPH_TO_MPS;
-            Double GradeV = gradeSpeedMph * Constants.MPH_TO_MPS;
-            Double TurnV = turnSpeedMph * Constants.MPH_TO_MPS;
-            Double Radius = (turningCircleFt * Constants.FEET_TO_METERS) / 2.0;
+            Double LoadV = LoadingSpeedMph * Constants.MPH_TO_MPS;
+            Double HaulVMax = HaulSpeedMph * Constants.MPH_TO_MPS;
+            Double DumpV = DumpingSpeedMph * Constants.MPH_TO_MPS;
+            Double ReturnVMax = ReturnSpeedMph * Constants.MPH_TO_MPS;
+            Double GradeV = GradeSpeedMph * Constants.MPH_TO_MPS;
+            Double TurnV = TurnSpeedMph * Constants.MPH_TO_MPS;
+            Double Radius = (TurningCircleFt * Constants.FEET_TO_METERS) / 2.0;
 
             Double LoadS = 0.0;
             Double DumpS = 0.0;
@@ -1036,7 +1039,7 @@ namespace HaulBuilder
             Double HaulS = 0.0;
             Double ReturnS = 0.0;
 
-            foreach (GuidancePoint Point in result.Points)
+            foreach (GuidancePoint Point in Result.Points)
             {
                 Double Segment = Point.SegDistM;
 
@@ -1055,17 +1058,17 @@ namespace HaulBuilder
                 else if ((Point.Action == HAUL) || (Point.Action == MOVE)
                     || (Point.Action == MANUAL_MOVE))
                 {
-                    HaulS += MoveTime(Segment, HaulVMax, accelTimeS, decelTimeS);
+                    HaulS += MoveTime(Segment, HaulVMax, AccelTimeS, DecelTimeS);
                 }
                 else if ((Point.Action == RETURN) || (Point.Action == START))
                 {
-                    ReturnS += MoveTime(Segment, ReturnVMax, accelTimeS, decelTimeS);
+                    ReturnS += MoveTime(Segment, ReturnVMax, AccelTimeS, DecelTimeS);
                 }
             }
 
-            Double TurnS = (TurnV > 0.0) ? ((Radius * result.TurnAngleRad) / TurnV) : 0.0;
+            Double TurnS = (TurnV > 0.0) ? ((Radius * Result.TurnAngleRad) / TurnV) : 0.0;
             Double Productive = LoadS + DumpS + GradeS + HaulS + ReturnS + TurnS;
-            Double Efficiency = ((fieldEfficiency > 0.0) && (fieldEfficiency <= 1.0)) ? fieldEfficiency : 1.0;
+            Double Efficiency = ((FieldEfficiency > 0.0) && (FieldEfficiency <= 1.0)) ? FieldEfficiency : 1.0;
             Double Total = Productive / Efficiency;
             Double Other = Total - Productive;
 
@@ -1079,27 +1082,27 @@ namespace HaulBuilder
                 ReturnS,
                 TurnS,
                 Other,
-                result.NTurns
+                Result.NTurns
                 );
         }
 
         /// <summary>
         /// Writes guidance output to CSV for in-cab import.
         /// </summary>
-        /// <param name="result">Guidance result to write.</param>
-        /// <param name="path">Output CSV file path.</param>
+        /// <param name="Result">Guidance result to write.</param>
+        /// <param name="Path">Output CSV file path.</param>
         static public void WriteGuidanceCsv
             (
-            GuidanceResult result,
-            String path
+            GuidanceResult Result,
+            String Path
             )
         {
             // Emit deterministic invariant-culture formatting to keep parity with Python CSV.
-            using (StreamWriter Writer = new StreamWriter(path, false))
+            using (StreamWriter Writer = new StreamWriter(Path, false))
             {
                 Writer.WriteLine("seq,pass,action,blade,lat,lon,depth_mm,heading_deg,seg_dist_m,cum_dist_m,instruction");
 
-                foreach (GuidancePoint Point in result.Points)
+                foreach (GuidancePoint Point in Result.Points)
                 {
                     String Line = String.Join
                         (
@@ -1124,18 +1127,18 @@ namespace HaulBuilder
         /// <summary>
         /// Computes compass bearing from point p to point q (0=N, 90=E).
         /// </summary>
-        /// <param name="p">Start point.</param>
-        /// <param name="q">End point.</param>
+        /// <param name="P">Start point.</param>
+        /// <param name="Q">End point.</param>
         /// <returns>Bearing in degrees, normalized to [0, 360).</returns>
         static private Double BearingDeg
             (
-            (Double X, Double Y) p,
-            (Double X, Double Y) q
+            (Double X, Double Y) P,
+            (Double X, Double Y) Q
             )
         {
             // Use east/north ordering exactly like the Python atan2(de, dn) formulation.
-            Double De = q.X - p.X;
-            Double Dn = q.Y - p.Y;
+            Double De = Q.X - P.X;
+            Double Dn = Q.Y - P.Y;
             if ((Math.Abs(De) < EPSILON) && (Math.Abs(Dn) < EPSILON))
             {
                 return 0.0;
@@ -1148,75 +1151,75 @@ namespace HaulBuilder
         /// <summary>
         /// Computes squared euclidean distance between two points.
         /// </summary>
-        /// <param name="p">First point.</param>
-        /// <param name="q">Second point.</param>
+        /// <param name="P">First point.</param>
+        /// <param name="Q">Second point.</param>
         /// <returns>Squared distance.</returns>
         static private Double D2
             (
-            (Double X, Double Y) p,
-            (Double X, Double Y) q
+            (Double X, Double Y) P,
+            (Double X, Double Y) Q
             )
         {
             // Keep this helper allocation-free because it is called heavily during ordering.
-            Double Dx = p.X - q.X;
-            Double Dy = p.Y - q.Y;
+            Double Dx = P.X - Q.X;
+            Double Dy = P.Y - Q.Y;
             return (Dx * Dx) + (Dy * Dy);
         }
 
         /// <summary>
         /// Computes euclidean distance between two points.
         /// </summary>
-        /// <param name="p">First point.</param>
-        /// <param name="q">Second point.</param>
+        /// <param name="P">First point.</param>
+        /// <param name="Q">Second point.</param>
         /// <returns>Distance in metres.</returns>
         static private Double Dist
             (
-            (Double X, Double Y) p,
-            (Double X, Double Y) q
+            (Double X, Double Y) P,
+            (Double X, Double Y) Q
             )
         {
             // Provide a local replacement for Python math.dist used throughout the port.
-            return Math.Sqrt(D2(p, q));
+            return Math.Sqrt(D2(P, Q));
         }
 
         /// <summary>
         /// Computes centroid of a point cloud.
         /// </summary>
-        /// <param name="points">Input points.</param>
+        /// <param name="Points">Input points.</param>
         /// <returns>Centroid coordinates.</returns>
         static private (Double X, Double Y) Centroid
             (
-            List<(Double X, Double Y)> points
+            List<(Double X, Double Y)> Points
             )
         {
             // Preserve exact averaging semantics used by the Python implementation.
             Double SumX = 0.0;
             Double SumY = 0.0;
-            foreach ((Double X, Double Y) Point in points)
+            foreach ((Double X, Double Y) Point in Points)
             {
                 SumX += Point.X;
                 SumY += Point.Y;
             }
 
-            Double Count = points.Count;
+            Double Count = Points.Count;
             return (SumX / Count, SumY / Count);
         }
 
         /// <summary>
         /// Computes polyline length from a list of points.
         /// </summary>
-        /// <param name="points">Ordered polyline points.</param>
+        /// <param name="Points">Ordered polyline points.</param>
         /// <returns>Total length in metres.</returns>
         static private Double SegLength
             (
-            List<(Double X, Double Y)> points
+            List<(Double X, Double Y)> Points
             )
         {
             // Sum contiguous segment distances without smoothing or simplification.
             Double Total = 0.0;
-            for (Int32 k = 0; k < (points.Count - 1); k += 1)
+            for (Int32 k = 0; k < (Points.Count - 1); k += 1)
             {
-                Total += Dist(points[k], points[k + 1]);
+                Total += Dist(Points[k], Points[k + 1]);
             }
             return Total;
         }
@@ -1224,20 +1227,20 @@ namespace HaulBuilder
         /// <summary>
         /// Computes polyline length from cell center sequence.
         /// </summary>
-        /// <param name="cells">Ordered cell-depth list.</param>
-        /// <param name="grid">Grid projection helper.</param>
+        /// <param name="Cells">Ordered cell-depth list.</param>
+        /// <param name="Grid">Grid projection helper.</param>
         /// <returns>Total centerline distance in metres.</returns>
         static private Double SegLengthFromCells
             (
-            List<((Int32 Bx, Int32 By) Cell, Double DepthM)> cells,
-            Grid grid
+            List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Cells,
+            Grid Grid
             )
         {
             // Map cells to center points then reuse the generic polyline length helper.
             List<(Double X, Double Y)> Points = new List<(Double X, Double Y)>();
-            foreach (((Int32 Bx, Int32 By) Cell, Double DepthM) Entry in cells)
+            foreach (((Int32 Bx, Int32 By) Cell, Double DepthM) Entry in Cells)
             {
-                Points.Add(grid.CellCenterXY(Entry.Cell.Bx, Entry.Cell.By));
+                Points.Add(Grid.CellCenterXY(Entry.Cell.Bx, Entry.Cell.By));
             }
             return SegLength(Points);
         }
@@ -1245,35 +1248,35 @@ namespace HaulBuilder
         /// <summary>
         /// Counts cell-path corners whose inbound/outbound directions are nearly reverse.
         /// </summary>
-        /// <param name="cells">Ordered coverage cells.</param>
-        /// <param name="grid">Grid geometry.</param>
+        /// <param name="Cells">Ordered coverage cells.</param>
+        /// <param name="Grid">Grid geometry.</param>
         /// <returns>Near-reverse corner count on the unsmoothed cell polyline.</returns>
         static private Int32 CellNearReverseCount
             (
-            IReadOnlyList<((Int32 Bx, Int32 By) Cell, Double DepthM)> cells,
-            Grid grid
+            IReadOnlyList<((Int32 Bx, Int32 By) Cell, Double DepthM)> Cells,
+            Grid Grid
             )
         {
             // Intent: RDP-smoothed HardTurnCount can under-count compact knots when blade≈grid;
             // raw reverse corners still need boustrophedon repair.
             Int32 Count = 0;
-            for (Int32 K = 1; K + 1 < cells.Count; K += 1)
+            for (Int32 K = 1; K + 1 < Cells.Count; K += 1)
             {
-                (Double X, Double Y) A = grid.CellCenterXy(cells[K - 1].Cell.Bx, cells[K - 1].Cell.By);
-                (Double X, Double Y) B = grid.CellCenterXy(cells[K].Cell.Bx, cells[K].Cell.By);
-                (Double X, Double Y) C = grid.CellCenterXy(cells[K + 1].Cell.Bx, cells[K + 1].Cell.By);
+                (Double X, Double Y) A = Grid.CellCenterXy(Cells[K - 1].Cell.Bx, Cells[K - 1].Cell.By);
+                (Double X, Double Y) B = Grid.CellCenterXy(Cells[K].Cell.Bx, Cells[K].Cell.By);
+                (Double X, Double Y) C = Grid.CellCenterXy(Cells[K + 1].Cell.Bx, Cells[K + 1].Cell.By);
                 Double Dx1 = B.X - A.X;
                 Double Dy1 = B.Y - A.Y;
                 Double Dx2 = C.X - B.X;
                 Double Dy2 = C.Y - B.Y;
                 Double N1 = Math.Sqrt((Dx1 * Dx1) + (Dy1 * Dy1));
                 Double N2 = Math.Sqrt((Dx2 * Dx2) + (Dy2 * Dy2));
-                if ((N1 < 1e-6) || (N2 < 1e-6))
+                if ((N1 < Constants.GEOMETRY_COMPARISON_TOLERANCE) || (N2 < Constants.GEOMETRY_COMPARISON_TOLERANCE))
                 {
                     continue;
                 }
 
-                if (((Dx1 * Dx2) + (Dy1 * Dy2)) / (N1 * N2) < -0.5)
+                if (((Dx1 * Dx2) + (Dy1 * Dy2)) / (N1 * N2) < -Constants.HALF_SCALE)
                 {
                     Count += 1;
                 }
@@ -1285,34 +1288,34 @@ namespace HaulBuilder
         /// <summary>
         /// Counts near-reversal turns on an RDP-simplified lane centerline.
         /// </summary>
-        /// <param name="lane">Lane points with depth values.</param>
-        /// <param name="grid">Grid geometry.</param>
-        /// <param name="bladeM">Blade width in metres.</param>
-        /// <param name="degThreshold">Minimum heading change treated as hairpin.</param>
+        /// <param name="Lane">Lane points with depth values.</param>
+        /// <param name="Grid">Grid geometry.</param>
+        /// <param name="BladeM">Blade width in metres.</param>
+        /// <param name="DegThreshold">Minimum heading change treated as hairpin.</param>
         /// <returns>Hairpin-like turn count.</returns>
         static private Int32 HardTurnCount
             (
-            List<(Double X, Double Y, Double DepthM)> lane,
-            Grid grid,
-            Double bladeM,
-            Double degThreshold = 100.0
+            List<(Double X, Double Y, Double DepthM)> Lane,
+            Grid Grid,
+            Double BladeM,
+            Double DegThreshold = 100.0
             )
         {
             // Simplify first so staircase raster artifacts do not inflate hairpin count.
-            if (lane.Count < 3)
+            if (Lane.Count < 3)
             {
                 return 0;
             }
 
             List<Double> Xs = new List<Double>();
             List<Double> Ys = new List<Double>();
-            foreach ((Double X, Double Y, Double DepthM) Point in lane)
+            foreach ((Double X, Double Y, Double DepthM) Point in Lane)
             {
                 Xs.Add(Point.X);
                 Ys.Add(Point.Y);
             }
 
-            Double Tol = Math.Max(0.5 * bladeM, 0.5 * grid.GridSizeM);
+            Double Tol = Math.Max(Constants.HALF_SCALE * BladeM, Constants.HALF_SCALE * Grid.GridSizeM);
             List<Int32> Keep = RdpKeep(Xs, Ys, Tol);
             if (Keep.Count < 3)
             {
@@ -1328,9 +1331,9 @@ namespace HaulBuilder
 
                 Double B0 = BearingDeg(A, B);
                 Double B1 = BearingDeg(B, C);
-                Double Delta = Math.Abs(((B1 - B0 + 180.0) % 360.0) - 180.0);
+                Double Delta = Math.Abs(((B1 - B0 + Constants.DEGREES_PER_HALF_TURN) % Constants.DEGREES_PER_TURN) - Constants.DEGREES_PER_HALF_TURN);
 
-                if (Delta >= degThreshold)
+                if (Delta >= DegThreshold)
                 {
                     Count += 1;
                 }
@@ -1342,26 +1345,26 @@ namespace HaulBuilder
         /// <summary>
         /// Computes principal-axis heading of a point cloud in compass degrees.
         /// </summary>
-        /// <param name="centers">Point cloud.</param>
+        /// <param name="Centers">Point cloud.</param>
         /// <returns>Major-axis heading in [0, 360).</returns>
         static private Double PrincipalHeadingDeg
             (
-            List<(Double X, Double Y)> centers
+            List<(Double X, Double Y)> Centers
             )
         {
             // Use covariance eigensystem to align lanes with patch long axis.
-            Int32 N = centers.Count;
+            Int32 N = Centers.Count;
             if (N < 2)
             {
                 return 0.0;
             }
 
-            (Double X, Double Y) Origin = Centroid(centers);
+            (Double X, Double Y) Origin = Centroid(Centers);
             Double Sxx = 0.0;
             Double Sxy = 0.0;
             Double Syy = 0.0;
 
-            foreach ((Double X, Double Y) Point in centers)
+            foreach ((Double X, Double Y) Point in Centers)
             {
                 Double Dx = Point.X - Origin.X;
                 Double Dy = Point.Y - Origin.Y;
@@ -1372,8 +1375,8 @@ namespace HaulBuilder
 
             Double Tr = Sxx + Syy;
             Double Det = (Sxx * Syy) - (Sxy * Sxy);
-            Double Disc = Math.Max(0.0, ((Tr * 0.5) * (Tr * 0.5)) - Det);
-            Double Lambda = (Tr * 0.5) + Math.Sqrt(Disc);
+            Double Disc = Math.Max(0.0, ((Tr * Constants.HALF_SCALE) * (Tr * Constants.HALF_SCALE)) - Det);
+            Double Lambda = (Tr * Constants.HALF_SCALE) + Math.Sqrt(Disc);
             Double Ex = Sxy;
             Double Ey = Lambda - Sxx;
 
@@ -1393,23 +1396,23 @@ namespace HaulBuilder
         /// <summary>
         /// Smooths one contiguous run using a gaussian kernel over waypoint index.
         /// </summary>
-        /// <param name="xys">Run points.</param>
-        /// <param name="sigmaIdx">Sigma in waypoint indices.</param>
+        /// <param name="Xys">Run points.</param>
+        /// <param name="SigmaIdx">Sigma in waypoint indices.</param>
         /// <returns>Smoothed run with endpoints preserved.</returns>
         static private List<(Double X, Double Y)> SmoothRunXy
             (
-            List<(Double X, Double Y)> xys,
-            Double sigmaIdx
+            List<(Double X, Double Y)> Xys,
+            Double SigmaIdx
             )
         {
             // Smooth curvature while pinning endpoints so route junctions remain untouched.
-            Int32 N = xys.Count;
-            if ((N < 3) || (sigmaIdx <= 0.0))
+            Int32 N = Xys.Count;
+            if ((N < 3) || (SigmaIdx <= 0.0))
             {
-                return new List<(Double X, Double Y)>(xys);
+                return new List<(Double X, Double Y)>(Xys);
             }
 
-            Int32 Rad = Math.Min(Math.Max(1, (Int32)Math.Round(3.0 * sigmaIdx)), N - 1);
+            Int32 Rad = Math.Min(Math.Max(1, (Int32)Math.Round(3.0 * SigmaIdx)), N - 1);
             List<Int32> Ks = new List<Int32>();
             for (Int32 k = -Rad; k <= Rad; k += 1)
             {
@@ -1420,7 +1423,7 @@ namespace HaulBuilder
             Double WeightSum = 0.0;
             foreach (Int32 k in Ks)
             {
-                Double Value = Math.Exp(-((Double)(k * k)) / (2.0 * sigmaIdx * sigmaIdx));
+                Double Value = Math.Exp(-((Double)(k * k)) / (2.0 * SigmaIdx * SigmaIdx));
                 Weights.Add(Value);
                 WeightSum += Value;
             }
@@ -1435,9 +1438,9 @@ namespace HaulBuilder
                 Double SumX = 0.0;
                 Double SumY = 0.0;
 
-                for (Int32 t = 0; t < Ks.Count; t += 1)
+                for (Int32 T = 0; T < Ks.Count; T += 1)
                 {
-                    Int32 j = i + Ks[t];
+                    Int32 j = i + Ks[T];
                     if (j < 0)
                     {
                         j = -j;
@@ -1448,45 +1451,45 @@ namespace HaulBuilder
                     }
 
                     j = Math.Min(Math.Max(j, 0), N - 1);
-                    SumX += Weights[t] * xys[j].X;
-                    SumY += Weights[t] * xys[j].Y;
+                    SumX += Weights[T] * Xys[j].X;
+                    SumY += Weights[T] * Xys[j].Y;
                 }
 
                 Out.Add((SumX, SumY));
             }
 
-            Out[0] = xys[0];
-            Out[Out.Count - 1] = xys[xys.Count - 1];
+            Out[0] = Xys[0];
+            Out[Out.Count - 1] = Xys[Xys.Count - 1];
             return Out;
         }
 
         /// <summary>
         /// Smooths lane geometry per contiguous run while preserving depth sequence.
         /// </summary>
-        /// <param name="lane">Raw lane points.</param>
-        /// <param name="sigmaIdx">Smoothing sigma in waypoint indices.</param>
-        /// <param name="hopThresh">Threshold that splits runs at reposition jumps.</param>
+        /// <param name="Lane">Raw lane points.</param>
+        /// <param name="SigmaIdx">Smoothing sigma in waypoint indices.</param>
+        /// <param name="HopThresh">Threshold that splits runs at reposition jumps.</param>
         /// <returns>Lane with smoothed coordinates and unchanged depth values.</returns>
         static private List<(Double X, Double Y, Double DepthM)> SmoothLane
             (
-            List<(Double X, Double Y, Double DepthM)> lane,
-            Double sigmaIdx,
-            Double hopThresh
+            List<(Double X, Double Y, Double DepthM)> Lane,
+            Double SigmaIdx,
+            Double HopThresh
             )
         {
             // Never smooth across pocket-to-pocket jumps so steering does not bridge empty ground.
-            if ((sigmaIdx <= 0.0) || (lane.Count < 3))
+            if ((SigmaIdx <= 0.0) || (Lane.Count < 3))
             {
-                return lane;
+                return Lane;
             }
 
             List<List<Int32>> Runs = new List<List<Int32>>();
             List<Int32> Current = new List<Int32> { 0 };
 
-            for (Int32 i = 1; i < lane.Count; i += 1)
+            for (Int32 i = 1; i < Lane.Count; i += 1)
             {
-                Double Step = Dist((lane[i - 1].X, lane[i - 1].Y), (lane[i].X, lane[i].Y));
-                if (Step > hopThresh)
+                Double Step = Dist((Lane[i - 1].X, Lane[i - 1].Y), (Lane[i].X, Lane[i].Y));
+                if (Step > HopThresh)
                 {
                     Runs.Add(Current);
                     Current = new List<Int32> { i };
@@ -1498,7 +1501,7 @@ namespace HaulBuilder
             }
             Runs.Add(Current);
 
-            List<(Double X, Double Y, Double DepthM)> Out = new List<(Double X, Double Y, Double DepthM)>(lane);
+            List<(Double X, Double Y, Double DepthM)> Out = new List<(Double X, Double Y, Double DepthM)>(Lane);
             foreach (List<Int32> Run in Runs)
             {
                 if (Run.Count < 3)
@@ -1509,14 +1512,14 @@ namespace HaulBuilder
                 List<(Double X, Double Y)> RunXy = new List<(Double X, Double Y)>();
                 foreach (Int32 Index in Run)
                 {
-                    RunXy.Add((lane[Index].X, lane[Index].Y));
+                    RunXy.Add((Lane[Index].X, Lane[Index].Y));
                 }
-                List<(Double X, Double Y)> Smoothed = SmoothRunXy(RunXy, sigmaIdx);
+                List<(Double X, Double Y)> Smoothed = SmoothRunXy(RunXy, SigmaIdx);
 
                 for (Int32 k = 0; k < Run.Count; k += 1)
                 {
                     Int32 Index = Run[k];
-                    Out[Index] = (Smoothed[k].X, Smoothed[k].Y, lane[Index].DepthM);
+                    Out[Index] = (Smoothed[k].X, Smoothed[k].Y, Lane[Index].DepthM);
                 }
             }
 
@@ -1526,22 +1529,22 @@ namespace HaulBuilder
         /// <summary>
         /// Circumradius of triangle ABC in metres; infinity when nearly collinear.
         /// </summary>
-        /// <param name="a">First vertex.</param>
-        /// <param name="b">Second vertex.</param>
-        /// <param name="c">Third vertex.</param>
+        /// <param name="A">First vertex.</param>
+        /// <param name="B">Second vertex.</param>
+        /// <param name="C">Third vertex.</param>
         /// <returns>Circumradius in metres.</returns>
         static private Double CircumRadiusM
             (
-            (Double X, Double Y) a,
-            (Double X, Double Y) b,
-            (Double X, Double Y) c
+            (Double X, Double Y) A,
+            (Double X, Double Y) B,
+            (Double X, Double Y) C
             )
         {
-            Double La = Dist(b, c);
-            Double Lb = Dist(a, c);
-            Double Lc = Dist(a, b);
-            Double Cross = Math.Abs((a.X * (b.Y - c.Y)) + (b.X * (c.Y - a.Y)) + (c.X * (a.Y - b.Y)));
-            if (Cross < 1e-9)
+            Double La = Dist(B, C);
+            Double Lb = Dist(A, C);
+            Double Lc = Dist(A, B);
+            Double Cross = Math.Abs((A.X * (B.Y - C.Y)) + (B.X * (C.Y - A.Y)) + (C.X * (A.Y - B.Y)));
+            if (Cross < Constants.NUMERIC_COMPARISON_TOLERANCE)
             {
                 return Double.PositiveInfinity;
             }
@@ -1553,77 +1556,77 @@ namespace HaulBuilder
         /// <summary>
         /// Absolute heading change at b along a→b→c in degrees.
         /// </summary>
-        /// <param name="a">Inbound start.</param>
-        /// <param name="b">Corner.</param>
-        /// <param name="c">Outbound end.</param>
+        /// <param name="A">Inbound start.</param>
+        /// <param name="B">Corner.</param>
+        /// <param name="C">Outbound end.</param>
         /// <returns>Absolute turn angle in degrees.</returns>
         static private Double HeadingChangeDeg
             (
-            (Double X, Double Y) a,
-            (Double X, Double Y) b,
-            (Double X, Double Y) c
+            (Double X, Double Y) A,
+            (Double X, Double Y) B,
+            (Double X, Double Y) C
             )
         {
-            Double Dx1 = b.X - a.X;
-            Double Dy1 = b.Y - a.Y;
-            Double Dx2 = c.X - b.X;
-            Double Dy2 = c.Y - b.Y;
+            Double Dx1 = B.X - A.X;
+            Double Dy1 = B.Y - A.Y;
+            Double Dx2 = C.X - B.X;
+            Double Dy2 = C.Y - B.Y;
             return Math.Abs(RadiansToDegrees(Math.Atan2((Dx1 * Dy2) - (Dy1 * Dx2), (Dx1 * Dx2) + (Dy1 * Dy2))));
         }
 
         /// <summary>
         /// Converts compass bearing (0=N, 90=E) to math angle CCW from +X (east).
         /// </summary>
-        /// <param name="headingDeg">Compass heading in degrees.</param>
+        /// <param name="HeadingDeg">Compass heading in degrees.</param>
         /// <returns>Math heading in radians.</returns>
         static private Double CompassToMath
             (
-            Double headingDeg
+            Double HeadingDeg
             )
         {
-            return (Math.PI / 2.0) - DegreesToRadians(headingDeg);
+            return (Math.PI / 2.0) - DegreesToRadians(HeadingDeg);
         }
 
         /// <summary>
         /// Wraps angle into [0, 2π) using floor (Andrew Walker Dubins convention).
         /// </summary>
-        /// <param name="theta">Angle in radians.</param>
+        /// <param name="Theta">Angle in radians.</param>
         /// <returns>Wrapped angle in [0, 2π).</returns>
         static private Double DubinsMod2Pi
             (
-            Double theta
+            Double Theta
             )
         {
-            return theta - (2.0 * Math.PI * Math.Floor(theta / (2.0 * Math.PI)));
+            return Theta - (2.0 * Math.PI * Math.Floor(Theta / (2.0 * Math.PI)));
         }
 
         /// <summary>
-        /// Advances a normalized Dubins segment (L/R/S) from pose <paramref name="qi"/> by length <paramref name="t"/>.
+        /// Advances a normalized Dubins segment (L/R/S) from pose <paramref name="Qi"/> by length <paramref name="T"/>.
         /// </summary>
-        /// <param name="t">Normalized segment length.</param>
-        /// <param name="qi">Start pose (x, y, heading) in unit-radius space.</param>
-        /// <param name="typ">Segment type: L, R, or S.</param>
+        /// <param name="T">Normalized segment length.</param>
+        /// <param name="Qi">Start pose (x, y, heading) in unit-radius space.</param>
+        /// <param name="Typ">Segment type: L, R, or S.</param>
         /// <returns>Pose after the segment.</returns>
         static private (Double X, Double Y, Double Th) DubinsSegmentStep
             (
-            Double t,
-            (Double X, Double Y, Double Th) qi,
-            String typ
+            Double T,
+            (Double X, Double Y, Double Th) Qi,
+            String Typ
             )
         {
-            Double St = Math.Sin(qi.Th);
-            Double Ct = Math.Cos(qi.Th);
-            if (typ == "L")
+            Double St = Math.Sin(Qi.Th);
+            Double Ct = Math.Cos(Qi.Th);
+            if (Typ == "L")
             {
-                return (qi.X + Math.Sin(qi.Th + t) - St, qi.Y - Math.Cos(qi.Th + t) + Ct, qi.Th + t);
+                return (Qi.X + Math.Sin(Qi.Th + T) - St, Qi.Y - Math.Cos(Qi.Th + T) + Ct, Qi.Th + T);
             }
 
-            if (typ == "R")
+            if (Typ == "R")
             {
-                return (qi.X - Math.Sin(qi.Th - t) + St, qi.Y + Math.Cos(qi.Th - t) - Ct, qi.Th - t);
+                return (Qi.X - Math.Sin(Qi.Th - T) + St, Qi.Y + Math.Cos(Qi.Th - T) - Ct, Qi.Th - T);
             }
 
-            return (qi.X + (Ct * t), qi.Y + (St * t), qi.Th);
+            return (Qi.X + (Ct * T), Qi.Y + (St * T), Qi.Th);
         }
 
         /// <summary>
@@ -1642,78 +1645,78 @@ namespace HaulBuilder
         /// <summary>
         /// Normalized segment lengths for each Dubins word (Andrew Walker formulas).
         /// </summary>
-        /// <param name="alpha">Normalized start heading relative to SE line.</param>
-        /// <param name="beta">Normalized end heading relative to SE line.</param>
-        /// <param name="d">Normalized start–end distance.</param>
-        /// <param name="sa">sin(alpha).</param>
-        /// <param name="sb">sin(beta).</param>
-        /// <param name="ca">cos(alpha).</param>
-        /// <param name="cb">cos(beta).</param>
-        /// <param name="cab">cos(alpha - beta).</param>
-        /// <param name="dsq">d squared.</param>
+        /// <param name="Alpha">Normalized start heading relative to SE line.</param>
+        /// <param name="Beta">Normalized end heading relative to SE line.</param>
+        /// <param name="D">Normalized start–end distance.</param>
+        /// <param name="Sa">sin(alpha).</param>
+        /// <param name="Sb">sin(beta).</param>
+        /// <param name="Ca">cos(alpha).</param>
+        /// <param name="Cb">cos(beta).</param>
+        /// <param name="Cab">cos(alpha - beta).</param>
+        /// <param name="Dsq">d squared.</param>
         /// <returns>Word name → (t, p, q) normalized lengths for feasible words.</returns>
         static private Dictionary<String, (Double T, Double P, Double Q)> DubinsWords
             (
-            Double alpha,
-            Double beta,
-            Double d,
-            Double sa,
-            Double sb,
-            Double ca,
-            Double cb,
-            Double cab,
-            Double dsq
+            Double Alpha,
+            Double Beta,
+            Double D,
+            Double Sa,
+            Double Sb,
+            Double Ca,
+            Double Cb,
+            Double Cab,
+            Double Dsq
             )
         {
             Dictionary<String, (Double T, Double P, Double Q)> Out = new Dictionary<String, (Double T, Double P, Double Q)>();
-            Double Tmp0 = d + sa - sb;
-            Double Psq = 2.0 + dsq - (2.0 * cab) + (2.0 * d * (sa - sb));
+            Double Tmp0 = D + Sa - Sb;
+            Double Psq = 2.0 + Dsq - (2.0 * Cab) + (2.0 * D * (Sa - Sb));
             if (Psq >= 0.0)
             {
-                Double Tmp1 = Math.Atan2(cb - ca, Tmp0);
-                Out["LSL"] = (DubinsMod2Pi(Tmp1 - alpha), Math.Sqrt(Psq), DubinsMod2Pi(beta - Tmp1));
+                Double Tmp1 = Math.Atan2(Cb - Ca, Tmp0);
+                Out["LSL"] = (DubinsMod2Pi(Tmp1 - Alpha), Math.Sqrt(Psq), DubinsMod2Pi(Beta - Tmp1));
             }
 
-            Tmp0 = d - sa + sb;
-            Psq = 2.0 + dsq - (2.0 * cab) + (2.0 * d * (sb - sa));
+            Tmp0 = D - Sa + Sb;
+            Psq = 2.0 + Dsq - (2.0 * Cab) + (2.0 * D * (Sb - Sa));
             if (Psq >= 0.0)
             {
-                Double Tmp1 = Math.Atan2(ca - cb, Tmp0);
-                Out["RSR"] = (DubinsMod2Pi(alpha - Tmp1), Math.Sqrt(Psq), DubinsMod2Pi(Tmp1 - beta));
+                Double Tmp1 = Math.Atan2(Ca - Cb, Tmp0);
+                Out["RSR"] = (DubinsMod2Pi(Alpha - Tmp1), Math.Sqrt(Psq), DubinsMod2Pi(Tmp1 - Beta));
             }
 
-            Psq = -2.0 + dsq + (2.0 * cab) + (2.0 * d * (sa + sb));
-            if (Psq >= 0.0)
-            {
-                Double P = Math.Sqrt(Psq);
-                Tmp0 = Math.Atan2(-ca - cb, d + sa + sb) - Math.Atan2(-2.0, P);
-                Out["LSR"] = (DubinsMod2Pi(Tmp0 - alpha), P, DubinsMod2Pi(Tmp0 - DubinsMod2Pi(beta)));
-            }
-
-            Psq = -2.0 + dsq + (2.0 * cab) - (2.0 * d * (sa + sb));
+            Psq = -2.0 + Dsq + (2.0 * Cab) + (2.0 * D * (Sa + Sb));
             if (Psq >= 0.0)
             {
                 Double P = Math.Sqrt(Psq);
-                Tmp0 = Math.Atan2(ca + cb, d - sa - sb) - Math.Atan2(2.0, P);
-                Out["RSL"] = (DubinsMod2Pi(alpha - Tmp0), P, DubinsMod2Pi(beta - Tmp0));
+                Tmp0 = Math.Atan2(-Ca - Cb, D + Sa + Sb) - Math.Atan2(-2.0, P);
+                Out["LSR"] = (DubinsMod2Pi(Tmp0 - Alpha), P, DubinsMod2Pi(Tmp0 - DubinsMod2Pi(Beta)));
             }
 
-            Tmp0 = (6.0 - dsq + (2.0 * cab) + (2.0 * d * (sa - sb))) / 8.0;
-            Double Phi = Math.Atan2(ca - cb, d - sa + sb);
+            Psq = -2.0 + Dsq + (2.0 * Cab) - (2.0 * D * (Sa + Sb));
+            if (Psq >= 0.0)
+            {
+                Double P = Math.Sqrt(Psq);
+                Tmp0 = Math.Atan2(Ca + Cb, D - Sa - Sb) - Math.Atan2(2.0, P);
+                Out["RSL"] = (DubinsMod2Pi(Alpha - Tmp0), P, DubinsMod2Pi(Beta - Tmp0));
+            }
+
+            Tmp0 = (6.0 - Dsq + (2.0 * Cab) + (2.0 * D * (Sa - Sb))) / 8.0;
+            Double Phi = Math.Atan2(Ca - Cb, D - Sa + Sb);
             if (Math.Abs(Tmp0) <= 1.0)
             {
                 Double P = DubinsMod2Pi((2.0 * Math.PI) - Math.Acos(Tmp0));
-                Double T = DubinsMod2Pi(alpha - Phi + DubinsMod2Pi(P / 2.0));
-                Out["RLR"] = (T, P, DubinsMod2Pi(alpha - beta - T + DubinsMod2Pi(P)));
+                Double T = DubinsMod2Pi(Alpha - Phi + DubinsMod2Pi(P / 2.0));
+                Out["RLR"] = (T, P, DubinsMod2Pi(Alpha - Beta - T + DubinsMod2Pi(P)));
             }
 
-            Tmp0 = (6.0 - dsq + (2.0 * cab) + (2.0 * d * (sb - sa))) / 8.0;
-            Phi = Math.Atan2(ca - cb, d + sa - sb);
+            Tmp0 = (6.0 - Dsq + (2.0 * Cab) + (2.0 * D * (Sb - Sa))) / 8.0;
+            Phi = Math.Atan2(Ca - Cb, D + Sa - Sb);
             if (Math.Abs(Tmp0) <= 1.0)
             {
                 Double P = DubinsMod2Pi((2.0 * Math.PI) - Math.Acos(Tmp0));
-                Double T = DubinsMod2Pi(-alpha - Phi + (P / 2.0));
-                Out["LRL"] = (T, P, DubinsMod2Pi(DubinsMod2Pi(beta) - alpha - T + DubinsMod2Pi(P)));
+                Double T = DubinsMod2Pi(-Alpha - Phi + (P / 2.0));
+                Out["LRL"] = (T, P, DubinsMod2Pi(DubinsMod2Pi(Beta) - Alpha - T + DubinsMod2Pi(P)));
             }
 
             return Out;
@@ -1722,37 +1725,37 @@ namespace HaulBuilder
         /// <summary>
         /// Samples a Dubins path; returns intermediate points (excludes exact start).
         /// </summary>
-        /// <param name="q0">Start pose (world x, y, math heading).</param>
-        /// <param name="rho">Turn radius in metres.</param>
-        /// <param name="typ">Dubins word name.</param>
-        /// <param name="parameters">Normalized (t, p, q) segment lengths.</param>
-        /// <param name="stepM">Sample spacing in metres.</param>
+        /// <param name="Q0">Start pose (world x, y, math heading).</param>
+        /// <param name="Rho">Turn radius in metres.</param>
+        /// <param name="Typ">Dubins word name.</param>
+        /// <param name="Parameters">Normalized (t, p, q) segment lengths.</param>
+        /// <param name="StepM">Sample spacing in metres.</param>
         /// <returns>Sampled waypoints excluding the exact start.</returns>
         static private List<(Double X, Double Y)> DubinsSample
             (
-            (Double X, Double Y, Double Th) q0,
-            Double rho,
-            String typ,
-            (Double T, Double P, Double Q) parameters,
-            Double stepM
+            (Double X, Double Y, Double Th) Q0,
+            Double Rho,
+            String Typ,
+            (Double T, Double P, Double Q) Parameters,
+            Double StepM
             )
         {
-            String[] Types = DubinsDir[typ];
-            Double[] Params = { parameters.T, parameters.P, parameters.Q };
-            Double Length = (parameters.T + parameters.P + parameters.Q) * rho;
+            String[] Types = DubinsDir[Typ];
+            Double[] Params = { Parameters.T, Parameters.P, Parameters.Q };
+            Double Length = (Parameters.T + Parameters.P + Parameters.Q) * Rho;
             List<(Double X, Double Y)> Pts = new List<(Double X, Double Y)>();
-            if (Length < 1e-9)
+            if (Length < Constants.NUMERIC_COMPARISON_TOLERANCE)
             {
                 return Pts;
             }
 
             // Dense enough that sampled triples on arc/straight junctions stay near R.
-            Double Step = Math.Min(Math.Max(stepM, 1e-6), Math.Max(rho / 12.0, 0.25));
-            Int32 N = Math.Max(24, (Int32)Math.Ceiling(Length / Math.Max(Step, 1e-6)));
-            (Double X, Double Y, Double Th) Qi = (0.0, 0.0, q0.Th);
+            Double Step = Math.Min(Math.Max(StepM, Constants.GEOMETRY_COMPARISON_TOLERANCE), Math.Max(Rho / 12.0, Constants.QUARTER_SCALE));
+            Int32 N = Math.Max(24, (Int32)Math.Ceiling(Length / Math.Max(Step, Constants.GEOMETRY_COMPARISON_TOLERANCE)));
+            (Double X, Double Y, Double Th) Qi = (0.0, 0.0, Q0.Th);
             for (Int32 I = 1; I <= N; I += 1)
             {
-                Double Tp = (Length * (I / (Double)N)) / rho;
+                Double Tp = (Length * (I / (Double)N)) / Rho;
                 (Double X, Double Y, Double Th) Q = Qi;
                 Double Rem = Tp;
                 for (Int32 Seg = 0; Seg < 3; Seg += 1)
@@ -1760,7 +1763,7 @@ namespace HaulBuilder
                     Double P = Params[Seg];
                     String Name = Types[Seg];
                     // Consume whole segments until the sample falls inside one.
-                    if (Rem <= (P + 1e-12))
+                    if (Rem <= (P + Constants.STRICT_NUMERIC_COMPARISON_TOLERANCE))
                     {
                         Q = DubinsSegmentStep(Rem, Q, Name);
                         break;
@@ -1770,7 +1773,7 @@ namespace HaulBuilder
                     Rem -= P;
                 }
 
-                Pts.Add((Q.X * rho + q0.X, Q.Y * rho + q0.Y));
+                Pts.Add((Q.X * Rho + Q0.X, Q.Y * Rho + Q0.Y));
             }
 
             return Pts;
@@ -1779,49 +1782,49 @@ namespace HaulBuilder
         /// <summary>
         /// Shortest Dubins path (Walker); optional CCC-only or CSC-only word filters.
         /// </summary>
-        /// <param name="sx">Start easting.</param>
-        /// <param name="sy">Start northing.</param>
-        /// <param name="stheta">Start math heading.</param>
-        /// <param name="ex">End easting.</param>
-        /// <param name="ey">End northing.</param>
-        /// <param name="etheta">End math heading.</param>
-        /// <param name="radius">Turn radius in metres.</param>
-        /// <param name="sampleM">Sample spacing in metres.</param>
-        /// <param name="cccOnly">When true, only LRL/RLR words are considered.</param>
-        /// <param name="cscOnly">When true (and not <paramref name="cccOnly"/>), only same-side CSC (LSL/RSR).</param>
-        /// <param name="cscFamilyOnly">When true (and not CCC/same-side-only), all four CSC words — no CCC bulbs.</param>
-        /// <param name="field">Optional field mask; when set, prefer paths that stay in-field.</param>
-        /// <param name="headingInDeg">Inbound compass heading for CCC forward-excursion tiebreak.</param>
+        /// <param name="Sx">Start easting.</param>
+        /// <param name="Sy">Start northing.</param>
+        /// <param name="Stheta">Start math heading.</param>
+        /// <param name="Ex">End easting.</param>
+        /// <param name="Ey">End northing.</param>
+        /// <param name="Etheta">End math heading.</param>
+        /// <param name="Radius">Turn radius in metres.</param>
+        /// <param name="SampleM">Sample spacing in metres.</param>
+        /// <param name="CccOnly">When true, only LRL/RLR words are considered.</param>
+        /// <param name="CscOnly">When true (and not <paramref name="CccOnly"/>), only same-side CSC (LSL/RSR).</param>
+        /// <param name="CscFamilyOnly">When true (and not CCC/same-side-only), all four CSC words — no CCC bulbs.</param>
+        /// <param name="Field">Optional field mask; when set, prefer paths that stay in-field.</param>
+        /// <param name="HeadingInDeg">Inbound compass heading for CCC forward-excursion tiebreak.</param>
         /// <returns>Intermediate waypoints, empty list when radius is tiny, or null when no word applies.</returns>
         static private List<(Double X, Double Y)>? DubinsShortest
             (
-            Double sx,
-            Double sy,
-            Double stheta,
-            Double ex,
-            Double ey,
-            Double etheta,
-            Double radius,
-            Double sampleM,
-            Boolean cccOnly = false,
-            Boolean cscOnly = false,
-            Grid? field = null,
-            Double? headingInDeg = null,
-            Boolean cscFamilyOnly = false
+            Double Sx,
+            Double Sy,
+            Double Stheta,
+            Double Ex,
+            Double Ey,
+            Double Etheta,
+            Double Radius,
+            Double SampleM,
+            Boolean CccOnly = false,
+            Boolean CscOnly = false,
+            Grid? Field = null,
+            Double? HeadingInDeg = null,
+            Boolean CscFamilyOnly = false
             )
         {
-            if (radius <= 1e-9)
+            if (Radius <= Constants.NUMERIC_COMPARISON_TOLERANCE)
             {
                 return new List<(Double X, Double Y)>();
             }
 
-            Double Dx = ex - sx;
-            Double Dy = ey - sy;
+            Double Dx = Ex - Sx;
+            Double Dy = Ey - Sy;
             Double D = Math.Sqrt((Dx * Dx) + (Dy * Dy));
-            Double DistN = D / radius;
+            Double DistN = D / Radius;
             Double Theta = (DistN > 0.0) ? DubinsMod2Pi(Math.Atan2(Dy, Dx)) : 0.0;
-            Double Alpha = DubinsMod2Pi(stheta - Theta);
-            Double Beta = DubinsMod2Pi(etheta - Theta);
+            Double Alpha = DubinsMod2Pi(Stheta - Theta);
+            Double Beta = DubinsMod2Pi(Etheta - Theta);
             Double Sa = Math.Sin(Alpha);
             Double Sb = Math.Sin(Beta);
             Double Ca = Math.Cos(Alpha);
@@ -1829,7 +1832,7 @@ namespace HaulBuilder
             Double Cab = Math.Cos(Alpha - Beta);
             Dictionary<String, (Double T, Double P, Double Q)> Words =
                 DubinsWords(Alpha, Beta, DistN, Sa, Sb, Ca, Cb, Cab, DistN * DistN);
-            if (cccOnly)
+            if (CccOnly)
             {
                 // Intent: agricultural keyhole uses only CCC (LRL/RLR), not CSC side loops.
                 Dictionary<String, (Double T, Double P, Double Q)> Filtered =
@@ -1844,7 +1847,7 @@ namespace HaulBuilder
 
                 Words = Filtered;
             }
-            else if (cscOnly)
+            else if (CscOnly)
             {
                 // Intent: soft pinches use same-side CSC (LSL/RSR) only — LSR/RSL can loop ~2πR.
                 Dictionary<String, (Double T, Double P, Double Q)> Filtered =
@@ -1859,7 +1862,7 @@ namespace HaulBuilder
 
                 Words = Filtered;
             }
-            else if (cscFamilyOnly)
+            else if (CscFamilyOnly)
             {
                 // Intent: lane-change transit needs LSR/RSL but must not pick a CCC bulb.
                 Dictionary<String, (Double T, Double P, Double Q)> Filtered =
@@ -1887,35 +1890,35 @@ namespace HaulBuilder
             Double BestExcursion = Double.PositiveInfinity;
             Double BestLen = Double.PositiveInfinity;
             (Double X, Double Y)? Fwd = null;
-            if (headingInDeg.HasValue)
+            if (HeadingInDeg.HasValue)
             {
-                Fwd = ForwardEn(headingInDeg.Value);
+                Fwd = ForwardEn(HeadingInDeg.Value);
             }
 
             foreach (KeyValuePair<String, (Double T, Double P, Double Q)> Kv in Words)
             {
-                Double Len = (Kv.Value.T + Kv.Value.P + Kv.Value.Q) * radius;
-                List<(Double X, Double Y)> Pts = DubinsSample((sx, sy, stheta), radius, Kv.Key, Kv.Value, sampleM);
-                if ((Pts.Count > 0) && (Dist(Pts[Pts.Count - 1], (ex, ey)) < 1e-6))
+                Double Len = (Kv.Value.T + Kv.Value.P + Kv.Value.Q) * Radius;
+                List<(Double X, Double Y)> Pts = DubinsSample((Sx, Sy, Stheta), Radius, Kv.Key, Kv.Value, SampleM);
+                if ((Pts.Count > 0) && (Dist(Pts[Pts.Count - 1], (Ex, Ey)) < Constants.GEOMETRY_COMPARISON_TOLERANCE))
                 {
                     Pts.RemoveAt(Pts.Count - 1);
                 }
 
                 Int32 Outside = 0;
                 Double Excursion = 0.0;
-                if (field != null)
+                if (Field != null)
                 {
-                    Double ClearM = Math.Max(0.4 * field.GridSizeM, 0.5);
+                    Double ClearM = Math.Max(0.4 * Field.GridSizeM, Constants.HALF_SCALE);
                     foreach ((Double X, Double Y) P in Pts)
                     {
-                        if (!PointInFieldWithClearance(field, P.X, P.Y, ClearM))
+                        if (!PointInFieldWithClearance(Field, P.X, P.Y, ClearM))
                         {
                             Outside += 1;
                         }
 
                         if (Fwd.HasValue)
                         {
-                            Double Proj = ((P.X - sx) * Fwd.Value.X) + ((P.Y - sy) * Fwd.Value.Y);
+                            Double Proj = ((P.X - Sx) * Fwd.Value.X) + ((P.Y - Sy) * Fwd.Value.Y);
                             if (Proj > Excursion)
                             {
                                 Excursion = Proj;
@@ -1927,7 +1930,7 @@ namespace HaulBuilder
                 {
                     foreach ((Double X, Double Y) P in Pts)
                     {
-                        Double Proj = ((P.X - sx) * Fwd.Value.X) + ((P.Y - sy) * Fwd.Value.Y);
+                        Double Proj = ((P.X - Sx) * Fwd.Value.X) + ((P.Y - Sy) * Fwd.Value.Y);
                         if (Proj > Excursion)
                         {
                             Excursion = Proj;
@@ -1936,9 +1939,9 @@ namespace HaulBuilder
                 }
 
                 Boolean Better = (Outside < BestOutside)
-                    || ((Outside == BestOutside) && (Len < (BestLen - 1e-6)))
+                    || ((Outside == BestOutside) && (Len < (BestLen - Constants.GEOMETRY_COMPARISON_TOLERANCE)))
                     || ((Outside == BestOutside)
-                        && (Math.Abs(Len - BestLen) <= 1e-6)
+                        && (Math.Abs(Len - BestLen) <= Constants.GEOMETRY_COMPARISON_TOLERANCE)
                         && (Excursion < BestExcursion));
                 if (Better)
                 {
@@ -1955,44 +1958,44 @@ namespace HaulBuilder
         /// <summary>
         /// Shortest Dubins CSC path for non-keyhole soft bends.
         /// </summary>
-        /// <param name="sx">Start easting.</param>
-        /// <param name="sy">Start northing.</param>
-        /// <param name="stheta">Start math heading.</param>
-        /// <param name="ex">End easting.</param>
-        /// <param name="ey">End northing.</param>
-        /// <param name="etheta">End math heading.</param>
-        /// <param name="radius">Turn radius in metres.</param>
+        /// <param name="Sx">Start easting.</param>
+        /// <param name="Sy">Start northing.</param>
+        /// <param name="Stheta">Start math heading.</param>
+        /// <param name="Ex">End easting.</param>
+        /// <param name="Ey">End northing.</param>
+        /// <param name="Etheta">End math heading.</param>
+        /// <param name="Radius">Turn radius in metres.</param>
         /// <returns>Intermediate waypoints, or null when no path exists.</returns>
         static private List<(Double X, Double Y)>? DubinsCsc
             (
-            Double sx,
-            Double sy,
-            Double stheta,
-            Double ex,
-            Double ey,
-            Double etheta,
-            Double radius
+            Double Sx,
+            Double Sy,
+            Double Stheta,
+            Double Ex,
+            Double Ey,
+            Double Etheta,
+            Double Radius
             )
         {
             return DubinsShortest(
-                sx, sy, stheta, ex, ey, etheta, radius, Math.Max(radius / 8.0, 0.5), false, true);
+                Sx, Sy, Stheta, Ex, Ey, Etheta, Radius, Math.Max(Radius / 8.0, Constants.HALF_SCALE), false, true);
         }
 
         /// <summary>
         /// Polyline length in metres (including the start→first leg).
         /// </summary>
-        /// <param name="start">Path start.</param>
-        /// <param name="pts">Intermediate waypoints.</param>
+        /// <param name="Start">Path start.</param>
+        /// <param name="Pts">Intermediate waypoints.</param>
         /// <returns>Total length in metres.</returns>
         static private Double PolylineLengthM
             (
-            (Double X, Double Y) start,
-            List<(Double X, Double Y)> pts
+            (Double X, Double Y) Start,
+            List<(Double X, Double Y)> Pts
             )
         {
             Double Len = 0.0;
-            (Double X, Double Y) Prev = start;
-            foreach ((Double X, Double Y) P in pts)
+            (Double X, Double Y) Prev = Start;
+            foreach ((Double X, Double Y) P in Pts)
             {
                 Len += Dist(Prev, P);
                 Prev = P;
@@ -2004,61 +2007,61 @@ namespace HaulBuilder
         /// <summary>
         /// Classic constant-R corner fillet tangent to inbound and outbound headings.
         /// </summary>
-        /// <param name="corner">Apex (coverage corner).</param>
-        /// <param name="headingInDeg">Inbound compass heading.</param>
-        /// <param name="end">Next coverage point (along outbound).</param>
-        /// <param name="headingOutDeg">Outbound compass heading.</param>
-        /// <param name="turnRadiusM">Turn radius in metres.</param>
-        /// <param name="sampleM">Sample spacing in metres.</param>
-        /// <param name="inboundLenM">Length available on the inbound leg (A→corner).</param>
-        /// <param name="tangentIn">Inbound tangent point (caller should pin corner steering here).</param>
+        /// <param name="Corner">Apex (coverage corner).</param>
+        /// <param name="HeadingInDeg">Inbound compass heading.</param>
+        /// <param name="End">Next coverage point (along outbound).</param>
+        /// <param name="HeadingOutDeg">Outbound compass heading.</param>
+        /// <param name="TurnRadiusM">Turn radius in metres.</param>
+        /// <param name="SampleM">Sample spacing in metres.</param>
+        /// <param name="InboundLenM">Length available on the inbound leg (A→corner).</param>
+        /// <param name="TangentIn">Inbound tangent point (caller should pin corner steering here).</param>
         /// <returns>MOVE samples from after tangentIn through the arc to end, or null if the fillet will not fit.</returns>
         static private List<(Double X, Double Y)>? ClassicCornerFillet
             (
-            (Double X, Double Y) corner,
-            Double headingInDeg,
-            (Double X, Double Y) end,
-            Double headingOutDeg,
-            Double turnRadiusM,
-            Double sampleM,
-            Double inboundLenM,
-            out (Double X, Double Y) tangentIn
+            (Double X, Double Y) Corner,
+            Double HeadingInDeg,
+            (Double X, Double Y) End,
+            Double HeadingOutDeg,
+            Double TurnRadiusM,
+            Double SampleM,
+            Double InboundLenM,
+            out (Double X, Double Y) TangentIn
             )
         {
-            tangentIn = corner;
-            (Double X, Double Y) U = ForwardEn(headingInDeg);
-            (Double X, Double Y) V = ForwardEn(headingOutDeg);
+            TangentIn = Corner;
+            (Double X, Double Y) U = ForwardEn(HeadingInDeg);
+            (Double X, Double Y) V = ForwardEn(HeadingOutDeg);
             Double Cross = (U.X * V.Y) - (U.Y * V.X);
             Double Dot = Math.Max(-1.0, Math.Min(1.0, (U.X * V.X) + (U.Y * V.Y)));
             Double Phi = Math.Atan2(Cross, Dot);
-            if (Math.Abs(Phi) < 1e-3)
+            if (Math.Abs(Phi) < Constants.PATH_JOIN_COMPARISON_TOLERANCE)
             {
                 return null;
             }
 
             // Intent: tangent length R·tan(φ/2); both legs must be long enough to host it.
-            Double Half = Math.Abs(Phi) * 0.5;
+            Double Half = Math.Abs(Phi) * Constants.HALF_SCALE;
             Double TanHalf = Math.Tan(Half);
-            if (TanHalf < 1e-9)
+            if (TanHalf < Constants.NUMERIC_COMPARISON_TOLERANCE)
             {
                 return null;
             }
 
-            Double TangLen = turnRadiusM * TanHalf;
-            if ((inboundLenM < (TangLen - 1e-6)) || (Dist(corner, end) < (TangLen - 1e-6)))
+            Double TangLen = TurnRadiusM * TanHalf;
+            if ((InboundLenM < (TangLen - Constants.GEOMETRY_COMPARISON_TOLERANCE)) || (Dist(Corner, End) < (TangLen - Constants.GEOMETRY_COMPARISON_TOLERANCE)))
             {
                 return null;
             }
 
-            tangentIn = (corner.X - (TangLen * U.X), corner.Y - (TangLen * U.Y));
-            (Double X, Double Y) TangentOut = (corner.X + (TangLen * V.X), corner.Y + (TangLen * V.Y));
+            TangentIn = (Corner.X - (TangLen * U.X), Corner.Y - (TangLen * U.Y));
+            (Double X, Double Y) TangentOut = (Corner.X + (TangLen * V.X), Corner.Y + (TangLen * V.Y));
             Boolean Left = Phi > 0.0;
             Double Rx = Left ? -U.Y : U.Y;
             Double Ry = Left ? U.X : -U.X;
             (Double X, Double Y) Center = (
-                tangentIn.X + (turnRadiusM * Rx),
-                tangentIn.Y + (turnRadiusM * Ry));
-            Double A0 = Math.Atan2(tangentIn.Y - Center.Y, tangentIn.X - Center.X);
+                TangentIn.X + (TurnRadiusM * Rx),
+                TangentIn.Y + (TurnRadiusM * Ry));
+            Double A0 = Math.Atan2(TangentIn.Y - Center.Y, TangentIn.X - Center.X);
             Double A1 = Math.Atan2(TangentOut.Y - Center.Y, TangentOut.X - Center.X);
             Double Sweep = A1 - A0;
             if (Left)
@@ -2076,24 +2079,24 @@ namespace HaulBuilder
                 }
             }
 
-            Double ArcLen = Math.Abs(Sweep) * turnRadiusM;
-            Double Step = Math.Max(sampleM, 1e-6);
+            Double ArcLen = Math.Abs(Sweep) * TurnRadiusM;
+            Double Step = Math.Max(SampleM, Constants.GEOMETRY_COMPARISON_TOLERANCE);
             Int32 N = Math.Max(4, (Int32)Math.Ceiling(ArcLen / Step));
             List<(Double X, Double Y)> Pts = new List<(Double X, Double Y)>();
             for (Int32 I = 1; I <= N; I += 1)
             {
                 Double T = I / (Double)N;
                 Double A = A0 + (T * Sweep);
-                Pts.Add((Center.X + (turnRadiusM * Math.Cos(A)), Center.Y + (turnRadiusM * Math.Sin(A))));
+                Pts.Add((Center.X + (TurnRadiusM * Math.Cos(A)), Center.Y + (TurnRadiusM * Math.Sin(A))));
             }
 
             // TangentOut → end is along outbound heading (no kink).
-            if (Dist(TangentOut, end) > 1e-6)
+            if (Dist(TangentOut, End) > Constants.GEOMETRY_COMPARISON_TOLERANCE)
             {
-                Pts.AddRange(SampleStraight(TangentOut, end, Step));
+                Pts.AddRange(SampleStraight(TangentOut, End, Step));
             }
 
-            if ((Pts.Count > 0) && (Dist(Pts[Pts.Count - 1], end) < 1e-6))
+            if ((Pts.Count > 0) && (Dist(Pts[Pts.Count - 1], End) < Constants.GEOMETRY_COMPARISON_TOLERANCE))
             {
                 Pts.RemoveAt(Pts.Count - 1);
             }
@@ -2104,30 +2107,30 @@ namespace HaulBuilder
         /// <summary>
         /// Last-resort same-side CSC when a classic corner fillet will not fit.
         /// </summary>
-        /// <param name="start">Start point.</param>
-        /// <param name="headingInDeg">Inbound compass heading.</param>
-        /// <param name="end">End point.</param>
-        /// <param name="headingOutDeg">Outbound compass heading.</param>
-        /// <param name="turnRadiusM">Turn radius in metres.</param>
-        /// <param name="sampleM">Sample spacing in metres.</param>
-        /// <param name="field">Optional field mask; prefer in-field chirality when set.</param>
+        /// <param name="Start">Start point.</param>
+        /// <param name="HeadingInDeg">Inbound compass heading.</param>
+        /// <param name="End">End point.</param>
+        /// <param name="HeadingOutDeg">Outbound compass heading.</param>
+        /// <param name="TurnRadiusM">Turn radius in metres.</param>
+        /// <param name="SampleM">Sample spacing in metres.</param>
+        /// <param name="Field">Optional field mask; prefer in-field chirality when set.</param>
         /// <returns>Intermediate MOVE waypoints, or empty when no CSC word applies.</returns>
         static private List<(Double X, Double Y)> SoftBendFillet
             (
-            (Double X, Double Y) start,
-            Double headingInDeg,
-            (Double X, Double Y) end,
-            Double headingOutDeg,
-            Double turnRadiusM,
-            Double sampleM,
-            Grid? field = null
+            (Double X, Double Y) Start,
+            Double HeadingInDeg,
+            (Double X, Double Y) End,
+            Double HeadingOutDeg,
+            Double TurnRadiusM,
+            Double SampleM,
+            Grid? Field = null
             )
         {
             // Intent: never SampleStraight here — a chord from the apex keeps the sharp bend.
-            Double St = CompassToMath(headingInDeg);
-            Double Et = CompassToMath(headingOutDeg);
+            Double St = CompassToMath(HeadingInDeg);
+            Double Et = CompassToMath(HeadingOutDeg);
             List<(Double X, Double Y)>? Pts = DubinsShortest(
-                start.X, start.Y, St, end.X, end.Y, Et, turnRadiusM, sampleM, false, true, field, headingInDeg);
+                Start.X, Start.Y, St, End.X, End.Y, Et, TurnRadiusM, SampleM, false, true, Field, HeadingInDeg);
             if ((Pts != null) && (Pts.Count > 0))
             {
                 return Pts;
@@ -2141,23 +2144,23 @@ namespace HaulBuilder
         /// </summary>
         static private List<(Double X, Double Y)> SampleStraight
             (
-            (Double X, Double Y) p0,
-            (Double X, Double Y) p1,
-            Double step
+            (Double X, Double Y) P0,
+            (Double X, Double Y) P1,
+            Double Step
             )
         {
-            Double D = Dist(p0, p1);
+            Double D = Dist(P0, P1);
             List<(Double X, Double Y)> Out = new List<(Double X, Double Y)>();
-            if (D < 1e-9)
+            if (D < Constants.NUMERIC_COMPARISON_TOLERANCE)
             {
                 return Out;
             }
 
-            Int32 N = Math.Max(1, (Int32)Math.Ceiling(D / Math.Max(step, 1e-6)));
+            Int32 N = Math.Max(1, (Int32)Math.Ceiling(D / Math.Max(Step, Constants.GEOMETRY_COMPARISON_TOLERANCE)));
             for (Int32 i = 1; i <= N; i += 1)
             {
                 Double T = i / (Double)N;
-                Out.Add((p0.X + ((p1.X - p0.X) * T), p0.Y + ((p1.Y - p0.Y) * T)));
+                Out.Add((P0.X + ((P1.X - P0.X) * T), P0.Y + ((P1.Y - P0.Y) * T)));
             }
 
             return Out;
@@ -2166,56 +2169,56 @@ namespace HaulBuilder
         /// <summary>
         /// Unit forward vector (east, north) for a compass heading.
         /// </summary>
-        /// <param name="headingDeg">Compass heading in degrees.</param>
+        /// <param name="HeadingDeg">Compass heading in degrees.</param>
         /// <returns>Unit forward vector.</returns>
         static private (Double X, Double Y) ForwardEn
             (
-            Double headingDeg
+            Double HeadingDeg
             )
         {
-            Double Rad = DegreesToRadians(headingDeg);
+            Double Rad = DegreesToRadians(HeadingDeg);
             return (Math.Sin(Rad), Math.Cos(Rad));
         }
 
         /// <summary>
         /// Appends samples along A→B (excludes A; optionally includes B).
         /// </summary>
-        /// <param name="outPts">Destination list.</param>
-        /// <param name="a">Segment start (not appended).</param>
-        /// <param name="b">Segment end.</param>
-        /// <param name="sampleM">Nominal sample spacing in metres.</param>
-        /// <param name="includeEnd">When true, appends <paramref name="b"/>.</param>
+        /// <param name="OutPts">Destination list.</param>
+        /// <param name="A">Segment start (not appended).</param>
+        /// <param name="B">Segment end.</param>
+        /// <param name="SampleM">Nominal sample spacing in metres.</param>
+        /// <param name="IncludeEnd">When true, appends <paramref name="B"/>.</param>
         static private void AppendLineSamples
             (
-            List<(Double X, Double Y)> outPts,
-            (Double X, Double Y) a,
-            (Double X, Double Y) b,
-            Double sampleM,
-            Boolean includeEnd
+            List<(Double X, Double Y)> OutPts,
+            (Double X, Double Y) A,
+            (Double X, Double Y) B,
+            Double SampleM,
+            Boolean IncludeEnd
             )
         {
-            Double Len = Dist(a, b);
-            if (Len < 1e-9)
+            Double Len = Dist(A, B);
+            if (Len < Constants.NUMERIC_COMPARISON_TOLERANCE)
             {
-                if (includeEnd)
+                if (IncludeEnd)
                 {
-                    outPts.Add(b);
+                    OutPts.Add(B);
                 }
 
                 return;
             }
 
-            Double Step = Math.Max(sampleM, 1e-3);
+            Double Step = Math.Max(SampleM, Constants.PATH_JOIN_COMPARISON_TOLERANCE);
             Int32 N = Math.Max(1, (Int32)Math.Ceiling(Len / Step));
             for (Int32 I = 1; I < N; I += 1)
             {
                 Double T = (Double)I / (Double)N;
-                outPts.Add((a.X + ((b.X - a.X) * T), a.Y + ((b.Y - a.Y) * T)));
+                OutPts.Add((A.X + ((B.X - A.X) * T), A.Y + ((B.Y - A.Y) * T)));
             }
 
-            if (includeEnd)
+            if (IncludeEnd)
             {
-                outPts.Add(b);
+                OutPts.Add(B);
             }
         }
 
@@ -2226,26 +2229,26 @@ namespace HaulBuilder
         /// Uses a small clearance ring (~0.4 cell) so accepted headlands stay visibly inside
         /// the painted field, not merely on the last valid cell center.
         /// </remarks>
-        /// <param name="pts">Waypoints to test.</param>
-        /// <param name="field">Field mask; null means treat all as in-field.</param>
+        /// <param name="Pts">Waypoints to test.</param>
+        /// <param name="Field">Field mask; null means treat all as in-field.</param>
         /// <returns>Outside sample count.</returns>
         static private Int32 CountOutsideField
             (
-            List<(Double X, Double Y)> pts,
-            Grid? field
+            List<(Double X, Double Y)> Pts,
+            Grid? Field
             )
         {
-            if (field == null)
+            if (Field == null)
             {
                 return 0;
             }
 
             // Intent: keep guidance strokes off the black void in rendered PNGs.
-            Double ClearM = Math.Max(0.4 * field.GridSizeM, 0.5);
+            Double ClearM = Math.Max(0.4 * Field.GridSizeM, Constants.HALF_SCALE);
             Int32 Outside = 0;
-            foreach ((Double X, Double Y) P in pts)
+            foreach ((Double X, Double Y) P in Pts)
             {
-                if (!PointInFieldWithClearance(field, P.X, P.Y, ClearM))
+                if (!PointInFieldWithClearance(Field, P.X, P.Y, ClearM))
                 {
                     Outside += 1;
                 }
@@ -2255,27 +2258,27 @@ namespace HaulBuilder
         }
 
         /// <summary>
-        /// True when <paramref name="x"/>,<paramref name="y"/> and a clearance ring stay in-field.
+        /// True when <paramref name="X"/>,<paramref name="Y"/> and a clearance ring stay in-field.
         /// </summary>
-        /// <param name="field">Field mask.</param>
-        /// <param name="x">Easting in metres.</param>
-        /// <param name="y">Northing in metres.</param>
-        /// <param name="clearanceM">Ring radius in metres (0 = point-only).</param>
+        /// <param name="Field">Field mask.</param>
+        /// <param name="X">Easting in metres.</param>
+        /// <param name="Y">Northing in metres.</param>
+        /// <param name="ClearanceM">Ring radius in metres (0 = point-only).</param>
         /// <returns>True when the point is safely inside the mask.</returns>
         static private Boolean PointInFieldWithClearance
             (
-            Grid field,
-            Double x,
-            Double y,
-            Double clearanceM
+            Grid Field,
+            Double X,
+            Double Y,
+            Double ClearanceM
             )
         {
-            if (!field.ContainsWorldXy(x, y))
+            if (!Field.ContainsWorldXy(X, Y))
             {
                 return false;
             }
 
-            if (clearanceM <= 1e-9)
+            if (ClearanceM <= Constants.NUMERIC_COMPARISON_TOLERANCE)
             {
                 return true;
             }
@@ -2283,9 +2286,9 @@ namespace HaulBuilder
             for (Int32 I = 0; I < 8; I += 1)
             {
                 Double Ang = I * (Math.PI / 4.0);
-                Double Px = x + (clearanceM * Math.Cos(Ang));
-                Double Py = y + (clearanceM * Math.Sin(Ang));
-                if (!field.ContainsWorldXy(Px, Py))
+                Double Px = X + (ClearanceM * Math.Cos(Ang));
+                Double Py = Y + (ClearanceM * Math.Sin(Ang));
+                if (!Field.ContainsWorldXy(Px, Py))
                 {
                     return false;
                 }
@@ -2302,29 +2305,29 @@ namespace HaulBuilder
         /// only needs ~R of forward room and can loop left/right into available field — the
         /// shorter purple-style path when a symmetric bulb would leave the mask.
         /// </remarks>
-        /// <param name="start">Coverage tip (inbound).</param>
-        /// <param name="headingInDeg">Inbound compass heading.</param>
-        /// <param name="end">Reverse-lane tip.</param>
-        /// <param name="headingOutDeg">Outbound compass heading.</param>
-        /// <param name="turnRadiusM">Turn radius in metres.</param>
-        /// <param name="sampleM">Sample spacing in metres.</param>
-        /// <param name="field">Optional field mask.</param>
+        /// <param name="Start">Coverage tip (inbound).</param>
+        /// <param name="HeadingInDeg">Inbound compass heading.</param>
+        /// <param name="End">Reverse-lane tip.</param>
+        /// <param name="HeadingOutDeg">Outbound compass heading.</param>
+        /// <param name="TurnRadiusM">Turn radius in metres.</param>
+        /// <param name="SampleM">Sample spacing in metres.</param>
+        /// <param name="Field">Optional field mask.</param>
         /// <returns>Best side-arc path, or null when none is feasible.</returns>
         static private List<(Double X, Double Y)>? GeometricSideKeyhole
             (
-            (Double X, Double Y) start,
-            Double headingInDeg,
-            (Double X, Double Y) end,
-            Double headingOutDeg,
-            Double turnRadiusM,
-            Double sampleM,
-            Grid? field
+            (Double X, Double Y) Start,
+            Double HeadingInDeg,
+            (Double X, Double Y) End,
+            Double HeadingOutDeg,
+            Double TurnRadiusM,
+            Double SampleM,
+            Grid? Field
             )
         {
-            (Double X, Double Y) U = ForwardEn(headingInDeg);
-            Double Step = Math.Max(sampleM / turnRadiusM, 0.08);
-            Double MaxF = 1.5 * turnRadiusM;
-            Double FStep = Math.Max(sampleM, turnRadiusM * 0.2);
+            (Double X, Double Y) U = ForwardEn(HeadingInDeg);
+            Double Step = Math.Max(SampleM / TurnRadiusM, 0.08);
+            Double MaxF = 1.5 * TurnRadiusM;
+            Double FStep = Math.Max(SampleM, TurnRadiusM * 0.2);
 
             List<(Double X, Double Y)>? BestPts = null;
             Int32 BestOutside = Int32.MaxValue;
@@ -2333,17 +2336,17 @@ namespace HaulBuilder
             for (Int32 Side = -1; Side <= 1; Side += 2)
             {
                 (Double X, Double Y) N = ((-U.Y) * Side, U.X * Side);
-                for (Double F = 0.0; F <= (MaxF + 1e-9); F += FStep)
+                for (Double F = 0.0; F <= (MaxF + Constants.NUMERIC_COMPARISON_TOLERANCE); F += FStep)
                 {
-                    (Double X, Double Y) Tip = (start.X + (F * U.X), start.Y + (F * U.Y));
-                    Double ClearM = (field != null) ? Math.Max(0.4 * field.GridSizeM, 0.5) : 0.0;
-                    if ((field != null) && !PointInFieldWithClearance(field, Tip.X, Tip.Y, ClearM))
+                    (Double X, Double Y) Tip = (Start.X + (F * U.X), Start.Y + (F * U.Y));
+                    Double ClearM = (Field != null) ? Math.Max(0.4 * Field.GridSizeM, Constants.HALF_SCALE) : 0.0;
+                    if ((Field != null) && !PointInFieldWithClearance(Field, Tip.X, Tip.Y, ClearM))
                     {
                         break;
                     }
 
-                    (Double X, Double Y) C = (Tip.X + (turnRadiusM * N.X), Tip.Y + (turnRadiusM * N.Y));
-                    if ((field != null) && !PointInFieldWithClearance(field, C.X, C.Y, ClearM))
+                    (Double X, Double Y) C = (Tip.X + (TurnRadiusM * N.X), Tip.Y + (TurnRadiusM * N.Y));
+                    if ((Field != null) && !PointInFieldWithClearance(Field, C.X, C.Y, ClearM))
                     {
                         continue;
                     }
@@ -2351,14 +2354,14 @@ namespace HaulBuilder
                     Double Ang0 = Math.Atan2(Tip.Y - C.Y, Tip.X - C.X);
                     Double Dir = (Side > 0) ? 1.0 : -1.0;
                     List<(Double X, Double Y)> Spur = new List<(Double X, Double Y)>();
-                    if (F > 1e-9)
+                    if (F > Constants.NUMERIC_COMPARISON_TOLERANCE)
                     {
-                        AppendLineSamples(Spur, start, Tip, sampleM, includeEnd: true);
+                        AppendLineSamples(Spur, Start, Tip, SampleM, IncludeEnd: true);
                     }
 
                     List<(Double X, Double Y)>? BestArc = null;
                     Double BestArcScore = Double.PositiveInfinity;
-                    Double BestArcHeading = headingOutDeg;
+                    Double BestArcHeading = HeadingOutDeg;
                     Double SweepMin = 0.85 * Math.PI;
                     Double SweepMax = 1.75 * Math.PI;
                     Int32 MaxK = (Int32)Math.Ceiling(SweepMax / Step) + 1;
@@ -2377,26 +2380,26 @@ namespace HaulBuilder
 
                         Double Ang = Ang0 + (Dir * Sweep);
                         (Double X, Double Y) P = (
-                            C.X + (turnRadiusM * Math.Cos(Ang)),
-                            C.Y + (turnRadiusM * Math.Sin(Ang)));
+                            C.X + (TurnRadiusM * Math.Cos(Ang)),
+                            C.Y + (TurnRadiusM * Math.Sin(Ang)));
                         Double Tx = (-Math.Sin(Ang)) * Dir;
                         Double Ty = Math.Cos(Ang) * Dir;
                         // Intent: compass from math tangent (east, north) = atan2(east, north).
-                        Double H = Math.Atan2(Tx, Ty) * (180.0 / Math.PI);
+                        Double H = Math.Atan2(Tx, Ty) * (Constants.DEGREES_PER_HALF_TURN / Math.PI);
                         if (H < 0.0)
                         {
-                            H += 360.0;
+                            H += Constants.DEGREES_PER_TURN;
                         }
 
-                        Double Dh = Math.Abs(((H - headingOutDeg + 180.0) % 360.0) - 180.0);
-                        Double Dend = Dist(P, end);
-                        if ((Dh > 25.0) || (Dend > (0.75 * turnRadiusM)))
+                        Double Dh = Math.Abs(((H - HeadingOutDeg + Constants.DEGREES_PER_HALF_TURN) % Constants.DEGREES_PER_TURN) - Constants.DEGREES_PER_HALF_TURN);
+                        Double Dend = Dist(P, End);
+                        if ((Dh > 25.0) || (Dend > (0.75 * TurnRadiusM)))
                         {
                             continue;
                         }
 
                         // Intent: exit when nearly on outbound heading and close to the reverse tip.
-                        Double Score = Dh + (8.0 * (Dend / Math.Max(turnRadiusM, 1e-3)));
+                        Double Score = Dh + (8.0 * (Dend / Math.Max(TurnRadiusM, Constants.PATH_JOIN_COMPARISON_TOLERANCE)));
                         if (Score < BestArcScore)
                         {
                             BestArcScore = Score;
@@ -2406,8 +2409,8 @@ namespace HaulBuilder
                             {
                                 Double Aj = Ang0 + (Dir * J * Step);
                                 BestArc.Add((
-                                    C.X + (turnRadiusM * Math.Cos(Aj)),
-                                    C.Y + (turnRadiusM * Math.Sin(Aj))));
+                                    C.X + (TurnRadiusM * Math.Cos(Aj)),
+                                    C.Y + (TurnRadiusM * Math.Sin(Aj))));
                             }
                         }
                     }
@@ -2419,26 +2422,26 @@ namespace HaulBuilder
 
                     (Double X, Double Y) Exit = BestArc[BestArc.Count - 1];
                     List<(Double X, Double Y)> Full = new List<(Double X, Double Y)>(BestArc);
-                    if (Dist(Exit, end) > 1e-3)
+                    if (Dist(Exit, End) > Constants.PATH_JOIN_COMPARISON_TOLERANCE)
                     {
                         Double StConn = CompassToMath(BestArcHeading);
-                        Double EtConn = CompassToMath(headingOutDeg);
+                        Double EtConn = CompassToMath(HeadingOutDeg);
                         List<(Double X, Double Y)>? Conn = DubinsShortest(
-                            Exit.X, Exit.Y, StConn, end.X, end.Y, EtConn, turnRadiusM, sampleM,
-                            false, false, field, BestArcHeading);
-                        Double ConnCap = (Math.PI * turnRadiusM) + Dist(Exit, end);
+                            Exit.X, Exit.Y, StConn, End.X, End.Y, EtConn, TurnRadiusM, SampleM,
+                            false, false, Field, BestArcHeading);
+                        Double ConnCap = (Math.PI * TurnRadiusM) + Dist(Exit, End);
                         if ((Conn == null) || (Conn.Count == 0)
                             || (PolylineLengthM(Exit, Conn) > ConnCap)
-                            || (CountOutsideField(Conn, field) > 0)
-                            || !PathRespectsMinRadius(Exit, Conn, turnRadiusM))
+                            || (CountOutsideField(Conn, Field) > 0)
+                            || !PathRespectsMinRadius(Exit, Conn, TurnRadiusM))
                         {
                             // Intent: field wins — try same-side CSC only before giving up on this arc.
                             Conn = DubinsShortest(
-                                Exit.X, Exit.Y, StConn, end.X, end.Y, EtConn, turnRadiusM, sampleM,
-                                false, true, field, BestArcHeading);
+                                Exit.X, Exit.Y, StConn, End.X, End.Y, EtConn, TurnRadiusM, SampleM,
+                                false, true, Field, BestArcHeading);
                             if ((Conn == null) || (Conn.Count == 0)
                                 || (PolylineLengthM(Exit, Conn) > ConnCap)
-                                || (CountOutsideField(Conn, field) > 0))
+                                || (CountOutsideField(Conn, Field) > 0))
                             {
                                 continue;
                             }
@@ -2447,13 +2450,13 @@ namespace HaulBuilder
                         Full.AddRange(Conn);
                     }
 
-                    if ((Full.Count > 0) && (Dist(Full[Full.Count - 1], end) < 1e-6))
+                    if ((Full.Count > 0) && (Dist(Full[Full.Count - 1], End) < Constants.GEOMETRY_COMPARISON_TOLERANCE))
                     {
                         Full.RemoveAt(Full.Count - 1);
                     }
 
-                    Int32 Outside = CountOutsideField(Full, field);
-                    Double Len = PolylineLengthM(start, Full);
+                    Int32 Outside = CountOutsideField(Full, Field);
+                    Double Len = PolylineLengthM(Start, Full);
                     Boolean Better = (Outside < BestOutside)
                         || ((Outside == BestOutside) && (Len < BestLen));
                     if (Better)
@@ -2466,7 +2469,7 @@ namespace HaulBuilder
             }
 
             // Intent: field always wins — do not return a side arc that leaves the mask.
-            if ((field != null) && (BestOutside > 0))
+            if ((Field != null) && (BestOutside > 0))
             {
                 return null;
             }
@@ -2482,110 +2485,114 @@ namespace HaulBuilder
         /// side arc (with a short forward spur when needed) stays in available field and is usually
         /// shorter. Forward-slid CCC remains as a fallback when the side arc cannot reconnect.
         /// </remarks>
-        /// <param name="start">Start point.</param>
-        /// <param name="headingInDeg">Inbound compass heading.</param>
-        /// <param name="end">End point.</param>
-        /// <param name="headingOutDeg">Outbound compass heading.</param>
-        /// <param name="turnRadiusM">Turn radius in metres.</param>
-        /// <param name="sampleM">Sample spacing in metres.</param>
-        /// <param name="field">Optional field mask; prefer in-field paths when set.</param>
+        /// <param name="Start">Start point.</param>
+        /// <param name="HeadingInDeg">Inbound compass heading.</param>
+        /// <param name="End">End point.</param>
+        /// <param name="HeadingOutDeg">Outbound compass heading.</param>
+        /// <param name="TurnRadiusM">Turn radius in metres.</param>
+        /// <param name="SampleM">Sample spacing in metres.</param>
+        /// <param name="Field">Optional field mask; prefer in-field paths when set.</param>
         /// <returns>MOVE waypoints, or null when no CCC word applies.</returns>
         static private List<(Double X, Double Y)>? KeyholeUTurn
             (
-            (Double X, Double Y) start,
-            Double headingInDeg,
-            (Double X, Double Y) end,
-            Double headingOutDeg,
-            Double turnRadiusM,
-            Double sampleM,
-            Grid? field = null
+            (Double X, Double Y) Start,
+            Double HeadingInDeg,
+            (Double X, Double Y) End,
+            Double HeadingOutDeg,
+            Double TurnRadiusM,
+            Double SampleM,
+            Grid? Field = null
             )
         {
-            Double St = CompassToMath(headingInDeg);
-            Double Et = CompassToMath(headingOutDeg);
-            (Double X, Double Y) Fwd = ForwardEn(headingInDeg);
-            Double Step = Math.Max(sampleM, turnRadiusM * 0.25);
-            Double MaxD = KEYHOLE_FORWARD_MAX_FRAC_R * turnRadiusM;
+            Double St = CompassToMath(HeadingInDeg);
+            Double Et = CompassToMath(HeadingOutDeg);
+            (Double X, Double Y) Fwd = ForwardEn(HeadingInDeg);
+            Double Step = Math.Max(SampleM, TurnRadiusM * Constants.QUARTER_SCALE);
+            Double MaxD = KEYHOLE_FORWARD_MAX_FRAC_R * TurnRadiusM;
 
             List<(Double X, Double Y)>? BestPts = null;
             Int32 BestOutside = Int32.MaxValue;
             Double BestLen = Double.PositiveInfinity;
             Double BestD = Double.PositiveInfinity;
 
+            // Compares one candidate path against the best field-safe path found so far.
+            // d and full describe its forward offset and complete sampled geometry.
             void ConsiderPath
                 (
-                Double d,
-                List<(Double X, Double Y)> full
+                Double D,
+                List<(Double X, Double Y)> Full
                 )
             {
-                if ((full.Count > 0) && (Dist(full[full.Count - 1], end) < 1e-6))
+                if ((Full.Count > 0) && (Dist(Full[Full.Count - 1], End) < Constants.GEOMETRY_COMPARISON_TOLERANCE))
                 {
-                    full = new List<(Double X, Double Y)>(full);
-                    full.RemoveAt(full.Count - 1);
+                    Full = new List<(Double X, Double Y)>(Full);
+                    Full.RemoveAt(Full.Count - 1);
                 }
 
-                Int32 Outside = CountOutsideField(full, field);
-                Double Len = PolylineLengthM(start, full);
+                Int32 Outside = CountOutsideField(Full, Field);
+                Double Len = PolylineLengthM(Start, Full);
                 Boolean Better = (Outside < BestOutside)
-                    || ((Outside == BestOutside) && (Len < (BestLen - 1e-9)))
+                    || ((Outside == BestOutside) && (Len < (BestLen - Constants.NUMERIC_COMPARISON_TOLERANCE)))
                     || ((Outside == BestOutside)
-                        && (Math.Abs(Len - BestLen) <= 1e-9)
-                        && (d < BestD));
+                        && (Math.Abs(Len - BestLen) <= Constants.NUMERIC_COMPARISON_TOLERANCE)
+                        && (D < BestD));
                 if (Better)
                 {
                     BestOutside = Outside;
-                    BestD = d;
+                    BestD = D;
                     BestLen = Len;
-                    BestPts = full;
+                    BestPts = Full;
                 }
             }
 
+            // Builds and evaluates one three-arc keyhole candidate.
+            // d, s2, and e2 define its offset and connector endpoints.
             void ConsiderCcc
                 (
-                Double d,
-                (Double X, Double Y) s2,
-                (Double X, Double Y) e2
+                Double D,
+                (Double X, Double Y) S2,
+                (Double X, Double Y) E2
                 )
             {
                 // Intent: never seed a keyhole from an out-of-field tip (lineup clamp may leave d=0 outside).
-                Double ClearM = (field != null) ? Math.Max(0.4 * field.GridSizeM, 0.5) : 0.0;
-                if ((field != null)
-                    && (!PointInFieldWithClearance(field, s2.X, s2.Y, ClearM)
-                        || !PointInFieldWithClearance(field, e2.X, e2.Y, ClearM)))
+                Double ClearM = (Field != null) ? Math.Max(0.4 * Field.GridSizeM, Constants.HALF_SCALE) : 0.0;
+                if ((Field != null)
+                    && (!PointInFieldWithClearance(Field, S2.X, S2.Y, ClearM)
+                        || !PointInFieldWithClearance(Field, E2.X, E2.Y, ClearM)))
                 {
                     return;
                 }
 
                 List<(Double X, Double Y)>? Ccc = DubinsShortest(
-                    s2.X, s2.Y, St, e2.X, e2.Y, Et, turnRadiusM, sampleM, true, false, field, headingInDeg);
+                    S2.X, S2.Y, St, E2.X, E2.Y, Et, TurnRadiusM, SampleM, true, false, Field, HeadingInDeg);
                 if ((Ccc == null) || (Ccc.Count == 0))
                 {
                     return;
                 }
 
                 List<(Double X, Double Y)> Full = new List<(Double X, Double Y)>();
-                if (Dist(start, s2) > 1e-9)
+                if (Dist(Start, S2) > Constants.NUMERIC_COMPARISON_TOLERANCE)
                 {
-                    AppendLineSamples(Full, start, s2, sampleM, includeEnd: true);
+                    AppendLineSamples(Full, Start, S2, SampleM, IncludeEnd: true);
                 }
 
                 Full.AddRange(Ccc);
-                if (Dist(e2, end) > 1e-9)
+                if (Dist(E2, End) > Constants.NUMERIC_COMPARISON_TOLERANCE)
                 {
-                    if ((Full.Count == 0) || (Dist(Full[Full.Count - 1], e2) > 1e-6))
+                    if ((Full.Count == 0) || (Dist(Full[Full.Count - 1], E2) > Constants.GEOMETRY_COMPARISON_TOLERANCE))
                     {
-                        Full.Add(e2);
+                        Full.Add(E2);
                     }
 
-                    AppendLineSamples(Full, e2, end, sampleM, includeEnd: false);
+                    AppendLineSamples(Full, E2, End, SampleM, IncludeEnd: false);
                 }
 
-                ConsiderPath(d, Full);
+                ConsiderPath(D, Full);
             }
 
             // Intent: side-arc into available field first — tip CCC often spills past the boundary.
             List<(Double X, Double Y)>? Side = GeometricSideKeyhole(
-                start, headingInDeg, end, headingOutDeg, turnRadiusM, sampleM, field);
+                Start, HeadingInDeg, End, HeadingOutDeg, TurnRadiusM, SampleM, Field);
             if ((Side != null) && (Side.Count > 0))
             {
                 ConsiderPath(0.0, Side);
@@ -2593,13 +2600,13 @@ namespace HaulBuilder
 
             if (BestOutside > 0)
             {
-                for (Double D = 0.0; D <= (MaxD + 1e-9); D += Step)
+                for (Double D = 0.0; D <= (MaxD + Constants.NUMERIC_COMPARISON_TOLERANCE); D += Step)
                 {
-                    (Double X, Double Y) S2 = (start.X + (D * Fwd.X), start.Y + (D * Fwd.Y));
-                    ConsiderCcc(D, S2, end);
-                    if (D > 1e-9)
+                    (Double X, Double Y) S2 = (Start.X + (D * Fwd.X), Start.Y + (D * Fwd.Y));
+                    ConsiderCcc(D, S2, End);
+                    if (D > Constants.NUMERIC_COMPARISON_TOLERANCE)
                     {
-                        (Double X, Double Y) E2 = (end.X + (D * Fwd.X), end.Y + (D * Fwd.Y));
+                        (Double X, Double Y) E2 = (End.X + (D * Fwd.X), End.Y + (D * Fwd.Y));
                         ConsiderCcc(D, S2, E2);
                     }
 
@@ -2611,7 +2618,7 @@ namespace HaulBuilder
             }
 
             // Intent: field always wins — never emit a keyhole that leaves the mask.
-            if ((field != null) && (BestOutside > 0))
+            if ((Field != null) && (BestOutside > 0))
             {
                 return null;
             }
@@ -2622,30 +2629,30 @@ namespace HaulBuilder
         /// <summary>
         /// True when every meaningful bend on start→pts respects the turn radius.
         /// </summary>
-        /// <param name="start">Path start.</param>
-        /// <param name="pts">Intermediate waypoints.</param>
-        /// <param name="turnRadiusM">Minimum turn radius in metres.</param>
+        /// <param name="Start">Path start.</param>
+        /// <param name="Pts">Intermediate waypoints.</param>
+        /// <param name="TurnRadiusM">Minimum turn radius in metres.</param>
         /// <returns>True when the polyline is steerable at R.</returns>
         static private Boolean PathRespectsMinRadius
             (
-            (Double X, Double Y) start,
-            List<(Double X, Double Y)> pts,
-            Double turnRadiusM
+            (Double X, Double Y) Start,
+            List<(Double X, Double Y)> Pts,
+            Double TurnRadiusM
             )
         {
-            if (pts.Count < 2)
+            if (Pts.Count < 2)
             {
                 return true;
             }
 
-            (Double X, Double Y) A = start;
-            (Double X, Double Y) B = pts[0];
-            for (Int32 I = 1; I < pts.Count; I += 1)
+            (Double X, Double Y) A = Start;
+            (Double X, Double Y) B = Pts[0];
+            for (Int32 I = 1; I < Pts.Count; I += 1)
             {
-                (Double X, Double Y) C = pts[I];
-                if ((Dist(A, B) >= 1e-6) && (Dist(B, C) >= 1e-6)
+                (Double X, Double Y) C = Pts[I];
+                if ((Dist(A, B) >= Constants.GEOMETRY_COMPARISON_TOLERANCE) && (Dist(B, C) >= Constants.GEOMETRY_COMPARISON_TOLERANCE)
                     && (HeadingChangeDeg(A, B, C) >= 15.0)
-                    && (CircumRadiusM(A, B, C) < (turnRadiusM * 0.99)))
+                    && (CircumRadiusM(A, B, C) < (TurnRadiusM * 0.99)))
                 {
                     return false;
                 }
@@ -2660,36 +2667,36 @@ namespace HaulBuilder
         /// <summary>
         /// If corner K starts a tight serpentine U-turn, returns the reverse-lane start index and heading.
         /// </summary>
-        /// <param name="run">Contiguous blade-down run.</param>
-        /// <param name="cornerK">Interior corner index within the run.</param>
-        /// <param name="turnRadiusM">Minimum turn radius in metres.</param>
+        /// <param name="Run">Contiguous blade-down run.</param>
+        /// <param name="CornerK">Interior corner index within the run.</param>
+        /// <param name="TurnRadiusM">Minimum turn radius in metres.</param>
         /// <returns>End index and outbound heading, or null when no sustained reverse within 4R.</returns>
         static private (Int32 EndK, Double HoutDeg)? FindUturnExit
             (
-            List<RawPoint> run,
-            Int32 cornerK,
-            Double turnRadiusM
+            List<RawPoint> Run,
+            Int32 CornerK,
+            Double TurnRadiusM
             )
         {
-            if ((cornerK < 1) || (cornerK >= (run.Count - 1)))
+            if ((CornerK < 1) || (CornerK >= (Run.Count - 1)))
             {
                 return null;
             }
 
-            (Double X, Double Y) A = (run[cornerK - 1].Xs, run[cornerK - 1].Ys);
-            (Double X, Double Y) B = (run[cornerK].Xs, run[cornerK].Ys);
+            (Double X, Double Y) A = (Run[CornerK - 1].Xs, Run[CornerK - 1].Ys);
+            (Double X, Double Y) B = (Run[CornerK].Xs, Run[CornerK].Ys);
             Double Hin = BearingDeg(A, B);
             (Double X, Double Y) U = ForwardEn(Hin);
             Double Along = 0.0;
-            Double MaxAlong = 4.0 * turnRadiusM;
-            Double MinRevAlong = UTURN_REVERSE_MIN_FRAC_R * turnRadiusM;
-            for (Int32 M = cornerK; M < (run.Count - 1); M += 1)
+            Double MaxAlong = 4.0 * TurnRadiusM;
+            Double MinRevAlong = UTURN_REVERSE_MIN_FRAC_R * TurnRadiusM;
+            for (Int32 M = CornerK; M < (Run.Count - 1); M += 1)
             {
-                (Double X, Double Y) P0 = (run[M].Xs, run[M].Ys);
-                (Double X, Double Y) P1 = (run[M + 1].Xs, run[M + 1].Ys);
-                if (M > cornerK)
+                (Double X, Double Y) P0 = (Run[M].Xs, Run[M].Ys);
+                (Double X, Double Y) P1 = (Run[M + 1].Xs, Run[M + 1].Ys);
+                if (M > CornerK)
                 {
-                    (Double X, Double Y) PrevPt = (run[M - 1].Xs, run[M - 1].Ys);
+                    (Double X, Double Y) PrevPt = (Run[M - 1].Xs, Run[M - 1].Ys);
                     Along += Dist(PrevPt, P0);
                     if (Along > MaxAlong)
                     {
@@ -2699,7 +2706,7 @@ namespace HaulBuilder
 
                 (Double X, Double Y) V = ForwardEn(BearingDeg(P0, P1));
                 // Intent: coalesce the whole reverse window (W), not only the next cell.
-                if (((U.X * V.X) + (U.Y * V.Y)) >= -0.5)
+                if (((U.X * V.X) + (U.Y * V.Y)) >= -Constants.HALF_SCALE)
                 {
                     continue;
                 }
@@ -2707,12 +2714,12 @@ namespace HaulBuilder
                 // Intent: reject one-cell zig-zags; accept 2+ reverse segments or one long reverse.
                 Double RevAlong = Dist(P0, P1);
                 Int32 RevSegs = 1;
-                for (Int32 N = M + 1; N < (run.Count - 1); N += 1)
+                for (Int32 N = M + 1; N < (Run.Count - 1); N += 1)
                 {
-                    (Double X, Double Y) Q0 = (run[N].Xs, run[N].Ys);
-                    (Double X, Double Y) Q1 = (run[N + 1].Xs, run[N + 1].Ys);
+                    (Double X, Double Y) Q0 = (Run[N].Xs, Run[N].Ys);
+                    (Double X, Double Y) Q1 = (Run[N + 1].Xs, Run[N + 1].Ys);
                     (Double X, Double Y) W = ForwardEn(BearingDeg(Q0, Q1));
-                    if (((U.X * W.X) + (U.Y * W.Y)) >= -0.5)
+                    if (((U.X * W.X) + (U.Y * W.Y)) >= -Constants.HALF_SCALE)
                     {
                         break;
                     }
@@ -2733,45 +2740,45 @@ namespace HaulBuilder
         /// <summary>
         /// Builds an R-bounded blade-up path from a start pose to an end pose.
         /// </summary>
-        /// <param name="start">Start point (coverage corner).</param>
-        /// <param name="headingInDeg">Inbound compass heading.</param>
-        /// <param name="end">End point (next coverage point).</param>
-        /// <param name="headingOutDeg">Outbound compass heading.</param>
-        /// <param name="turnRadiusM">Minimum turn radius in metres.</param>
-        /// <param name="sampleM">Nominal sample spacing in metres.</param>
-        /// <param name="field">Optional field mask; prefer in-field chirality when set.</param>
+        /// <param name="Start">Start point (coverage corner).</param>
+        /// <param name="HeadingInDeg">Inbound compass heading.</param>
+        /// <param name="End">End point (next coverage point).</param>
+        /// <param name="HeadingOutDeg">Outbound compass heading.</param>
+        /// <param name="TurnRadiusM">Minimum turn radius in metres.</param>
+        /// <param name="SampleM">Nominal sample spacing in metres.</param>
+        /// <param name="Field">Optional field mask; prefer in-field chirality when set.</param>
         /// <returns>Intermediate MOVE waypoints (excludes start; drops duplicate end).</returns>
         static private List<(Double X, Double Y)> HeadlandMovePoints
             (
-            (Double X, Double Y) start,
-            Double headingInDeg,
-            (Double X, Double Y) end,
-            Double headingOutDeg,
-            Double turnRadiusM,
-            Double sampleM,
-            Grid? field = null
+            (Double X, Double Y) Start,
+            Double HeadingInDeg,
+            (Double X, Double Y) End,
+            Double HeadingOutDeg,
+            Double TurnRadiusM,
+            Double SampleM,
+            Grid? Field = null
             )
         {
-            (Double X, Double Y) U = ForwardEn(headingInDeg);
-            (Double X, Double Y) V = ForwardEn(headingOutDeg);
-            Double St = CompassToMath(headingInDeg);
-            Double Et = CompassToMath(headingOutDeg);
+            (Double X, Double Y) U = ForwardEn(HeadingInDeg);
+            (Double X, Double Y) V = ForwardEn(HeadingOutDeg);
+            Double St = CompassToMath(HeadingInDeg);
+            Double Et = CompassToMath(HeadingOutDeg);
             // Near-reverse => CCC keyhole bulb; slide forward when a tip bulb leaves the field.
-            if (((U.X * V.X) + (U.Y * V.Y)) < -0.5)
+            if (((U.X * V.X) + (U.Y * V.Y)) < -Constants.HALF_SCALE)
             {
                 List<(Double X, Double Y)>? Key = KeyholeUTurn(
-                    start, headingInDeg, end, headingOutDeg, turnRadiusM, sampleM, field);
+                    Start, HeadingInDeg, End, HeadingOutDeg, TurnRadiusM, SampleM, Field);
                 if ((Key != null) && (Key.Count > 0)
-                    && (CountOutsideField(Key, field) == 0))
+                    && (CountOutsideField(Key, Field) == 0))
                 {
                     return Key;
                 }
 
                 // Intent: never collapse a U-turn to a straight chord — try any in-field Dubins word.
                 List<(Double X, Double Y)>? Any = DubinsShortest(
-                    start.X, start.Y, St, end.X, end.Y, Et, turnRadiusM, sampleM, false, false, field, headingInDeg);
+                    Start.X, Start.Y, St, End.X, End.Y, Et, TurnRadiusM, SampleM, false, false, Field, HeadingInDeg);
                 if ((Any != null) && (Any.Count > 0)
-                    && (CountOutsideField(Any, field) == 0))
+                    && (CountOutsideField(Any, Field) == 0))
                 {
                     return Any;
                 }
@@ -2779,21 +2786,21 @@ namespace HaulBuilder
 
             // Soft bend: same-side CSC (LSL/RSR); SoftBendFillet is last resort.
             List<(Double X, Double Y)>? Pts = DubinsShortest(
-                start.X, start.Y, St, end.X, end.Y, Et, turnRadiusM, sampleM, false, true, field, headingInDeg);
+                Start.X, Start.Y, St, End.X, End.Y, Et, TurnRadiusM, SampleM, false, true, Field, HeadingInDeg);
             if ((Pts != null) && (Pts.Count > 0))
             {
-                Double Chord = Dist(start, end);
-                Double Cap = (SOFT_BEND_MAX_HALF_TURNS * Math.PI * turnRadiusM) + Chord;
-                if ((PolylineLengthM(start, Pts) <= Cap)
-                    && (CountOutsideField(Pts, field) == 0))
+                Double Chord = Dist(Start, End);
+                Double Cap = (SOFT_BEND_MAX_HALF_TURNS * Math.PI * TurnRadiusM) + Chord;
+                if ((PolylineLengthM(Start, Pts) <= Cap)
+                    && (CountOutsideField(Pts, Field) == 0))
                 {
                     return Pts;
                 }
             }
 
             List<(Double X, Double Y)> Fillet = SoftBendFillet(
-                start, headingInDeg, end, headingOutDeg, turnRadiusM, sampleM, field);
-            if (CountOutsideField(Fillet, field) == 0)
+                Start, HeadingInDeg, End, HeadingOutDeg, TurnRadiusM, SampleM, Field);
+            if (CountOutsideField(Fillet, Field) == 0)
             {
                 return Fillet;
             }
@@ -2802,24 +2809,24 @@ namespace HaulBuilder
             // clearance ring rejected the only feasible soft bend (edge lanes).
             if ((Pts != null) && (Pts.Count > 0))
             {
-                Double Chord = Dist(start, end);
-                Double Cap = (SOFT_BEND_MAX_HALF_TURNS * Math.PI * turnRadiusM) + Chord;
-                if ((PolylineLengthM(start, Pts) <= Cap)
-                    && (CountOutsideFieldPointsOnly(Pts, field) == 0))
+                Double Chord = Dist(Start, End);
+                Double Cap = (SOFT_BEND_MAX_HALF_TURNS * Math.PI * TurnRadiusM) + Chord;
+                if ((PolylineLengthM(Start, Pts) <= Cap)
+                    && (CountOutsideFieldPointsOnly(Pts, Field) == 0))
                 {
                     return Pts;
                 }
             }
 
             List<(Double X, Double Y)>? AnySoft = DubinsShortest(
-                start.X, start.Y, St, end.X, end.Y, Et, turnRadiusM, sampleM,
-                false, false, field, headingInDeg, cscFamilyOnly: true);
+                Start.X, Start.Y, St, End.X, End.Y, Et, TurnRadiusM, SampleM,
+                false, false, Field, HeadingInDeg, CscFamilyOnly: true);
             if ((AnySoft != null) && (AnySoft.Count > 0)
-                && (CountOutsideFieldPointsOnly(AnySoft, field) == 0))
+                && (CountOutsideFieldPointsOnly(AnySoft, Field) == 0))
             {
-                Double Chord = Dist(start, end);
-                Double Cap = (SOFT_BEND_MAX_HALF_TURNS * Math.PI * turnRadiusM) + Chord;
-                if (PolylineLengthM(start, AnySoft) <= Cap)
+                Double Chord = Dist(Start, End);
+                Double Cap = (SOFT_BEND_MAX_HALF_TURNS * Math.PI * TurnRadiusM) + Chord;
+                if (PolylineLengthM(Start, AnySoft) <= Cap)
                 {
                     return AnySoft;
                 }
@@ -2832,24 +2839,24 @@ namespace HaulBuilder
         /// <summary>
         /// Counts samples outside the field mask with no clearance ring (point-in-cell only).
         /// </summary>
-        /// <param name="pts">Waypoints to test.</param>
-        /// <param name="field">Field mask; null means treat all as in-field.</param>
+        /// <param name="Pts">Waypoints to test.</param>
+        /// <param name="Field">Field mask; null means treat all as in-field.</param>
         /// <returns>Outside sample count.</returns>
         static private Int32 CountOutsideFieldPointsOnly
             (
-            List<(Double X, Double Y)> pts,
-            Grid? field
+            List<(Double X, Double Y)> Pts,
+            Grid? Field
             )
         {
-            if (field == null)
+            if (Field == null)
             {
                 return 0;
             }
 
             Int32 Outside = 0;
-            foreach ((Double X, Double Y) P in pts)
+            foreach ((Double X, Double Y) P in Pts)
             {
-                if (!field.ContainsWorldXy(P.X, P.Y))
+                if (!Field.ContainsWorldXy(P.X, P.Y))
                 {
                     Outside += 1;
                 }
@@ -2859,46 +2866,46 @@ namespace HaulBuilder
         }
 
         /// <summary>
-        /// Available polyline length along <paramref name="run"/> from <paramref name="cornerK"/>
-        /// walking <paramref name="dir"/> (no heading filter — stair-steps still count).
+        /// Available polyline length along <paramref name="Run"/> from <paramref name="CornerK"/>
+        /// walking <paramref name="Dir"/> (no heading filter — stair-steps still count).
         /// </summary>
-        /// <param name="run">Contiguous blade-down run.</param>
-        /// <param name="cornerK">Corner index within the run.</param>
-        /// <param name="dir">-1 = inbound (toward lower indices), +1 = outbound.</param>
-        /// <param name="maxLenM">Stop after this many metres.</param>
+        /// <param name="Run">Contiguous blade-down run.</param>
+        /// <param name="CornerK">Corner index within the run.</param>
+        /// <param name="Dir">-1 = inbound (toward lower indices), +1 = outbound.</param>
+        /// <param name="MaxLenM">Stop after this many metres.</param>
         /// <returns>Path length in metres.</returns>
         static private Double RunPathLengthM
             (
-            List<RawPoint> run,
-            Int32 cornerK,
-            Int32 dir,
-            Double maxLenM
+            List<RawPoint> Run,
+            Int32 CornerK,
+            Int32 Dir,
+            Double MaxLenM
             )
         {
             Double Len = 0.0;
-            if (dir < 0)
+            if (Dir < 0)
             {
-                for (Int32 I = cornerK; I > 0; I -= 1)
+                for (Int32 I = CornerK; I > 0; I -= 1)
                 {
                     Len += Dist(
-                        (run[I - 1].Xs, run[I - 1].Ys),
-                        (run[I].Xs, run[I].Ys));
-                    if (Len >= maxLenM)
+                        (Run[I - 1].Xs, Run[I - 1].Ys),
+                        (Run[I].Xs, Run[I].Ys));
+                    if (Len >= MaxLenM)
                     {
-                        return maxLenM;
+                        return MaxLenM;
                     }
                 }
             }
             else
             {
-                for (Int32 I = cornerK; I < (run.Count - 1); I += 1)
+                for (Int32 I = CornerK; I < (Run.Count - 1); I += 1)
                 {
                     Len += Dist(
-                        (run[I].Xs, run[I].Ys),
-                        (run[I + 1].Xs, run[I + 1].Ys));
-                    if (Len >= maxLenM)
+                        (Run[I].Xs, Run[I].Ys),
+                        (Run[I + 1].Xs, Run[I + 1].Ys));
+                    if (Len >= MaxLenM)
                     {
-                        return maxLenM;
+                        return MaxLenM;
                     }
                 }
             }
@@ -2907,74 +2914,74 @@ namespace HaulBuilder
         }
 
         /// <summary>
-        /// Available polyline length along <paramref name="run"/> from <paramref name="cornerK"/>
-        /// walking <paramref name="dir"/> while segments stay aligned with <paramref name="headingDeg"/>.
+        /// Available polyline length along <paramref name="Run"/> from <paramref name="CornerK"/>
+        /// walking <paramref name="Dir"/> while segments stay aligned with <paramref name="HeadingDeg"/>.
         /// </summary>
-        /// <param name="run">Contiguous blade-down run.</param>
-        /// <param name="cornerK">Corner index within the run.</param>
-        /// <param name="headingDeg">Compass heading that defines the corridor.</param>
-        /// <param name="dir">-1 = inbound (toward lower indices), +1 = outbound.</param>
-        /// <param name="maxLenM">Stop after this many metres.</param>
+        /// <param name="Run">Contiguous blade-down run.</param>
+        /// <param name="CornerK">Corner index within the run.</param>
+        /// <param name="HeadingDeg">Compass heading that defines the corridor.</param>
+        /// <param name="Dir">-1 = inbound (toward lower indices), +1 = outbound.</param>
+        /// <param name="MaxLenM">Stop after this many metres.</param>
         /// <returns>Aligned length in metres.</returns>
         static private Double RunAlignedLengthM
             (
-            List<RawPoint> run,
-            Int32 cornerK,
-            Double headingDeg,
-            Int32 dir,
-            Double maxLenM
+            List<RawPoint> Run,
+            Int32 CornerK,
+            Double HeadingDeg,
+            Int32 Dir,
+            Double MaxLenM
             )
         {
-            (Double X, Double Y) U = ForwardEn(headingDeg);
+            (Double X, Double Y) U = ForwardEn(HeadingDeg);
             Double Len = 0.0;
-            if (dir < 0)
+            if (Dir < 0)
             {
-                for (Int32 I = cornerK; I > 0; I -= 1)
+                for (Int32 I = CornerK; I > 0; I -= 1)
                 {
-                    (Double X, Double Y) P0 = (run[I - 1].Xs, run[I - 1].Ys);
-                    (Double X, Double Y) P1 = (run[I].Xs, run[I].Ys);
+                    (Double X, Double Y) P0 = (Run[I - 1].Xs, Run[I - 1].Ys);
+                    (Double X, Double Y) P1 = (Run[I].Xs, Run[I].Ys);
                     Double Seg = Dist(P0, P1);
-                    if (Seg < 1e-9)
+                    if (Seg < Constants.NUMERIC_COMPARISON_TOLERANCE)
                     {
                         continue;
                     }
 
                     (Double X, Double Y) V = ((P1.X - P0.X) / Seg, (P1.Y - P0.Y) / Seg);
                     // Intent: stop when the path bends away from the inbound heading.
-                    if (((V.X * U.X) + (V.Y * U.Y)) < 0.5)
+                    if (((V.X * U.X) + (V.Y * U.Y)) < Constants.HALF_SCALE)
                     {
                         break;
                     }
 
                     Len += Seg;
-                    if (Len >= maxLenM)
+                    if (Len >= MaxLenM)
                     {
-                        return maxLenM;
+                        return MaxLenM;
                     }
                 }
             }
             else
             {
-                for (Int32 I = cornerK; I < (run.Count - 1); I += 1)
+                for (Int32 I = CornerK; I < (Run.Count - 1); I += 1)
                 {
-                    (Double X, Double Y) P0 = (run[I].Xs, run[I].Ys);
-                    (Double X, Double Y) P1 = (run[I + 1].Xs, run[I + 1].Ys);
+                    (Double X, Double Y) P0 = (Run[I].Xs, Run[I].Ys);
+                    (Double X, Double Y) P1 = (Run[I + 1].Xs, Run[I + 1].Ys);
                     Double Seg = Dist(P0, P1);
-                    if (Seg < 1e-9)
+                    if (Seg < Constants.NUMERIC_COMPARISON_TOLERANCE)
                     {
                         continue;
                     }
 
                     (Double X, Double Y) V = ((P1.X - P0.X) / Seg, (P1.Y - P0.Y) / Seg);
-                    if (((V.X * U.X) + (V.Y * U.Y)) < 0.5)
+                    if (((V.X * U.X) + (V.Y * U.Y)) < Constants.HALF_SCALE)
                     {
                         break;
                     }
 
                     Len += Seg;
-                    if (Len >= maxLenM)
+                    if (Len >= MaxLenM)
                     {
-                        return maxLenM;
+                        return MaxLenM;
                     }
                 }
             }
@@ -2983,45 +2990,45 @@ namespace HaulBuilder
         }
 
         /// <summary>
-        /// Walks outbound from <paramref name="cornerK"/> along the run for <paramref name="distM"/> metres.
+        /// Walks outbound from <paramref name="CornerK"/> along the run for <paramref name="DistM"/> metres.
         /// </summary>
-        /// <param name="run">Contiguous blade-down run.</param>
-        /// <param name="cornerK">Start index.</param>
-        /// <param name="distM">Distance to walk.</param>
-        /// <param name="endIndex">Last run index reached (inclusive lower bound of remaining coverage).</param>
+        /// <param name="Run">Contiguous blade-down run.</param>
+        /// <param name="CornerK">Start index.</param>
+        /// <param name="DistM">Distance to walk.</param>
+        /// <param name="EndIndex">Last run index reached (inclusive lower bound of remaining coverage).</param>
         /// <returns>World point at that distance, or null when the run is too short.</returns>
         static private (Double X, Double Y)? PointAlongRunOutbound
             (
-            List<RawPoint> run,
-            Int32 cornerK,
-            Double distM,
-            out Int32 endIndex
+            List<RawPoint> Run,
+            Int32 CornerK,
+            Double DistM,
+            out Int32 EndIndex
             )
         {
-            endIndex = cornerK;
-            Double Remain = distM;
-            (Double X, Double Y) Cur = (run[cornerK].Xs, run[cornerK].Ys);
-            for (Int32 I = cornerK; I < (run.Count - 1); I += 1)
+            EndIndex = CornerK;
+            Double Remain = DistM;
+            (Double X, Double Y) Cur = (Run[CornerK].Xs, Run[CornerK].Ys);
+            for (Int32 I = CornerK; I < (Run.Count - 1); I += 1)
             {
-                (Double X, Double Y) Nxt = (run[I + 1].Xs, run[I + 1].Ys);
+                (Double X, Double Y) Nxt = (Run[I + 1].Xs, Run[I + 1].Ys);
                 Double Seg = Dist(Cur, Nxt);
-                if (Seg < 1e-9)
+                if (Seg < Constants.NUMERIC_COMPARISON_TOLERANCE)
                 {
                     Cur = Nxt;
-                    endIndex = I + 1;
+                    EndIndex = I + 1;
                     continue;
                 }
 
                 if (Remain <= Seg)
                 {
                     Double T = Remain / Seg;
-                    endIndex = I + 1;
+                    EndIndex = I + 1;
                     return (Cur.X + (T * (Nxt.X - Cur.X)), Cur.Y + (T * (Nxt.Y - Cur.Y)));
                 }
 
                 Remain -= Seg;
                 Cur = Nxt;
-                endIndex = I + 1;
+                EndIndex = I + 1;
             }
 
             return null;
@@ -3031,32 +3038,32 @@ namespace HaulBuilder
         /// True when the bend at b is tighter than the turning radius.
         /// </summary>
         /// <remarks>
-        /// Hard R bound applies to every real bend; <paramref name="turnThresholdDeg"/>
+        /// Hard R bound applies to every real bend; <paramref name="TurnThresholdDeg"/>
         /// only sets a noise floor (at least 15°) so micro-wiggles are ignored.
         /// </remarks>
-        /// <param name="a">Incoming waypoint.</param>
-        /// <param name="b">Apex waypoint.</param>
-        /// <param name="c">Outgoing waypoint.</param>
-        /// <param name="turnRadiusM">Minimum turn radius in metres.</param>
-        /// <param name="turnThresholdDeg">Caller turn threshold; noise floor is min(15°, this).</param>
+        /// <param name="A">Incoming waypoint.</param>
+        /// <param name="B">Apex waypoint.</param>
+        /// <param name="C">Outgoing waypoint.</param>
+        /// <param name="TurnRadiusM">Minimum turn radius in metres.</param>
+        /// <param name="TurnThresholdDeg">Caller turn threshold; noise floor is min(15°, this).</param>
         /// <returns>True when the apex must be softened.</returns>
         static private Boolean SteerViolatesMinRadius
             (
-            (Double X, Double Y) a,
-            (Double X, Double Y) b,
-            (Double X, Double Y) c,
-            Double turnRadiusM,
-            Double turnThresholdDeg
+            (Double X, Double Y) A,
+            (Double X, Double Y) B,
+            (Double X, Double Y) C,
+            Double TurnRadiusM,
+            Double TurnThresholdDeg
             )
         {
             // Intent: 40–60° pinches with r≪R must still get headlands (route-7 W).
-            Double NoiseFloor = Math.Min(15.0, turnThresholdDeg);
-            if (HeadingChangeDeg(a, b, c) < NoiseFloor)
+            Double NoiseFloor = Math.Min(15.0, TurnThresholdDeg);
+            if (HeadingChangeDeg(A, B, C) < NoiseFloor)
             {
                 return false;
             }
 
-            return CircumRadiusM(a, b, c) < (turnRadiusM * 0.99);
+            return CircumRadiusM(A, B, C) < (TurnRadiusM * 0.99);
         }
 
         /// <summary>
@@ -3064,55 +3071,55 @@ namespace HaulBuilder
         /// </summary>
         /// <remarks>
         /// The tractor+scraper train must be traveling straight along the run heading for
-        /// approximately <paramref name="equipmentLengthM"/> before the blade engages and again
+        /// approximately <paramref name="EquipmentLengthM"/> before the blade engages and again
         /// after it lifts, so cutting/filling starts and finishes aligned. Arrival tips
         /// (START/RETURN/HAUL) near the run start are relocated to the entry lineup; exit
         /// inserts a MOVE spur past the run tip before the next travel/turn.
         /// </remarks>
-        /// <param name="raw">Track after turn-radius enforcement.</param>
-        /// <param name="equipmentLengthM">Required straight approach/exit length in metres.</param>
-        /// <param name="sampleM">Sample spacing in metres.</param>
-        /// <param name="turnRadiusM">Turn radius for reconnect headlands.</param>
-        /// <param name="field">Field mask for in-field reconnect turns.</param>
+        /// <param name="Raw">Track after turn-radius enforcement.</param>
+        /// <param name="EquipmentLengthM">Required straight approach/exit length in metres.</param>
+        /// <param name="SampleM">Sample spacing in metres.</param>
+        /// <param name="TurnRadiusM">Turn radius for reconnect headlands.</param>
+        /// <param name="Field">Field mask for in-field reconnect turns.</param>
         /// <returns>Track with lineup MOVE approaches and exits inserted.</returns>
         static private List<RawPoint> EnforceEquipmentLineup
             (
-            List<RawPoint> raw,
-            Double equipmentLengthM,
-            Double sampleM,
-            Double turnRadiusM,
-            Grid field
+            List<RawPoint> Raw,
+            Double EquipmentLengthM,
+            Double SampleM,
+            Double TurnRadiusM,
+            Grid Field
             )
         {
-            if ((equipmentLengthM <= 1e-6) || (raw.Count < 2))
+            if ((EquipmentLengthM <= Constants.GEOMETRY_COMPARISON_TOLERANCE) || (Raw.Count < 2))
             {
-                return raw;
+                return Raw;
             }
 
             List<RawPoint> Out = new List<RawPoint>();
             Int32 I = 0;
-            while (I < raw.Count)
+            while (I < Raw.Count)
             {
-                RawPoint Cur = raw[I];
+                RawPoint Cur = Raw[I];
                 Boolean IsCutOrFill = (Cur.Action == CUT) || (Cur.Action == FILL);
                 Boolean PrevSame = (Out.Count > 0) && (Out[Out.Count - 1].Action == Cur.Action);
-                Boolean RunStart = IsCutOrFill && !PrevSame && ((I + 1) < raw.Count);
+                Boolean RunStart = IsCutOrFill && !PrevSame && ((I + 1) < Raw.Count);
                 Boolean RunEnd = IsCutOrFill
-                    && (((I + 1) >= raw.Count) || (raw[I + 1].Action != Cur.Action));
+                    && (((I + 1) >= Raw.Count) || (Raw[I + 1].Action != Cur.Action));
                 // Intent: in-run MOVE headlands (U-turn keyholes) resume the same action —
                 // those exits are owned by coalesce, not a cut→fill splice.
                 Boolean InRunHeadland = false;
-                if (RunEnd && ((I + 1) < raw.Count) && (raw[I + 1].Action == MOVE))
+                if (RunEnd && ((I + 1) < Raw.Count) && (Raw[I + 1].Action == MOVE))
                 {
-                    for (Int32 J = I + 1; J < raw.Count; J += 1)
+                    for (Int32 J = I + 1; J < Raw.Count; J += 1)
                     {
-                        if (raw[J].Action == Cur.Action)
+                        if (Raw[J].Action == Cur.Action)
                         {
                             InRunHeadland = true;
                             break;
                         }
 
-                        if (raw[J].Action != MOVE)
+                        if (Raw[J].Action != MOVE)
                         {
                             break;
                         }
@@ -3121,17 +3128,17 @@ namespace HaulBuilder
 
                 if (RunStart)
                 {
-                    InsertEntryLineup(Out, raw, I, Cur, equipmentLengthM, sampleM, turnRadiusM, field);
+                    InsertEntryLineup(Out, Raw, I, Cur, EquipmentLengthM, SampleM, TurnRadiusM, Field);
                 }
 
                 Out.Add(Cur);
 
                 if (RunEnd && !InRunHeadland)
                 {
-                    InsertExitLineup(Out, raw, I, Cur, equipmentLengthM, sampleM, field, turnRadiusM);
+                    InsertExitLineup(Out, Raw, I, Cur, EquipmentLengthM, SampleM, Field, TurnRadiusM);
                     // Intent: drop tip-based HAUL loop and rebuild one path from the exit tip.
                     Int32 SkipTo = RebuildHaulAfterExit(
-                        Out, raw, I, equipmentLengthM, sampleM, turnRadiusM, field);
+                        Out, Raw, I, EquipmentLengthM, SampleM, TurnRadiusM, Field);
                     if (SkipTo > I)
                     {
                         I = SkipTo;
@@ -3148,83 +3155,83 @@ namespace HaulBuilder
         /// <summary>
         /// Rebuilds cut→fill HAUL from the exit tip, skipping the old tip-based transit.
         /// </summary>
-        /// <param name="outPts">Track including exit spur (modified in place).</param>
-        /// <param name="raw">Input track after turn-radius enforcement.</param>
-        /// <param name="cutEndIndex">Index of the CUT tip in <paramref name="raw"/>.</param>
-        /// <param name="equipmentLengthM">Equipment length in metres (unused; exit already applied).</param>
-        /// <param name="sampleM">Sample spacing in metres.</param>
-        /// <param name="turnRadiusM">Minimum turn radius in metres.</param>
-        /// <param name="field">Field mask for in-field turns.</param>
+        /// <param name="OutPts">Track including exit spur (modified in place).</param>
+        /// <param name="Raw">Input track after turn-radius enforcement.</param>
+        /// <param name="CutEndIndex">Index of the CUT tip in <paramref name="Raw"/>.</param>
+        /// <param name="EquipmentLengthM">Equipment length in metres (unused; exit already applied).</param>
+        /// <param name="SampleM">Sample spacing in metres.</param>
+        /// <param name="TurnRadiusM">Minimum turn radius in metres.</param>
+        /// <param name="Field">Field mask for in-field turns.</param>
         /// <returns>Next raw index to process (FILL start), or -1 if no HAUL rebuild.</returns>
         static private Int32 RebuildHaulAfterExit
             (
-            List<RawPoint> outPts,
-            List<RawPoint> raw,
-            Int32 cutEndIndex,
-            Double equipmentLengthM,
-            Double sampleM,
-            Double turnRadiusM,
-            Grid field
+            List<RawPoint> OutPts,
+            List<RawPoint> Raw,
+            Int32 CutEndIndex,
+            Double EquipmentLengthM,
+            Double SampleM,
+            Double TurnRadiusM,
+            Grid Field
             )
         {
             // Intent: exit length already applied by InsertExitLineup; keep signature parallel.
-            if (equipmentLengthM < 0.0)
+            if (EquipmentLengthM < 0.0)
             {
                 return -1;
             }
 
-            Int32 J = cutEndIndex + 1;
-            while ((J < raw.Count) && (raw[J].Action == MOVE))
+            Int32 J = CutEndIndex + 1;
+            while ((J < Raw.Count) && (Raw[J].Action == MOVE))
             {
                 J += 1;
             }
 
-            if ((J >= raw.Count) || (raw[J].Action != HAUL))
+            if ((J >= Raw.Count) || (Raw[J].Action != HAUL))
             {
                 return -1;
             }
 
             Int32 HaulStart = J;
-            while ((J < raw.Count) && (raw[J].Action == HAUL))
+            while ((J < Raw.Count) && (Raw[J].Action == HAUL))
             {
                 J += 1;
             }
 
-            if ((J >= raw.Count) || ((raw[J].Action != FILL) && (raw[J].Action != GRADE)))
+            if ((J >= Raw.Count) || ((Raw[J].Action != FILL) && (Raw[J].Action != GRADE)))
             {
                 return -1;
             }
 
-            if (outPts.Count < 2)
+            if (OutPts.Count < 2)
             {
                 return -1;
             }
 
-            RawPoint ExitTip = outPts[outPts.Count - 1];
-            RawPoint BeforeExit = outPts[outPts.Count - 2];
+            RawPoint ExitTip = OutPts[OutPts.Count - 1];
+            RawPoint BeforeExit = OutPts[OutPts.Count - 2];
             (Double X, Double Y) ExitEnd = (ExitTip.Xs, ExitTip.Ys);
             (Double X, Double Y) Before = (BeforeExit.Xs, BeforeExit.Ys);
-            if (Dist(Before, ExitEnd) < 1e-6)
+            if (Dist(Before, ExitEnd) < Constants.GEOMETRY_COMPARISON_TOLERANCE)
             {
                 return -1;
             }
 
             Double Hin = BearingDeg(Before, ExitEnd);
-            RawPoint LastHaul = raw[J - 1];
+            RawPoint LastHaul = Raw[J - 1];
             (Double X, Double Y) Pc = (LastHaul.Xs, LastHaul.Ys);
-            RawPoint FillStart = raw[J];
+            RawPoint FillStart = Raw[J];
             (Double X, Double Y) Pd = (FillStart.Xs, FillStart.Ys);
             // Intent: arrive aligned with the fill run; HAUL tip often sits on the fill start.
             Double Hout = Hin;
-            if (((J + 1) < raw.Count) && (raw[J + 1].Action == FillStart.Action))
+            if (((J + 1) < Raw.Count) && (Raw[J + 1].Action == FillStart.Action))
             {
-                (Double X, Double Y) Pe = (raw[J + 1].Xs, raw[J + 1].Ys);
-                if (Dist(Pd, Pe) > 1e-6)
+                (Double X, Double Y) Pe = (Raw[J + 1].Xs, Raw[J + 1].Ys);
+                if (Dist(Pd, Pe) > Constants.GEOMETRY_COMPARISON_TOLERANCE)
                 {
                     Hout = BearingDeg(Pd, Pe);
                 }
             }
-            else if (Dist(Pc, Pd) > 1e-6)
+            else if (Dist(Pc, Pd) > Constants.GEOMETRY_COMPARISON_TOLERANCE)
             {
                 Hout = BearingDeg(Pc, Pd);
             }
@@ -3232,13 +3239,13 @@ namespace HaulBuilder
             Double Chord = Dist(ExitEnd, Pc);
             (Double X, Double Y) U = ForwardEn(Hin);
             (Double X, Double Y) V = ForwardEn(Hout);
-            Boolean NearReverse = ((U.X * V.X) + (U.Y * V.Y)) < -0.5;
+            Boolean NearReverse = ((U.X * V.X) + (U.Y * V.Y)) < -Constants.HALF_SCALE;
             // Intent: cut→fill is usually a lane-change CSC; only allow CCC for short reverse hops.
-            Boolean AllowKeyhole = NearReverse && (Chord < (4.0 * turnRadiusM));
+            Boolean AllowKeyhole = NearReverse && (Chord < (4.0 * TurnRadiusM));
             List<(Double X, Double Y)> Moves;
             if (AllowKeyhole)
             {
-                Moves = HeadlandMovePoints(ExitEnd, Hin, Pc, Hout, turnRadiusM, sampleM, field);
+                Moves = HeadlandMovePoints(ExitEnd, Hin, Pc, Hout, TurnRadiusM, SampleM, Field);
             }
             else
             {
@@ -3246,39 +3253,39 @@ namespace HaulBuilder
                 Double Et = CompassToMath(Hout);
                 // Intent: short CSC family only (no CCC bulb); length cap rejects long loops.
                 List<(Double X, Double Y)>? Soft = DubinsShortest(
-                    ExitEnd.X, ExitEnd.Y, St, Pc.X, Pc.Y, Et, turnRadiusM, sampleM,
-                    false, false, field, null, cscFamilyOnly: true);
+                    ExitEnd.X, ExitEnd.Y, St, Pc.X, Pc.Y, Et, TurnRadiusM, SampleM,
+                    false, false, Field, null, CscFamilyOnly: true);
                 Moves = Soft ?? new List<(Double X, Double Y)>();
                 // Intent: field wins — refuse a CSC that clips the mask; try a short in-field reconnect.
-                if ((Moves.Count > 0) && (CountOutsideField(Moves, field) > 0))
+                if ((Moves.Count > 0) && (CountOutsideField(Moves, Field) > 0))
                 {
                     List<(Double X, Double Y)>? InField = MinCurveInFieldReconnect(
-                        ExitEnd, Hin, Pc, Hout, turnRadiusM, sampleM, field);
+                        ExitEnd, Hin, Pc, Hout, TurnRadiusM, SampleM, Field);
                     Moves = InField ?? new List<(Double X, Double Y)>();
                 }
             }
 
             // Intent: non-keyhole transit may bend once (~πR), never a 2+ turn CCC bulb.
             Double Cap = AllowKeyhole
-                ? ((2.75 * Math.PI * turnRadiusM) + (KEYHOLE_SPUR_BUDGET_FRAC_R * turnRadiusM))
-                : ((Math.PI * turnRadiusM) + Chord);
+                ? ((2.75 * Math.PI * TurnRadiusM) + (KEYHOLE_SPUR_BUDGET_FRAC_R * TurnRadiusM))
+                : ((Math.PI * TurnRadiusM) + Chord);
             if ((Moves.Count == 0) || (PolylineLengthM(ExitEnd, Moves) > Cap)
-                || (CountOutsideField(Moves, field) > 0))
+                || (CountOutsideField(Moves, Field) > 0))
             {
                 // Intent: drop the tip-based loop; leave one HAUL marker for later transit repair.
-                outPts.Add(new RawPoint(
+                OutPts.Add(new RawPoint(
                     LastHaul.Xr, LastHaul.Yr, LastHaul.DepthM, HAUL, LastHaul.PassNo, Pc.X, Pc.Y));
                 return J;
             }
 
             foreach ((Double X, Double Y) M in Moves)
             {
-                outPts.Add(new RawPoint(M.X, M.Y, 0.0, HAUL, LastHaul.PassNo, M.X, M.Y));
+                OutPts.Add(new RawPoint(M.X, M.Y, 0.0, HAUL, LastHaul.PassNo, M.X, M.Y));
             }
 
-            if ((outPts.Count == 0) || (Dist((outPts[outPts.Count - 1].Xs, outPts[outPts.Count - 1].Ys), Pc) > 1e-3))
+            if ((OutPts.Count == 0) || (Dist((OutPts[OutPts.Count - 1].Xs, OutPts[OutPts.Count - 1].Ys), Pc) > Constants.PATH_JOIN_COMPARISON_TOLERANCE))
             {
-                outPts.Add(new RawPoint(
+                OutPts.Add(new RawPoint(
                     LastHaul.Xr, LastHaul.Yr, LastHaul.DepthM, HAUL, LastHaul.PassNo, Pc.X, Pc.Y));
             }
 
@@ -3286,38 +3293,38 @@ namespace HaulBuilder
         }
 
         /// <summary>
-        /// Longest in-field distance from <paramref name="from"/> along unit <paramref name="u"/> up to <paramref name="maxLenM"/>.
+        /// Longest in-field distance from <paramref name="From"/> along unit <paramref name="U"/> up to <paramref name="MaxLenM"/>.
         /// </summary>
-        /// <param name="from">Start point (assumed in-field or on the tip).</param>
-        /// <param name="u">Unit direction (east, north).</param>
-        /// <param name="maxLenM">Maximum length to probe.</param>
-        /// <param name="field">Field mask; null treats the full length as free.</param>
+        /// <param name="From">Start point (assumed in-field or on the tip).</param>
+        /// <param name="U">Unit direction (east, north).</param>
+        /// <param name="MaxLenM">Maximum length to probe.</param>
+        /// <param name="Field">Field mask; null treats the full length as free.</param>
         /// <returns>In-field length in metres (≥ 0).</returns>
         static private Double InFieldRayLengthM
             (
-            (Double X, Double Y) from,
-            (Double X, Double Y) u,
-            Double maxLenM,
-            Grid? field
+            (Double X, Double Y) From,
+            (Double X, Double Y) U,
+            Double MaxLenM,
+            Grid? Field
             )
         {
-            if (maxLenM <= 1e-9)
+            if (MaxLenM <= Constants.NUMERIC_COMPARISON_TOLERANCE)
             {
                 return 0.0;
             }
 
-            if (field == null)
+            if (Field == null)
             {
-                return maxLenM;
+                return MaxLenM;
             }
 
-            Double Step = Math.Max(0.25, maxLenM / 24.0);
+            Double Step = Math.Max(Constants.QUARTER_SCALE, MaxLenM / 24.0);
             Double Ok = 0.0;
-            for (Double T = Step; T <= (maxLenM + 1e-9); T += Step)
+            for (Double T = Step; T <= (MaxLenM + Constants.NUMERIC_COMPARISON_TOLERANCE); T += Step)
             {
-                Double X = from.X + (T * u.X);
-                Double Y = from.Y + (T * u.Y);
-                if (!field.ContainsWorldXy(X, Y))
+                Double X = From.X + (T * U.X);
+                Double Y = From.Y + (T * U.Y);
+                if (!Field.ContainsWorldXy(X, Y))
                 {
                     break;
                 }
@@ -3325,10 +3332,10 @@ namespace HaulBuilder
                 Ok = T;
             }
 
-            (Double X, Double Y) Tip = (from.X + (maxLenM * u.X), from.Y + (maxLenM * u.Y));
-            if (field.ContainsWorldXy(Tip.X, Tip.Y))
+            (Double X, Double Y) Tip = (From.X + (MaxLenM * U.X), From.Y + (MaxLenM * U.Y));
+            if (Field.ContainsWorldXy(Tip.X, Tip.Y))
             {
-                Ok = Math.Max(Ok, maxLenM);
+                Ok = Math.Max(Ok, MaxLenM);
             }
 
             return Ok;
@@ -3341,42 +3348,42 @@ namespace HaulBuilder
         /// Straight lineup is preferred when it stays in-field. When it cannot, this is the
         /// fallback: minimum curve at R that stays in the field — never a full-circle bulb.
         /// </remarks>
-        /// <param name="start">Current tip.</param>
-        /// <param name="headingInDeg">Inbound compass heading.</param>
-        /// <param name="end">Lineup entry / exit target.</param>
-        /// <param name="headingOutDeg">Outbound compass heading at <paramref name="end"/>.</param>
-        /// <param name="turnRadiusM">Minimum turn radius in metres.</param>
-        /// <param name="sampleM">Sample spacing in metres.</param>
-        /// <param name="field">Field mask (required for in-field preference).</param>
+        /// <param name="Start">Current tip.</param>
+        /// <param name="HeadingInDeg">Inbound compass heading.</param>
+        /// <param name="End">Lineup entry / exit target.</param>
+        /// <param name="HeadingOutDeg">Outbound compass heading at <paramref name="End"/>.</param>
+        /// <param name="TurnRadiusM">Minimum turn radius in metres.</param>
+        /// <param name="SampleM">Sample spacing in metres.</param>
+        /// <param name="Field">Field mask (required for in-field preference).</param>
         /// <returns>Intermediate waypoints, or null when no short in-field path exists.</returns>
         static private List<(Double X, Double Y)>? MinCurveInFieldReconnect
             (
-            (Double X, Double Y) start,
-            Double headingInDeg,
-            (Double X, Double Y) end,
-            Double headingOutDeg,
-            Double turnRadiusM,
-            Double sampleM,
-            Grid field
+            (Double X, Double Y) Start,
+            Double HeadingInDeg,
+            (Double X, Double Y) End,
+            Double HeadingOutDeg,
+            Double TurnRadiusM,
+            Double SampleM,
+            Grid Field
             )
         {
-            Double St = CompassToMath(headingInDeg);
-            Double Et = CompassToMath(headingOutDeg);
-            Double Chord = Dist(start, end);
-            Double Cap = (Math.PI * turnRadiusM) + Chord;
+            Double St = CompassToMath(HeadingInDeg);
+            Double Et = CompassToMath(HeadingOutDeg);
+            Double Chord = Dist(Start, End);
+            Double Cap = (Math.PI * TurnRadiusM) + Chord;
             // Intent: same-side CSC first (gentlest); then any short CSC; reject paths that leave the field.
             List<(Double X, Double Y)>? Soft = DubinsShortest(
-                start.X, start.Y, St, end.X, end.Y, Et, turnRadiusM, sampleM, false, true, field);
-            if ((Soft != null) && (Soft.Count > 0) && (PolylineLengthM(start, Soft) <= Cap)
-                && (CountOutsideField(Soft, field) == 0))
+                Start.X, Start.Y, St, End.X, End.Y, Et, TurnRadiusM, SampleM, false, true, Field);
+            if ((Soft != null) && (Soft.Count > 0) && (PolylineLengthM(Start, Soft) <= Cap)
+                && (CountOutsideField(Soft, Field) == 0))
             {
                 return Soft;
             }
 
             List<(Double X, Double Y)>? Any = DubinsShortest(
-                start.X, start.Y, St, end.X, end.Y, Et, turnRadiusM, sampleM, false, false, field);
-            if ((Any != null) && (Any.Count > 0) && (PolylineLengthM(start, Any) <= Cap)
-                && (CountOutsideField(Any, field) == 0))
+                Start.X, Start.Y, St, End.X, End.Y, Et, TurnRadiusM, SampleM, false, false, Field);
+            if ((Any != null) && (Any.Count > 0) && (PolylineLengthM(Start, Any) <= Cap)
+                && (CountOutsideField(Any, Field) == 0))
             {
                 return Any;
             }
@@ -3392,29 +3399,29 @@ namespace HaulBuilder
         /// clip to the longest in-field straight and reconnect with the minimum in-field R-curve —
         /// never leave the mask and never invent a full-circle approach just to force full L.
         /// </remarks>
-        /// <param name="outPts">Points already emitted (modified in place).</param>
-        /// <param name="raw">Full input track.</param>
-        /// <param name="index">Index of the run-start point in <paramref name="raw"/>.</param>
-        /// <param name="cur">Run-start raw point.</param>
-        /// <param name="equipmentLengthM">Required straight length in metres.</param>
-        /// <param name="sampleM">Sample spacing in metres.</param>
-        /// <param name="turnRadiusM">Turn radius for reconnect headlands.</param>
-        /// <param name="field">Field mask for in-field reconnect turns.</param>
+        /// <param name="OutPts">Points already emitted (modified in place).</param>
+        /// <param name="Raw">Full input track.</param>
+        /// <param name="Index">Index of the run-start point in <paramref name="Raw"/>.</param>
+        /// <param name="Cur">Run-start raw point.</param>
+        /// <param name="EquipmentLengthM">Required straight length in metres.</param>
+        /// <param name="SampleM">Sample spacing in metres.</param>
+        /// <param name="TurnRadiusM">Turn radius for reconnect headlands.</param>
+        /// <param name="Field">Field mask for in-field reconnect turns.</param>
         static private void InsertEntryLineup
             (
-            List<RawPoint> outPts,
-            List<RawPoint> raw,
-            Int32 index,
-            RawPoint cur,
-            Double equipmentLengthM,
-            Double sampleM,
-            Double turnRadiusM,
-            Grid field
+            List<RawPoint> OutPts,
+            List<RawPoint> Raw,
+            Int32 Index,
+            RawPoint Cur,
+            Double EquipmentLengthM,
+            Double SampleM,
+            Double TurnRadiusM,
+            Grid Field
             )
         {
-            (Double X, Double Y) B = (cur.Xs, cur.Ys);
-            (Double X, Double Y) C = (raw[index + 1].Xs, raw[index + 1].Ys);
-            if (Dist(B, C) < 1e-6)
+            (Double X, Double Y) B = (Cur.Xs, Cur.Ys);
+            (Double X, Double Y) C = (Raw[Index + 1].Xs, Raw[Index + 1].Ys);
+            if (Dist(B, C) < Constants.GEOMETRY_COMPARISON_TOLERANCE)
             {
                 return;
             }
@@ -3423,24 +3430,24 @@ namespace HaulBuilder
             (Double X, Double Y) U = ForwardEn(Hout);
             // Intent: approach from behind the tip; clip to the longest in-field straight ≤ L.
             (Double X, Double Y) Back = (-U.X, -U.Y);
-            Double StraightL = InFieldRayLengthM(B, Back, equipmentLengthM, field);
-            if (StraightL <= 1e-6)
+            Double StraightL = InFieldRayLengthM(B, Back, EquipmentLengthM, Field);
+            if (StraightL <= Constants.GEOMETRY_COMPARISON_TOLERANCE)
             {
                 // Intent: no in-field straight room — leave existing approach (may be short).
                 return;
             }
 
             (Double X, Double Y) A = (B.X + (StraightL * Back.X), B.Y + (StraightL * Back.Y));
-            if (MeasureStraightApproachM(outPts, B, Hout) >= (StraightL * 0.95))
+            if (MeasureStraightApproachM(OutPts, B, Hout) >= (StraightL * 0.95))
             {
                 return;
             }
 
-            if (outPts.Count > 0)
+            if (OutPts.Count > 0)
             {
-                RawPoint Prev = outPts[outPts.Count - 1];
+                RawPoint Prev = OutPts[OutPts.Count - 1];
                 (Double X, Double Y) P = (Prev.Xs, Prev.Ys);
-                Double TipTol = Math.Max(2.0, 0.15 * equipmentLengthM);
+                Double TipTol = Math.Max(2.0, 0.15 * EquipmentLengthM);
                 if (Dist(P, B) <= TipTol)
                 {
                     // Intent: START/RETURN may slide back to the (in-field) lineup entry; a HAUL/MOVE
@@ -3450,23 +3457,23 @@ namespace HaulBuilder
                         return;
                     }
 
-                    outPts[outPts.Count - 1] = new RawPoint(
+                    OutPts[OutPts.Count - 1] = new RawPoint(
                         Prev.Xr, Prev.Yr, Prev.DepthM, Prev.Action, Prev.PassNo, A.X, A.Y);
                 }
                 else if (Dist(P, A) > 1.0)
                 {
                     Double Hin = Hout;
-                    if (outPts.Count >= 2)
+                    if (OutPts.Count >= 2)
                     {
-                        RawPoint Prev2 = outPts[outPts.Count - 2];
-                        if (Dist((Prev2.Xs, Prev2.Ys), P) > 1e-6)
+                        RawPoint Prev2 = OutPts[OutPts.Count - 2];
+                        if (Dist((Prev2.Xs, Prev2.Ys), P) > Constants.GEOMETRY_COMPARISON_TOLERANCE)
                         {
                             Hin = BearingDeg((Prev2.Xs, Prev2.Ys), P);
                         }
                     }
 
                     List<(Double X, Double Y)>? Conn = MinCurveInFieldReconnect(
-                        P, Hin, A, Hout, turnRadiusM, sampleM, field);
+                        P, Hin, A, Hout, TurnRadiusM, SampleM, Field);
                     if (Conn == null)
                     {
                         // Intent: cut corridor already feeds the tip — keep the shorter approach.
@@ -3475,119 +3482,119 @@ namespace HaulBuilder
 
                     foreach ((Double X, Double Y) M in Conn)
                     {
-                        outPts.Add(new RawPoint(M.X, M.Y, 0.0, MOVE, cur.PassNo, M.X, M.Y));
+                        OutPts.Add(new RawPoint(M.X, M.Y, 0.0, MOVE, Cur.PassNo, M.X, M.Y));
                     }
 
-                    if ((outPts.Count == 0)
-                        || (Dist((outPts[outPts.Count - 1].Xs, outPts[outPts.Count - 1].Ys), A) > 1e-3))
+                    if ((OutPts.Count == 0)
+                        || (Dist((OutPts[OutPts.Count - 1].Xs, OutPts[OutPts.Count - 1].Ys), A) > Constants.PATH_JOIN_COMPARISON_TOLERANCE))
                     {
-                        outPts.Add(new RawPoint(A.X, A.Y, 0.0, MOVE, cur.PassNo, A.X, A.Y));
+                        OutPts.Add(new RawPoint(A.X, A.Y, 0.0, MOVE, Cur.PassNo, A.X, A.Y));
                     }
                 }
             }
             else
             {
-                outPts.Add(new RawPoint(A.X, A.Y, 0.0, MOVE, cur.PassNo, A.X, A.Y));
+                OutPts.Add(new RawPoint(A.X, A.Y, 0.0, MOVE, Cur.PassNo, A.X, A.Y));
             }
 
             List<(Double X, Double Y)> Spur = new List<(Double X, Double Y)>();
-            AppendLineSamples(Spur, A, B, sampleM, includeEnd: false);
+            AppendLineSamples(Spur, A, B, SampleM, IncludeEnd: false);
             foreach ((Double X, Double Y) M in Spur)
             {
-                outPts.Add(new RawPoint(M.X, M.Y, 0.0, MOVE, cur.PassNo, M.X, M.Y));
+                OutPts.Add(new RawPoint(M.X, M.Y, 0.0, MOVE, Cur.PassNo, M.X, M.Y));
             }
         }
 
         /// <summary>
         /// Exit spur length: prefer full L, but never overshoot a same-corridor fill or leave the field.
         /// </summary>
-        /// <param name="e">Blade-down run tip.</param>
-        /// <param name="headingInDeg">Exit compass heading.</param>
-        /// <param name="equipmentLengthM">Nominal equipment length in metres.</param>
-        /// <param name="raw">Full input track (to locate the next FILL/GRADE).</param>
-        /// <param name="index">Index of the run tip in <paramref name="raw"/>.</param>
-        /// <param name="field">Field mask; null skips in-field clamping.</param>
+        /// <param name="E">Blade-down run tip.</param>
+        /// <param name="HeadingInDeg">Exit compass heading.</param>
+        /// <param name="EquipmentLengthM">Nominal equipment length in metres.</param>
+        /// <param name="Raw">Full input track (to locate the next FILL/GRADE).</param>
+        /// <param name="Index">Index of the run tip in <paramref name="Raw"/>.</param>
+        /// <param name="Field">Field mask; null skips in-field clamping.</param>
         /// <returns>Clamped exit length in metres (≥ 0).</returns>
         static private Double ClampedExitLineupLengthM
             (
-            (Double X, Double Y) e,
-            Double headingInDeg,
-            Double equipmentLengthM,
-            List<RawPoint> raw,
-            Int32 index,
-            Grid? field
+            (Double X, Double Y) E,
+            Double HeadingInDeg,
+            Double EquipmentLengthM,
+            List<RawPoint> Raw,
+            Int32 Index,
+            Grid? Field
             )
         {
-            Double Len = equipmentLengthM;
-            (Double X, Double Y) U = ForwardEn(headingInDeg);
+            Double Len = EquipmentLengthM;
+            (Double X, Double Y) U = ForwardEn(HeadingInDeg);
 
             // Intent: same-heading cut→fill ahead on the exit ray — stop short of the fill tip
             // so the gap is the approach; overshooting forces a ~360° return loop.
-            Int32 J = index + 1;
-            while ((J < raw.Count) && (raw[J].Action == MOVE))
+            Int32 J = Index + 1;
+            while ((J < Raw.Count) && (Raw[J].Action == MOVE))
             {
                 J += 1;
             }
 
-            while ((J < raw.Count) && (raw[J].Action == HAUL))
+            while ((J < Raw.Count) && (Raw[J].Action == HAUL))
             {
                 J += 1;
             }
 
-            if ((J < raw.Count) && ((raw[J].Action == FILL) || (raw[J].Action == GRADE)))
+            if ((J < Raw.Count) && ((Raw[J].Action == FILL) || (Raw[J].Action == GRADE)))
             {
-                (Double X, Double Y) Pd = (raw[J].Xs, raw[J].Ys);
-                Double Along = ((Pd.X - e.X) * U.X) + ((Pd.Y - e.Y) * U.Y);
-                Double Lateral = Math.Abs(((Pd.X - e.X) * (-U.Y)) + ((Pd.Y - e.Y) * U.X));
-                Double Corridor = Math.Max(2.0, 0.5 * equipmentLengthM);
-                if ((Along > 1e-3) && (Lateral <= Corridor))
+                (Double X, Double Y) Pd = (Raw[J].Xs, Raw[J].Ys);
+                Double Along = ((Pd.X - E.X) * U.X) + ((Pd.Y - E.Y) * U.Y);
+                Double Lateral = Math.Abs(((Pd.X - E.X) * (-U.Y)) + ((Pd.Y - E.Y) * U.X));
+                Double Corridor = Math.Max(2.0, Constants.HALF_SCALE * EquipmentLengthM);
+                if ((Along > Constants.PATH_JOIN_COMPARISON_TOLERANCE) && (Lateral <= Corridor))
                 {
-                    Len = Math.Min(Len, Math.Max(0.0, Along - 0.5));
+                    Len = Math.Min(Len, Math.Max(0.0, Along - Constants.HALF_SCALE));
                 }
             }
 
             // Intent: field wins over straight L — clip to the longest in-field ray.
-            Len = Math.Min(Len, InFieldRayLengthM(e, U, Len, field));
+            Len = Math.Min(Len, InFieldRayLengthM(E, U, Len, Field));
             return Len;
         }
 
         /// <summary>
         /// Inserts a blade-up exit past the end of a CUT/FILL run (straight in-field, else min curve).
         /// </summary>
-        /// <param name="outPts">Points already emitted including the run tip (modified in place).</param>
-        /// <param name="raw">Full input track (for measuring an exit already built by U-turn coalesce).</param>
-        /// <param name="index">Index of the run-end point in <paramref name="raw"/>.</param>
-        /// <param name="cur">Last CUT/FILL point of the run.</param>
-        /// <param name="equipmentLengthM">Required straight exit length in metres.</param>
-        /// <param name="sampleM">Sample spacing in metres.</param>
-        /// <param name="field">Field mask — exit must stay inside.</param>
-        /// <param name="turnRadiusM">Turn radius for a min-curve exit when straight L will not fit.</param>
+        /// <param name="OutPts">Points already emitted including the run tip (modified in place).</param>
+        /// <param name="Raw">Full input track (for measuring an exit already built by U-turn coalesce).</param>
+        /// <param name="Index">Index of the run-end point in <paramref name="Raw"/>.</param>
+        /// <param name="Cur">Last CUT/FILL point of the run.</param>
+        /// <param name="EquipmentLengthM">Required straight exit length in metres.</param>
+        /// <param name="SampleM">Sample spacing in metres.</param>
+        /// <param name="Field">Field mask — exit must stay inside.</param>
+        /// <param name="TurnRadiusM">Turn radius for a min-curve exit when straight L will not fit.</param>
         static private void InsertExitLineup
             (
-            List<RawPoint> outPts,
-            List<RawPoint> raw,
-            Int32 index,
-            RawPoint cur,
-            Double equipmentLengthM,
-            Double sampleM,
-            Grid field,
-            Double turnRadiusM = 0.0
+            List<RawPoint> OutPts,
+            List<RawPoint> Raw,
+            Int32 Index,
+            RawPoint Cur,
+            Double EquipmentLengthM,
+            Double SampleM,
+            Grid Field,
+            Double TurnRadiusM = 0.0
             )
         {
-            (Double X, Double Y) E = (cur.Xs, cur.Ys);
+            (Double X, Double Y) E = (Cur.Xs, Cur.Ys);
             // Intent: exit along the heading used to arrive at the tip (last in-run leg).
             Double Hin = 0.0;
             Boolean HaveHin = false;
-            for (Int32 J = outPts.Count - 2; J >= 0; J -= 1)
+            for (Int32 J = OutPts.Count - 2; J >= 0; J -= 1)
             {
-                RawPoint P = outPts[J];
-                if (P.Action != cur.Action)
+                RawPoint P = OutPts[J];
+                if (P.Action != Cur.Action)
                 {
                     break;
                 }
 
                 (Double X, Double Y) Q = (P.Xs, P.Ys);
-                if (Dist(Q, E) > 1e-6)
+                if (Dist(Q, E) > Constants.GEOMETRY_COMPARISON_TOLERANCE)
                 {
                     Hin = BearingDeg(Q, E);
                     HaveHin = true;
@@ -3600,18 +3607,18 @@ namespace HaulBuilder
                 return;
             }
 
-            Double ExitLen = ClampedExitLineupLengthM(E, Hin, equipmentLengthM, raw, index, field);
+            Double ExitLen = ClampedExitLineupLengthM(E, Hin, EquipmentLengthM, Raw, Index, Field);
             (Double X, Double Y) U = ForwardEn(Hin);
 
             // Intent: when straight L will not fit in-field (and we are not stopping short of a
             // same-corridor fill), bend into available field with the minimum R-curve.
-            if ((ExitLen < (0.5 * equipmentLengthM)) && (turnRadiusM > 1e-6)
-                && (InFieldRayLengthM(E, U, equipmentLengthM, field) < (0.5 * equipmentLengthM)))
+            if ((ExitLen < (Constants.HALF_SCALE * EquipmentLengthM)) && (TurnRadiusM > Constants.GEOMETRY_COMPARISON_TOLERANCE)
+                && (InFieldRayLengthM(E, U, EquipmentLengthM, Field) < (Constants.HALF_SCALE * EquipmentLengthM)))
             {
                 // Intent: target a pose ~L ahead along Hin if in-field, else a side offset into field.
-                (Double X, Double Y) Ideal = (E.X + (equipmentLengthM * U.X), E.Y + (equipmentLengthM * U.Y));
+                (Double X, Double Y) Ideal = (E.X + (EquipmentLengthM * U.X), E.Y + (EquipmentLengthM * U.Y));
                 (Double X, Double Y) Target = Ideal;
-                if (!field.ContainsWorldXy(Ideal.X, Ideal.Y))
+                if (!Field.ContainsWorldXy(Ideal.X, Ideal.Y))
                 {
                     (Double X, Double Y) Left = (-U.Y, U.X);
                     (Double X, Double Y) Right = (U.Y, -U.X);
@@ -3619,12 +3626,12 @@ namespace HaulBuilder
                     Double BestAlong = -1.0;
                     foreach ((Double X, Double Y) Side in new[] { Left, Right })
                     {
-                        for (Double F = turnRadiusM; F <= (equipmentLengthM + 1e-9); F += Math.Max(sampleM, turnRadiusM * 0.25))
+                        for (Double F = TurnRadiusM; F <= (EquipmentLengthM + Constants.NUMERIC_COMPARISON_TOLERANCE); F += Math.Max(SampleM, TurnRadiusM * Constants.QUARTER_SCALE))
                         {
                             (Double X, Double Y) Cand = (
-                                E.X + (F * U.X) + (turnRadiusM * Side.X),
-                                E.Y + (F * U.Y) + (turnRadiusM * Side.Y));
-                            if (!field.ContainsWorldXy(Cand.X, Cand.Y))
+                                E.X + (F * U.X) + (TurnRadiusM * Side.X),
+                                E.Y + (F * U.Y) + (TurnRadiusM * Side.Y));
+                            if (!Field.ContainsWorldXy(Cand.X, Cand.Y))
                             {
                                 continue;
                             }
@@ -3647,21 +3654,21 @@ namespace HaulBuilder
                     }
                 }
 
-                if (Dist(E, Target) > 1e-3)
+                if (Dist(E, Target) > Constants.PATH_JOIN_COMPARISON_TOLERANCE)
                 {
                     List<(Double X, Double Y)>? Curve = MinCurveInFieldReconnect(
-                        E, Hin, Target, Hin, turnRadiusM, sampleM, field);
+                        E, Hin, Target, Hin, TurnRadiusM, SampleM, Field);
                     if ((Curve != null) && (Curve.Count > 0))
                     {
                         foreach ((Double X, Double Y) M in Curve)
                         {
-                            outPts.Add(new RawPoint(M.X, M.Y, 0.0, MOVE, cur.PassNo, M.X, M.Y));
+                            OutPts.Add(new RawPoint(M.X, M.Y, 0.0, MOVE, Cur.PassNo, M.X, M.Y));
                         }
 
-                        if (Dist((outPts[outPts.Count - 1].Xs, outPts[outPts.Count - 1].Ys), Target) > 1e-3)
+                        if (Dist((OutPts[OutPts.Count - 1].Xs, OutPts[OutPts.Count - 1].Ys), Target) > Constants.PATH_JOIN_COMPARISON_TOLERANCE)
                         {
-                            outPts.Add(new RawPoint(
-                                Target.X, Target.Y, 0.0, MOVE, cur.PassNo, Target.X, Target.Y));
+                            OutPts.Add(new RawPoint(
+                                Target.X, Target.Y, 0.0, MOVE, Cur.PassNo, Target.X, Target.Y));
                         }
 
                         return;
@@ -3669,21 +3676,21 @@ namespace HaulBuilder
                 }
             }
 
-            if (ExitLen <= 1e-6)
+            if (ExitLen <= Constants.GEOMETRY_COMPARISON_TOLERANCE)
             {
                 return;
             }
 
             (Double X, Double Y) ExitEnd = (E.X + (ExitLen * U.X), E.Y + (ExitLen * U.Y));
             // Intent: U-turn coalesce may already have emitted the exit spur as MOVE after E.
-            if (MeasureStraightExitAheadM(raw, index, E, Hin) >= (ExitLen * 0.95))
+            if (MeasureStraightExitAheadM(Raw, Index, E, Hin) >= (ExitLen * 0.95))
             {
                 // Intent: copy that spur so Out ends at ExitEnd before any HAUL rebuild.
                 (Double X, Double Y) CurXy = E;
                 Double Along = 0.0;
-                for (Int32 I = index + 1; I < raw.Count; I += 1)
+                for (Int32 I = Index + 1; I < Raw.Count; I += 1)
                 {
-                    RawPoint P = raw[I];
+                    RawPoint P = Raw[I];
                     if (P.Action != MOVE)
                     {
                         break;
@@ -3692,7 +3699,7 @@ namespace HaulBuilder
                     (Double X, Double Y) Q = (P.Xs, P.Ys);
                     (Double X, Double Y) Dlt = (Q.X - CurXy.X, Q.Y - CurXy.Y);
                     Double Seg = Math.Sqrt((Dlt.X * Dlt.X) + (Dlt.Y * Dlt.Y));
-                    if (Seg < 1e-9)
+                    if (Seg < Constants.NUMERIC_COMPARISON_TOLERANCE)
                     {
                         CurXy = Q;
                         continue;
@@ -3704,7 +3711,7 @@ namespace HaulBuilder
                         break;
                     }
 
-                    outPts.Add(P);
+                    OutPts.Add(P);
                     Along += Seg;
                     CurXy = Q;
                     if (Along >= (ExitLen * 0.95))
@@ -3717,35 +3724,35 @@ namespace HaulBuilder
             }
 
             List<(Double X, Double Y)> Spur = new List<(Double X, Double Y)>();
-            AppendLineSamples(Spur, E, ExitEnd, sampleM, includeEnd: true);
+            AppendLineSamples(Spur, E, ExitEnd, SampleM, IncludeEnd: true);
             foreach ((Double X, Double Y) M in Spur)
             {
-                outPts.Add(new RawPoint(M.X, M.Y, 0.0, MOVE, cur.PassNo, M.X, M.Y));
+                OutPts.Add(new RawPoint(M.X, M.Y, 0.0, MOVE, Cur.PassNo, M.X, M.Y));
             }
         }
 
         /// <summary>
         /// Length of an existing straight blade-up exit after a run tip in the input track.
         /// </summary>
-        /// <param name="raw">Full input track.</param>
-        /// <param name="index">Index of the run-end point.</param>
-        /// <param name="e">Blade-down run end.</param>
-        /// <param name="headingDeg">Exit compass heading.</param>
+        /// <param name="Raw">Full input track.</param>
+        /// <param name="Index">Index of the run-end point.</param>
+        /// <param name="E">Blade-down run end.</param>
+        /// <param name="HeadingDeg">Exit compass heading.</param>
         /// <returns>Along-track exit length in metres.</returns>
         static private Double MeasureStraightExitAheadM
             (
-            List<RawPoint> raw,
-            Int32 index,
-            (Double X, Double Y) e,
-            Double headingDeg
+            List<RawPoint> Raw,
+            Int32 Index,
+            (Double X, Double Y) E,
+            Double HeadingDeg
             )
         {
-            (Double X, Double Y) U = ForwardEn(headingDeg);
+            (Double X, Double Y) U = ForwardEn(HeadingDeg);
             Double Along = 0.0;
-            (Double X, Double Y) Cur = e;
-            for (Int32 I = index + 1; I < raw.Count; I += 1)
+            (Double X, Double Y) Cur = E;
+            for (Int32 I = Index + 1; I < Raw.Count; I += 1)
             {
-                RawPoint P = raw[I];
+                RawPoint P = Raw[I];
                 if (P.Action != MOVE)
                 {
                     break;
@@ -3754,7 +3761,7 @@ namespace HaulBuilder
                 (Double X, Double Y) Q = (P.Xs, P.Ys);
                 (Double X, Double Y) Dlt = (Q.X - Cur.X, Q.Y - Cur.Y);
                 Double Seg = Math.Sqrt((Dlt.X * Dlt.X) + (Dlt.Y * Dlt.Y));
-                if (Seg < 1e-9)
+                if (Seg < Constants.NUMERIC_COMPARISON_TOLERANCE)
                 {
                     Cur = Q;
                     continue;
@@ -3776,28 +3783,28 @@ namespace HaulBuilder
         /// <summary>
         /// Length of an existing straight blade-up approach into B along heading H.
         /// </summary>
-        /// <param name="outPts">Points already emitted (walked backward).</param>
-        /// <param name="b">Blade-down run start.</param>
-        /// <param name="headingDeg">Outbound compass heading of the run.</param>
+        /// <param name="OutPts">Points already emitted (walked backward).</param>
+        /// <param name="B">Blade-down run start.</param>
+        /// <param name="HeadingDeg">Outbound compass heading of the run.</param>
         /// <returns>Along-track approach length in metres.</returns>
         static private Double MeasureStraightApproachM
             (
-            List<RawPoint> outPts,
-            (Double X, Double Y) b,
-            Double headingDeg
+            List<RawPoint> OutPts,
+            (Double X, Double Y) B,
+            Double HeadingDeg
             )
         {
-            if (outPts.Count < 1)
+            if (OutPts.Count < 1)
             {
                 return 0.0;
             }
 
-            (Double X, Double Y) U = ForwardEn(headingDeg);
+            (Double X, Double Y) U = ForwardEn(HeadingDeg);
             Double Along = 0.0;
-            (Double X, Double Y) Cur = b;
-            for (Int32 I = outPts.Count - 1; I >= 0; I -= 1)
+            (Double X, Double Y) Cur = B;
+            for (Int32 I = OutPts.Count - 1; I >= 0; I -= 1)
             {
-                RawPoint P = outPts[I];
+                RawPoint P = OutPts[I];
                 if (!IsBladeUp(P.Action) && (P.Action != START))
                 {
                     break;
@@ -3806,7 +3813,7 @@ namespace HaulBuilder
                 (Double X, Double Y) Q = (P.Xs, P.Ys);
                 (Double X, Double Y) Dlt = (Cur.X - Q.X, Cur.Y - Q.Y);
                 Double Seg = Math.Sqrt((Dlt.X * Dlt.X) + (Dlt.Y * Dlt.Y));
-                if (Seg < 1e-9)
+                if (Seg < Constants.NUMERIC_COMPARISON_TOLERANCE)
                 {
                     Cur = Q;
                     continue;
@@ -3829,33 +3836,33 @@ namespace HaulBuilder
         /// <summary>
         /// Inserts R-radius MOVE headlands wherever a blade-down corner is too sharp.
         /// </summary>
-        /// <param name="raw">Assembled raw guidance records.</param>
-        /// <param name="turnRadiusM">Minimum turn radius in metres.</param>
-        /// <param name="turnThresholdDeg">Minimum heading change treated as a turn.</param>
-        /// <param name="sampleM">Arc sample spacing in metres.</param>
-        /// <param name="field">Field mask used to flip out-of-field keyholes/CSC.</param>
-        /// <param name="equipmentLengthM">Straight lineup before/after a coalesced U-turn (metres).</param>
+        /// <param name="Raw">Assembled raw guidance records.</param>
+        /// <param name="TurnRadiusM">Minimum turn radius in metres.</param>
+        /// <param name="TurnThresholdDeg">Minimum heading change treated as a turn.</param>
+        /// <param name="SampleM">Arc sample spacing in metres.</param>
+        /// <param name="Field">Field mask used to flip out-of-field keyholes/CSC.</param>
+        /// <param name="EquipmentLengthM">Straight lineup before/after a coalesced U-turn (metres).</param>
         /// <returns>Track with MOVE arcs inserted; coverage raw coords preserved.</returns>
         static private List<RawPoint> EnforceMinTurnRadius
             (
-            List<RawPoint> raw,
-            Double turnRadiusM,
-            Double turnThresholdDeg,
-            Double sampleM,
-            Grid field,
-            Double equipmentLengthM = 0.0
+            List<RawPoint> Raw,
+            Double TurnRadiusM,
+            Double TurnThresholdDeg,
+            Double SampleM,
+            Grid Field,
+            Double EquipmentLengthM = 0.0
             )
         {
-            if ((turnRadiusM <= 0.0) || (raw.Count < 3))
+            if ((TurnRadiusM <= 0.0) || (Raw.Count < 3))
             {
-                return raw;
+                return Raw;
             }
 
             List<RawPoint> Out = new List<RawPoint>();
             Int32 I = 0;
-            while (I < raw.Count)
+            while (I < Raw.Count)
             {
-                RawPoint Cur0 = raw[I];
+                RawPoint Cur0 = Raw[I];
                 if (!IsBladeDown(Cur0.Action))
                 {
                     Out.Add(Cur0);
@@ -3865,12 +3872,12 @@ namespace HaulBuilder
 
                 // Contiguous blade-down run of one action (CUT / FILL / GRADE).
                 Int32 J = I;
-                while ((J + 1 < raw.Count) && (raw[J + 1].Action == Cur0.Action))
+                while ((J + 1 < Raw.Count) && (Raw[J + 1].Action == Cur0.Action))
                 {
                     J += 1;
                 }
 
-                List<RawPoint> Run = raw.GetRange(I, (J - I) + 1);
+                List<RawPoint> Run = Raw.GetRange(I, (J - I) + 1);
                 // Intent: check entry from prior blade-up (RETURN/MOVE/HAUL) into the first CUT.
                 if ((Out.Count > 0) && (Run.Count >= 2))
                 {
@@ -3878,19 +3885,19 @@ namespace HaulBuilder
                     (Double X, Double Y) Pa0 = (PrevUp.Xs, PrevUp.Ys);
                     (Double X, Double Y) Pb0 = (Run[0].Xs, Run[0].Ys);
                     (Double X, Double Y) Pc0 = (Run[1].Xs, Run[1].Ys);
-                    if (SteerViolatesMinRadius(Pa0, Pb0, Pc0, turnRadiusM, turnThresholdDeg))
+                    if (SteerViolatesMinRadius(Pa0, Pb0, Pc0, TurnRadiusM, TurnThresholdDeg))
                     {
                         Double Hin0 = BearingDeg(Pa0, Pb0);
                         Double Hout0 = BearingDeg(Pb0, Pc0);
                         Double St0 = CompassToMath(Hin0);
                         Double Et0 = CompassToMath(Hout0);
                         List<(Double X, Double Y)>? Entry = HeadlandMovePoints(
-                            Pb0, Hin0, Pc0, Hout0, turnRadiusM, sampleM, field);
-                        Double Cap0 = 2.75 * Math.PI * turnRadiusM;
+                            Pb0, Hin0, Pc0, Hout0, TurnRadiusM, SampleM, Field);
+                        Double Cap0 = 2.75 * Math.PI * TurnRadiusM;
                         if ((Entry == null) || (Entry.Count == 0) || (PolylineLengthM(Pb0, Entry) > Cap0))
                         {
                             Entry = DubinsShortest(
-                                Pb0.X, Pb0.Y, St0, Pc0.X, Pc0.Y, Et0, turnRadiusM, sampleM, false, false, field);
+                                Pb0.X, Pb0.Y, St0, Pc0.X, Pc0.Y, Et0, TurnRadiusM, SampleM, false, false, Field);
                         }
 
                         Out.Add(Run[0]);
@@ -3934,7 +3941,7 @@ namespace HaulBuilder
                     }
 
                     Out.Add(Cur);
-                    if (!SteerViolatesMinRadius(A, B, C, turnRadiusM, turnThresholdDeg))
+                    if (!SteerViolatesMinRadius(A, B, C, TurnRadiusM, TurnThresholdDeg))
                     {
                         continue;
                     }
@@ -3946,7 +3953,7 @@ namespace HaulBuilder
                     (Int32 EndK, Double HoutDeg)? Uturn = null;
                     if (LocalTurnDeg >= UTURN_COALESCE_MIN_HEADING_DEG)
                     {
-                        Uturn = FindUturnExit(Run, K, turnRadiusM);
+                        Uturn = FindUturnExit(Run, K, TurnRadiusM);
                     }
 
                     if (Uturn.HasValue)
@@ -3959,35 +3966,35 @@ namespace HaulBuilder
                         // Intent: leave the inbound tip straight for L, turn, then enter reverse straight for L.
                         (Double X, Double Y) KeyStart = B;
                         (Double X, Double Y) KeyEnd = EndPt;
-                        if (equipmentLengthM > 1e-6)
+                        if (EquipmentLengthM > Constants.GEOMETRY_COMPARISON_TOLERANCE)
                         {
                             // Intent: lineup spurs must stay in-field; a full L past the tip often exits the mask.
-                            Double ExitL = InFieldRayLengthM(B, Uin, equipmentLengthM, field);
+                            Double ExitL = InFieldRayLengthM(B, Uin, EquipmentLengthM, Field);
                             Double EntryL = InFieldRayLengthM(
-                                EndPt, (-Uout.X, -Uout.Y), equipmentLengthM, field);
+                                EndPt, (-Uout.X, -Uout.Y), EquipmentLengthM, Field);
                             KeyStart = (B.X + (ExitL * Uin.X), B.Y + (ExitL * Uin.Y));
                             KeyEnd = (EndPt.X - (EntryL * Uout.X), EndPt.Y - (EntryL * Uout.Y));
                         }
 
                         List<(Double X, Double Y)> KeyMoves = HeadlandMovePoints(
-                            KeyStart, Hin, KeyEnd, HoutU, turnRadiusM, sampleM, field);
+                            KeyStart, Hin, KeyEnd, HoutU, TurnRadiusM, SampleM, Field);
                         // Intent: if lineup tips blocked an in-field keyhole, retry from the coverage tips.
                         if ((KeyMoves.Count == 0)
-                            && ((Dist(KeyStart, B) > 1e-3) || (Dist(KeyEnd, EndPt) > 1e-3)))
+                            && ((Dist(KeyStart, B) > Constants.PATH_JOIN_COMPARISON_TOLERANCE) || (Dist(KeyEnd, EndPt) > Constants.PATH_JOIN_COMPARISON_TOLERANCE)))
                         {
                             KeyStart = B;
                             KeyEnd = EndPt;
                             KeyMoves = HeadlandMovePoints(
-                                KeyStart, Hin, KeyEnd, HoutU, turnRadiusM, sampleM, field);
+                                KeyStart, Hin, KeyEnd, HoutU, TurnRadiusM, SampleM, Field);
                         }
 
                         // Intent: never SkipTurn a reverse window if the keyhole builder produced nothing.
-                        if ((KeyMoves.Count > 0) || (Dist(KeyStart, KeyEnd) < 1e-3))
+                        if ((KeyMoves.Count > 0) || (Dist(KeyStart, KeyEnd) < Constants.PATH_JOIN_COMPARISON_TOLERANCE))
                         {
-                            if (Dist(B, KeyStart) > 1e-3)
+                            if (Dist(B, KeyStart) > Constants.PATH_JOIN_COMPARISON_TOLERANCE)
                             {
                                 List<(Double X, Double Y)> ExitSpur = new List<(Double X, Double Y)>();
-                                AppendLineSamples(ExitSpur, B, KeyStart, sampleM, includeEnd: true);
+                                AppendLineSamples(ExitSpur, B, KeyStart, SampleM, IncludeEnd: true);
                                 foreach ((Double X, Double Y) M in ExitSpur)
                                 {
                                     Out.Add(new RawPoint(M.X, M.Y, 0.0, MOVE, Cur.PassNo, M.X, M.Y));
@@ -3999,10 +4006,10 @@ namespace HaulBuilder
                                 Out.Add(new RawPoint(M.X, M.Y, 0.0, MOVE, Cur.PassNo, M.X, M.Y));
                             }
 
-                            if (Dist(KeyEnd, EndPt) > 1e-3)
+                            if (Dist(KeyEnd, EndPt) > Constants.PATH_JOIN_COMPARISON_TOLERANCE)
                             {
                                 List<(Double X, Double Y)> Spur = new List<(Double X, Double Y)>();
-                                AppendLineSamples(Spur, KeyEnd, EndPt, sampleM, includeEnd: false);
+                                AppendLineSamples(Spur, KeyEnd, EndPt, SampleM, IncludeEnd: false);
                                 foreach ((Double X, Double Y) M in Spur)
                                 {
                                     Out.Add(new RawPoint(M.X, M.Y, 0.0, MOVE, Cur.PassNo, M.X, M.Y));
@@ -4032,24 +4039,24 @@ namespace HaulBuilder
                     Double DotF = Math.Max(-1.0, Math.Min(1.0, (UinF.X * UoutF.X) + (UinF.Y * UoutF.Y)));
                     Double PhiF = Math.Atan2(CrossF, DotF);
                     Double TangLen = 0.0;
-                    if (Math.Abs(PhiF) >= 1e-3)
+                    if (Math.Abs(PhiF) >= Constants.PATH_JOIN_COMPARISON_TOLERANCE)
                     {
-                        Double TanHalf = Math.Tan(Math.Abs(PhiF) * 0.5);
-                        if (TanHalf > 1e-9)
+                        Double TanHalf = Math.Tan(Math.Abs(PhiF) * Constants.HALF_SCALE);
+                        if (TanHalf > Constants.NUMERIC_COMPARISON_TOLERANCE)
                         {
-                            TangLen = turnRadiusM * TanHalf;
+                            TangLen = TurnRadiusM * TanHalf;
                         }
                     }
 
                     Double InAvail = Math.Max(
                         RunAlignedLengthM(Run, K, Hin, -1, Math.Max(TangLen, Dist(A, B))),
-                        RunPathLengthM(Run, K, -1, Math.Max(TangLen, turnRadiusM)));
+                        RunPathLengthM(Run, K, -1, Math.Max(TangLen, TurnRadiusM)));
                     Double OutAvail = Math.Max(
                         RunAlignedLengthM(Run, K, Hout, 1, Math.Max(TangLen, Dist(B, C))),
-                        RunPathLengthM(Run, K, 1, Math.Max(TangLen, turnRadiusM)));
+                        RunPathLengthM(Run, K, 1, Math.Max(TangLen, TurnRadiusM)));
                     (Double X, Double Y) FilletEnd = C;
                     Int32 FilletEndIndex = K + 1;
-                    if ((TangLen > 1e-6) && (OutAvail >= (TangLen - 1e-6)))
+                    if ((TangLen > Constants.GEOMETRY_COMPARISON_TOLERANCE) && (OutAvail >= (TangLen - Constants.GEOMETRY_COMPARISON_TOLERANCE)))
                     {
                         (Double X, Double Y)? Along = PointAlongRunOutbound(Run, K, TangLen, out FilletEndIndex);
                         if (Along.HasValue)
@@ -4060,19 +4067,19 @@ namespace HaulBuilder
 
                     (Double X, Double Y) TangentIn;
                     List<(Double X, Double Y)>? Fillet = null;
-                    if ((TangLen > 1e-6) && (InAvail >= (TangLen - 1e-6)) && (OutAvail >= (TangLen - 1e-6)))
+                    if ((TangLen > Constants.GEOMETRY_COMPARISON_TOLERANCE) && (InAvail >= (TangLen - Constants.GEOMETRY_COMPARISON_TOLERANCE)) && (OutAvail >= (TangLen - Constants.GEOMETRY_COMPARISON_TOLERANCE)))
                     {
                         Fillet = ClassicCornerFillet(
-                            B, Hin, FilletEnd, Hout, turnRadiusM, sampleM, InAvail, out TangentIn);
+                            B, Hin, FilletEnd, Hout, TurnRadiusM, SampleM, InAvail, out TangentIn);
                     }
                     else
                     {
                         TangentIn = B;
                         Fillet = ClassicCornerFillet(
-                            B, Hin, C, Hout, turnRadiusM, sampleM, Dist(A, B), out TangentIn);
+                            B, Hin, C, Hout, TurnRadiusM, SampleM, Dist(A, B), out TangentIn);
                     }
 
-                    if ((Fillet != null) && (CountOutsideFieldPointsOnly(Fillet, field) == 0))
+                    if ((Fillet != null) && (CountOutsideFieldPointsOnly(Fillet, Field) == 0))
                     {
                         Int32 Last = Out.Count - 1;
                         RawPoint Apex = Out[Last];
@@ -4102,40 +4109,40 @@ namespace HaulBuilder
                     // Soft / dogleg fallback. Never leave a sharp corner.
                     (Double X, Double Y) Ucap = ForwardEn(Hin);
                     (Double X, Double Y) Vcap = ForwardEn(Hout);
-                    Boolean NearReverse = ((Ucap.X * Vcap.X) + (Ucap.Y * Vcap.Y)) < -0.5;
+                    Boolean NearReverse = ((Ucap.X * Vcap.X) + (Ucap.Y * Vcap.Y)) < -Constants.HALF_SCALE;
                     List<(Double X, Double Y)> Moves;
                     Double Cap;
                     if (NearReverse)
                     {
                         Moves = HeadlandMovePoints(
-                            B, Hin, C, Hout, turnRadiusM, sampleM, field);
-                        Cap = (2.75 * Math.PI * turnRadiusM)
-                            + (KEYHOLE_SPUR_BUDGET_FRAC_R * turnRadiusM);
+                            B, Hin, C, Hout, TurnRadiusM, SampleM, Field);
+                        Cap = (2.75 * Math.PI * TurnRadiusM)
+                            + (KEYHOLE_SPUR_BUDGET_FRAC_R * TurnRadiusM);
                     }
                     else
                     {
                         // Intent: soft 90° stairs stay CSC/fillet-capped — never a keyhole bulb.
                         Double SoftSt = CompassToMath(Hin);
                         Double SoftEt = CompassToMath(Hout);
-                        Cap = (1.5 * Math.PI * turnRadiusM) + Dist(B, C) + turnRadiusM;
+                        Cap = (1.5 * Math.PI * TurnRadiusM) + Dist(B, C) + TurnRadiusM;
                         List<(Double X, Double Y)>? SoftCsc = DubinsShortest(
-                            B.X, B.Y, SoftSt, C.X, C.Y, SoftEt, turnRadiusM, sampleM,
-                            false, true, field, Hin);
+                            B.X, B.Y, SoftSt, C.X, C.Y, SoftEt, TurnRadiusM, SampleM,
+                            false, true, Field, Hin);
                         if ((SoftCsc != null) && (SoftCsc.Count > 0)
                             && (PolylineLengthM(B, SoftCsc) <= Cap)
-                            && (CountOutsideFieldPointsOnly(SoftCsc, field) == 0))
+                            && (CountOutsideFieldPointsOnly(SoftCsc, Field) == 0))
                         {
                             Moves = SoftCsc;
                         }
                         else
                         {
                             List<(Double X, Double Y)> FilletSoft0 = SoftBendFillet(
-                                B, Hin, C, Hout, turnRadiusM, sampleM, field);
+                                B, Hin, C, Hout, TurnRadiusM, SampleM, Field);
                             Moves = ((FilletSoft0.Count > 0)
                                     && (PolylineLengthM(B, FilletSoft0) <= Cap)
-                                    && (CountOutsideFieldPointsOnly(FilletSoft0, field) == 0))
+                                    && (CountOutsideFieldPointsOnly(FilletSoft0, Field) == 0))
                                 ? FilletSoft0
-                                : HeadlandMovePoints(B, Hin, C, Hout, turnRadiusM, sampleM, field);
+                                : HeadlandMovePoints(B, Hin, C, Hout, TurnRadiusM, SampleM, Field);
                         }
                     }
 
@@ -4144,33 +4151,33 @@ namespace HaulBuilder
                     (Double X, Double Y) PeelEnd = C;
                     // Intent: short cell legs cannot host an R turn at the apex — peel earlier/later.
                     if (((Moves.Count == 0) || (PolylineLengthM(B, Moves) > Cap)
-                            || (CountOutsideFieldPointsOnly(Moves, field) > 0))
-                        && (Math.Max(TangLen, turnRadiusM) > 1e-6))
+                            || (CountOutsideFieldPointsOnly(Moves, Field) > 0))
+                        && (Math.Max(TangLen, TurnRadiusM) > Constants.GEOMETRY_COMPARISON_TOLERANCE))
                     {
-                        Double Need = Math.Max(TangLen, turnRadiusM);
+                        Double Need = Math.Max(TangLen, TurnRadiusM);
                         Double PeelIn = Math.Min(InAvail, Need);
                         Double PeelOut = Math.Min(OutAvail, Need);
                         // Intent: even one-cell legs can peel along the inbound/outbound heading rays.
-                        if ((PeelIn < (0.5 * turnRadiusM)) && (InAvail >= Dist(A, B)))
+                        if ((PeelIn < (Constants.HALF_SCALE * TurnRadiusM)) && (InAvail >= Dist(A, B)))
                         {
-                            PeelIn = Math.Max(PeelIn, Math.Min(Need, Dist(A, B) + turnRadiusM));
+                            PeelIn = Math.Max(PeelIn, Math.Min(Need, Dist(A, B) + TurnRadiusM));
                         }
 
-                        if ((PeelOut < (0.5 * turnRadiusM)) && (OutAvail >= Dist(B, C)))
+                        if ((PeelOut < (Constants.HALF_SCALE * TurnRadiusM)) && (OutAvail >= Dist(B, C)))
                         {
-                            PeelOut = Math.Max(PeelOut, Math.Min(Need, Dist(B, C) + turnRadiusM));
+                            PeelOut = Math.Max(PeelOut, Math.Min(Need, Dist(B, C) + TurnRadiusM));
                         }
 
-                        if ((PeelIn >= 1e-3) && (PeelOut >= 1e-3))
+                        if ((PeelIn >= Constants.PATH_JOIN_COMPARISON_TOLERANCE) && (PeelOut >= Constants.PATH_JOIN_COMPARISON_TOLERANCE))
                         {
                             // Intent: never peel outside the mask — clamp to in-field rays.
                             PeelIn = Math.Min(
                                 PeelIn,
-                                InFieldRayLengthM(B, (-UinF.X, -UinF.Y), PeelIn, field));
+                                InFieldRayLengthM(B, (-UinF.X, -UinF.Y), PeelIn, Field));
                             PeelOut = Math.Min(
                                 PeelOut,
-                                InFieldRayLengthM(B, UoutF, PeelOut, field));
-                            if ((PeelIn < 1e-3) || (PeelOut < 1e-3))
+                                InFieldRayLengthM(B, UoutF, PeelOut, Field));
+                            if ((PeelIn < Constants.PATH_JOIN_COMPARISON_TOLERANCE) || (PeelOut < Constants.PATH_JOIN_COMPARISON_TOLERANCE))
                             {
                                 // leave Moves as-is
                             }
@@ -4193,8 +4200,8 @@ namespace HaulBuilder
                                 PeelEndIndex = Math.Min(Run.Count - 1, K + 1);
                             }
 
-                            if (field.ContainsWorldXy(PeelStart.X, PeelStart.Y)
-                                && field.ContainsWorldXy(PeelEnd.X, PeelEnd.Y))
+                            if (Field.ContainsWorldXy(PeelStart.X, PeelStart.Y)
+                                && Field.ContainsWorldXy(PeelEnd.X, PeelEnd.Y))
                             {
                                 Int32 LastPin = Out.Count - 1;
                                 RawPoint ApexPin = Out[LastPin];
@@ -4205,7 +4212,7 @@ namespace HaulBuilder
                                 if (NearReverse)
                                 {
                                     Moves = HeadlandMovePoints(
-                                        PeelStart, Hin, PeelEnd, Hout, turnRadiusM, sampleM, field);
+                                        PeelStart, Hin, PeelEnd, Hout, TurnRadiusM, SampleM, Field);
                                 }
                                 else
                                 {
@@ -4213,24 +4220,24 @@ namespace HaulBuilder
                                     Double SoftEt2 = CompassToMath(Hout);
                                     List<(Double X, Double Y)>? Soft2 = DubinsShortest(
                                         PeelStart.X, PeelStart.Y, SoftSt2, PeelEnd.X, PeelEnd.Y, SoftEt2,
-                                        turnRadiusM, sampleM, false, true, field, Hin);
+                                        TurnRadiusM, SampleM, false, true, Field, Hin);
                                     if ((Soft2 != null) && (Soft2.Count > 0)
                                         && (PolylineLengthM(PeelStart, Soft2) <= Cap)
-                                        && (CountOutsideFieldPointsOnly(Soft2, field) == 0))
+                                        && (CountOutsideFieldPointsOnly(Soft2, Field) == 0))
                                     {
                                         Moves = Soft2;
                                     }
                                     else
                                     {
                                         List<(Double X, Double Y)> FilletSoft = SoftBendFillet(
-                                            PeelStart, Hin, PeelEnd, Hout, turnRadiusM, sampleM, field);
+                                            PeelStart, Hin, PeelEnd, Hout, TurnRadiusM, SampleM, Field);
                                         // Intent: last resort — HeadlandMovePoints soft path (CSC only).
                                         Moves = ((FilletSoft.Count > 0)
                                                 && (PolylineLengthM(PeelStart, FilletSoft) <= Cap)
-                                                && (CountOutsideFieldPointsOnly(FilletSoft, field) == 0))
+                                                && (CountOutsideFieldPointsOnly(FilletSoft, Field) == 0))
                                             ? FilletSoft
                                             : HeadlandMovePoints(
-                                                PeelStart, Hin, PeelEnd, Hout, turnRadiusM, sampleM, field);
+                                                PeelStart, Hin, PeelEnd, Hout, TurnRadiusM, SampleM, Field);
                                     }
                                 }
                             }
@@ -4239,7 +4246,7 @@ namespace HaulBuilder
                     }
 
                     if ((Moves.Count > 0) && (PolylineLengthM(PeelStart, Moves) <= Cap)
-                        && (CountOutsideFieldPointsOnly(Moves, field) == 0))
+                        && (CountOutsideFieldPointsOnly(Moves, Field) == 0))
                     {
                         foreach ((Double X, Double Y) M in Moves)
                         {
@@ -4269,9 +4276,9 @@ namespace HaulBuilder
             }
 
             // Intent: cut→fill HAUL and multi-drop MOVE chords need R-bounded transit turns.
-            Out = EnforceBladeUpTransitTurns(Out, turnRadiusM, sampleM, field);
+            Out = EnforceBladeUpTransitTurns(Out, TurnRadiusM, SampleM, Field);
             // Intent: catch residual CUT/MOVE/CUT chords and soft pinches that still undercut R.
-            return RepairSharpSteeringBends(Out, turnRadiusM, sampleM, field);
+            return RepairSharpSteeringBends(Out, TurnRadiusM, SampleM, Field);
         }
 
         /// <summary>
@@ -4283,31 +4290,31 @@ namespace HaulBuilder
         /// CSC exit/entry (or one CCC keyhole for a short near-reverse). Intermediates keep
         /// the original blade-up action for distance accounting.
         /// </remarks>
-        /// <param name="raw">Track after blade-down headland insertion.</param>
-        /// <param name="turnRadiusM">Minimum turn radius in metres.</param>
-        /// <param name="sampleM">Arc sample spacing in metres.</param>
-        /// <param name="field">Field mask used to flip out-of-field transit turns.</param>
+        /// <param name="Raw">Track after blade-down headland insertion.</param>
+        /// <param name="TurnRadiusM">Minimum turn radius in metres.</param>
+        /// <param name="SampleM">Arc sample spacing in metres.</param>
+        /// <param name="Field">Field mask used to flip out-of-field transit turns.</param>
         /// <returns>Track with curved blade-up transit where needed.</returns>
         static private List<RawPoint> EnforceBladeUpTransitTurns
             (
-            List<RawPoint> raw,
-            Double turnRadiusM,
-            Double sampleM,
-            Grid field
+            List<RawPoint> Raw,
+            Double TurnRadiusM,
+            Double SampleM,
+            Grid Field
             )
         {
-            if ((raw.Count < 3) || (turnRadiusM <= 0.0))
+            if ((Raw.Count < 3) || (TurnRadiusM <= 0.0))
             {
-                return raw;
+                return Raw;
             }
 
             List<RawPoint> Out = new List<RawPoint>();
-            for (Int32 I = 0; I < raw.Count; I += 1)
+            for (Int32 I = 0; I < Raw.Count; I += 1)
             {
-                RawPoint Cur = raw[I];
+                RawPoint Cur = Raw[I];
                 Boolean IsHaul = (Cur.Action == HAUL);
                 Boolean IsMoveHop = (Cur.Action == MOVE);
-                if ((!IsHaul && !IsMoveHop) || (Out.Count < 2) || ((I + 1) >= raw.Count))
+                if ((!IsHaul && !IsMoveHop) || (Out.Count < 2) || ((I + 1) >= Raw.Count))
                 {
                     Out.Add(Cur);
                     continue;
@@ -4315,7 +4322,7 @@ namespace HaulBuilder
 
                 RawPoint PrevEnd = Out[Out.Count - 1];
                 RawPoint PrevPrev = Out[Out.Count - 2];
-                RawPoint Next = raw[I + 1];
+                RawPoint Next = Raw[I + 1];
                 // Intent: HAUL = cut→fill; MOVE hop = same blade-down action on both sides.
                 Boolean HaulOk = IsHaul
                     && (PrevEnd.Action == CUT)
@@ -4347,13 +4354,13 @@ namespace HaulBuilder
                 Double Chord = Dist(Pb, Pc);
                 (Double X, Double Y) U = ForwardEn(Hin);
                 (Double X, Double Y) V = ForwardEn(Hout);
-                Boolean NearReverse = ((U.X * V.X) + (U.Y * V.Y)) < -0.5;
+                Boolean NearReverse = ((U.X * V.X) + (U.Y * V.Y)) < -Constants.HALF_SCALE;
                 // Intent: parallel-lane U-turn (route 11) → one keyhole; long haul → CSC.
-                Boolean AllowKeyhole = NearReverse && (Chord < (4.0 * turnRadiusM));
+                Boolean AllowKeyhole = NearReverse && (Chord < (4.0 * TurnRadiusM));
                 List<(Double X, Double Y)> Moves;
                 if (AllowKeyhole)
                 {
-                    Moves = HeadlandMovePoints(Pb, Hin, Pc, Hout, turnRadiusM, sampleM, field);
+                    Moves = HeadlandMovePoints(Pb, Hin, Pc, Hout, TurnRadiusM, SampleM, Field);
                 }
                 else
                 {
@@ -4361,20 +4368,20 @@ namespace HaulBuilder
                     Double Et = CompassToMath(Hout);
                     // Intent: transit needs LSR/RSL; CCC allowed only when CSC cannot connect.
                     List<(Double X, Double Y)>? Soft = DubinsShortest(
-                        Pb.X, Pb.Y, St, Pc.X, Pc.Y, Et, turnRadiusM, sampleM,
-                        false, false, field, null, cscFamilyOnly: true);
+                        Pb.X, Pb.Y, St, Pc.X, Pc.Y, Et, TurnRadiusM, SampleM,
+                        false, false, Field, null, CscFamilyOnly: true);
                     if ((Soft == null) || (Soft.Count == 0))
                     {
                         Soft = DubinsShortest(
-                            Pb.X, Pb.Y, St, Pc.X, Pc.Y, Et, turnRadiusM, sampleM, false, false, field);
+                            Pb.X, Pb.Y, St, Pc.X, Pc.Y, Et, TurnRadiusM, SampleM, false, false, Field);
                     }
 
                     Moves = Soft ?? new List<(Double X, Double Y)>();
                 }
 
                 Double Cap = AllowKeyhole
-                    ? ((2.75 * Math.PI * turnRadiusM) + (KEYHOLE_SPUR_BUDGET_FRAC_R * turnRadiusM))
-                    : ((2.75 * Math.PI * turnRadiusM) + Chord);
+                    ? ((2.75 * Math.PI * TurnRadiusM) + (KEYHOLE_SPUR_BUDGET_FRAC_R * TurnRadiusM))
+                    : ((2.75 * Math.PI * TurnRadiusM) + Chord);
                 if ((Moves.Count == 0) || (PolylineLengthM(Pb, Moves) > Cap))
                 {
                     Out.Add(Cur);
@@ -4401,25 +4408,25 @@ namespace HaulBuilder
         /// junctions may drop the apex and splice A→C. Interior MOVE samples of an
         /// already-inserted headland are left alone.
         /// </remarks>
-        /// <param name="raw">Track after the primary headland pass.</param>
-        /// <param name="turnRadiusM">Minimum turn radius in metres.</param>
-        /// <param name="sampleM">Arc sample spacing in metres.</param>
-        /// <param name="field">Field mask used to flip out-of-field repair arcs.</param>
+        /// <param name="Raw">Track after the primary headland pass.</param>
+        /// <param name="TurnRadiusM">Minimum turn radius in metres.</param>
+        /// <param name="SampleM">Arc sample spacing in metres.</param>
+        /// <param name="Field">Field mask used to flip out-of-field repair arcs.</param>
         /// <returns>Repaired track.</returns>
         static private List<RawPoint> RepairSharpSteeringBends
             (
-            List<RawPoint> raw,
-            Double turnRadiusM,
-            Double sampleM,
-            Grid field
+            List<RawPoint> Raw,
+            Double TurnRadiusM,
+            Double SampleM,
+            Grid Field
             )
         {
-            if ((raw.Count < 3) || (turnRadiusM <= 0.0))
+            if ((Raw.Count < 3) || (TurnRadiusM <= 0.0))
             {
-                return raw;
+                return Raw;
             }
 
-            List<RawPoint> Cur = raw;
+            List<RawPoint> Cur = Raw;
             // More sweeps: peel/fillet insertion can create new MOVE↔CUT junctions that need a second pass.
             for (Int32 Sweep = 0; Sweep < 4; Sweep += 1)
             {
@@ -4451,7 +4458,7 @@ namespace HaulBuilder
                         continue;
                     }
 
-                    if (!SteerViolatesMinRadius(Pa, Pb, Pc, turnRadiusM, 15.0))
+                    if (!SteerViolatesMinRadius(Pa, Pb, Pc, TurnRadiusM, 15.0))
                     {
                         Next.Add(B);
                         I += 1;
@@ -4466,8 +4473,8 @@ namespace HaulBuilder
                         Double HoutExit = BearingDeg(Pb, Pc);
                         (Double X, Double Y) TangentIn;
                         List<(Double X, Double Y)>? Fillet = ClassicCornerFillet(
-                            Pb, HinExit, Pc, HoutExit, turnRadiusM, sampleM, Dist(Pa, Pb), out TangentIn);
-                        if ((Fillet != null) && (CountOutsideFieldPointsOnly(Fillet, field) == 0))
+                            Pb, HinExit, Pc, HoutExit, TurnRadiusM, SampleM, Dist(Pa, Pb), out TangentIn);
+                        if ((Fillet != null) && (CountOutsideFieldPointsOnly(Fillet, Field) == 0))
                         {
                             Next.Add(new RawPoint(
                                 B.Xr, B.Yr, B.DepthM, B.Action, B.PassNo, TangentIn.X, TangentIn.Y));
@@ -4479,21 +4486,21 @@ namespace HaulBuilder
                         else
                         {
                             List<(Double X, Double Y)> Moves = HeadlandMovePoints(
-                                Pb, HinExit, Pc, HoutExit, turnRadiusM, sampleM, field);
-                            Double Cap = (2.75 * Math.PI * turnRadiusM) + Dist(Pb, Pc);
+                                Pb, HinExit, Pc, HoutExit, TurnRadiusM, SampleM, Field);
+                            Double Cap = (2.75 * Math.PI * TurnRadiusM) + Dist(Pb, Pc);
                             if ((Moves.Count == 0) || (PolylineLengthM(Pb, Moves) > Cap)
-                                || (CountOutsideFieldPointsOnly(Moves, field) > 0))
+                                || (CountOutsideFieldPointsOnly(Moves, Field) > 0))
                             {
                                 // Intent: peel back along the inbound MOVE so the R-turn has room.
                                 (Double X, Double Y) Back = ForwardEn(HinExit);
-                                Double Peel = Math.Min(Dist(Pa, Pb), turnRadiusM);
+                                Double Peel = Math.Min(Dist(Pa, Pb), TurnRadiusM);
                                 (Double X, Double Y) PeelStart = (
                                     Pb.X - (Peel * Back.X),
                                     Pb.Y - (Peel * Back.Y));
-                                if (field.ContainsWorldXy(PeelStart.X, PeelStart.Y))
+                                if (Field.ContainsWorldXy(PeelStart.X, PeelStart.Y))
                                 {
                                     Moves = HeadlandMovePoints(
-                                        PeelStart, HinExit, Pc, HoutExit, turnRadiusM, sampleM, field);
+                                        PeelStart, HinExit, Pc, HoutExit, TurnRadiusM, SampleM, Field);
                                     Next.Add(new RawPoint(
                                         B.Xr, B.Yr, B.DepthM, B.Action, B.PassNo,
                                         PeelStart.X, PeelStart.Y));
@@ -4510,7 +4517,7 @@ namespace HaulBuilder
 
                             if ((Moves.Count > 0) && (PolylineLengthM(
                                     (Next[Next.Count - 1].Xs, Next[Next.Count - 1].Ys), Moves) <= Cap)
-                                && (CountOutsideFieldPointsOnly(Moves, field) == 0))
+                                && (CountOutsideFieldPointsOnly(Moves, Field) == 0))
                             {
                                 foreach ((Double X, Double Y) M in Moves)
                                 {
@@ -4532,8 +4539,8 @@ namespace HaulBuilder
                         Double Hout = BearingDeg(Pb, Pc);
                         (Double X, Double Y) TangentIn;
                         List<(Double X, Double Y)>? Fillet = ClassicCornerFillet(
-                            Pb, Hin, Pc, Hout, turnRadiusM, sampleM, Dist(Pa, Pb), out TangentIn);
-                        if ((Fillet != null) && (CountOutsideFieldPointsOnly(Fillet, field) == 0))
+                            Pb, Hin, Pc, Hout, TurnRadiusM, SampleM, Dist(Pa, Pb), out TangentIn);
+                        if ((Fillet != null) && (CountOutsideFieldPointsOnly(Fillet, Field) == 0))
                         {
                             Int32 Last = Next.Count - 1;
                             RawPoint Apex = Next[Last];
@@ -4549,10 +4556,10 @@ namespace HaulBuilder
                         {
                             // Intent: hard R bound — never leave a blade-down corner sharper than R.
                             List<(Double X, Double Y)> Moves = HeadlandMovePoints(
-                                Pb, Hin, Pc, Hout, turnRadiusM, sampleM, field);
-                            Double Cap = 2.75 * Math.PI * turnRadiusM;
+                                Pb, Hin, Pc, Hout, TurnRadiusM, SampleM, Field);
+                            Double Cap = 2.75 * Math.PI * TurnRadiusM;
                             if ((Moves.Count > 0) && (PolylineLengthM(Pb, Moves) <= Cap)
-                                && (CountOutsideFieldPointsOnly(Moves, field) == 0))
+                                && (CountOutsideFieldPointsOnly(Moves, Field) == 0))
                             {
                                 foreach ((Double X, Double Y) M in Moves)
                                 {
@@ -4572,8 +4579,8 @@ namespace HaulBuilder
                     Double StUp = CompassToMath(HinUp);
                     Double EtUp = CompassToMath(HoutUp);
                     List<(Double X, Double Y)>? ShortUp = DubinsShortest(
-                        Pa.X, Pa.Y, StUp, Pc.X, Pc.Y, EtUp, turnRadiusM, sampleM, false, true, field);
-                    Double CapUp = (SOFT_BEND_MAX_HALF_TURNS * Math.PI * turnRadiusM) + Dist(Pa, Pc);
+                        Pa.X, Pa.Y, StUp, Pc.X, Pc.Y, EtUp, TurnRadiusM, SampleM, false, true, Field);
+                    Double CapUp = (SOFT_BEND_MAX_HALF_TURNS * Math.PI * TurnRadiusM) + Dist(Pa, Pc);
                     // Intent: preserve HAUL action on loaded transit repairs (haul distance).
                     String UpAction = (B.Action == HAUL) ? HAUL : MOVE;
                     if ((ShortUp != null) && (ShortUp.Count > 0)
@@ -4607,58 +4614,58 @@ namespace HaulBuilder
         /// <summary>
         /// True when the action is blade-down coverage (CUT/FILL/GRADE).
         /// </summary>
-        /// <param name="action">Guidance action code.</param>
+        /// <param name="Action">Guidance action code.</param>
         /// <returns>True for blade-down actions.</returns>
         static private Boolean IsBladeDown
             (
-            String action
+            String Action
             )
         {
-            return (action == CUT) || (action == FILL) || (action == GRADE);
+            return (Action == CUT) || (Action == FILL) || (Action == GRADE);
         }
 
         /// <summary>
         /// Tiles one patch into blade-width serpentine lanes.
         /// </summary>
-        /// <param name="cellList">Patch cells with depth.</param>
-        /// <param name="grid">Grid geometry.</param>
-        /// <param name="bladeM">Blade width in metres.</param>
-        /// <param name="headingDeg">Lane heading in compass degrees.</param>
-        /// <param name="overlap">Lane overlap fraction [0, 0.9].</param>
-        /// <param name="orientStartXy">Optional point to orient sweep start toward.</param>
-        /// <param name="orientEndXy">Optional point to orient sweep end toward.</param>
+        /// <param name="CellList">Patch cells with depth.</param>
+        /// <param name="Grid">Grid geometry.</param>
+        /// <param name="BladeM">Blade width in metres.</param>
+        /// <param name="HeadingDeg">Lane heading in compass degrees.</param>
+        /// <param name="Overlap">Lane overlap fraction [0, 0.9].</param>
+        /// <param name="OrientStartXy">Optional point to orient sweep start toward.</param>
+        /// <param name="OrientEndXy">Optional point to orient sweep end toward.</param>
         /// <returns>Ordered lane points with depth in metres.</returns>
         static private List<(Double X, Double Y, Double DepthM)> LanesForPatch
             (
-            List<((Int32 Bx, Int32 By) Cell, Double DepthM)> cellList,
-            Grid grid,
-            Double bladeM,
-            Double headingDeg,
-            Double overlap = 0.0,
-            (Double X, Double Y)? orientStartXy = null,
-            (Double X, Double Y)? orientEndXy = null
+            List<((Int32 Bx, Int32 By) Cell, Double DepthM)> CellList,
+            Grid Grid,
+            Double BladeM,
+            Double HeadingDeg,
+            Double Overlap = 0.0,
+            (Double X, Double Y)? OrientStartXy = null,
+            (Double X, Double Y)? OrientEndXy = null
             )
         {
             // Follow Python lane-band assignment so blade coverage conserves area over wide cells.
-            if (cellList.Count == 0)
+            if (CellList.Count == 0)
             {
                 return new List<(Double X, Double Y, Double DepthM)>();
             }
 
             List<(Double X, Double Y)> Centers = new List<(Double X, Double Y)>();
             List<Double> Depths = new List<Double>();
-            foreach (((Int32 Bx, Int32 By) Cell, Double DepthM) Entry in cellList)
+            foreach (((Int32 Bx, Int32 By) Cell, Double DepthM) Entry in CellList)
             {
-                Centers.Add(grid.CellCenterXY(Entry.Cell.Bx, Entry.Cell.By));
+                Centers.Add(Grid.CellCenterXY(Entry.Cell.Bx, Entry.Cell.By));
                 Depths.Add(Entry.DepthM);
             }
 
-            if (cellList.Count == 1)
+            if (CellList.Count == 1)
             {
                 return new List<(Double X, Double Y, Double DepthM)> { (Centers[0].X, Centers[0].Y, Depths[0]) };
             }
 
-            Double Theta = DegreesToRadians(headingDeg);
+            Double Theta = DegreesToRadians(HeadingDeg);
             (Double X, Double Y) Uh = (Math.Sin(Theta), Math.Cos(Theta));
             (Double X, Double Y) Vh = (Math.Cos(Theta), -Math.Sin(Theta));
             (Double X, Double Y) Origin = Centroid(Centers);
@@ -4673,29 +4680,29 @@ namespace HaulBuilder
                 Vs.Add((Dx * Vh.X) + (Dy * Vh.Y));
             }
 
-            Double G = grid.GridSizeM;
-            Double ClampedOverlap = Math.Min(Math.Max(overlap, 0.0), 0.9);
-            Double Step = Math.Max(bladeM * (1.0 - ClampedOverlap), 1e-3);
+            Double G = Grid.GridSizeM;
+            Double ClampedOverlap = Math.Min(Math.Max(Overlap, 0.0), 0.9);
+            Double Step = Math.Max(BladeM * (1.0 - ClampedOverlap), Constants.PATH_JOIN_COMPARISON_TOLERANCE);
             Double VMin = Min(Vs);
             Double VMax = Max(Vs);
-            Int32 NLanes = Math.Max(1, (Int32)Math.Floor(((VMax - VMin) / Step) + 1e-9) + 1);
+            Int32 NLanes = Math.Max(1, (Int32)Math.Floor(((VMax - VMin) / Step) + Constants.NUMERIC_COMPARISON_TOLERANCE) + 1);
             List<Double> LaneV = new List<Double>();
             for (Int32 k = 0; k < NLanes; k += 1)
             {
                 LaneV.Add(VMin + (Step * k));
             }
-            if ((VMax - LaneV[LaneV.Count - 1]) > (0.5 * Step))
+            if ((VMax - LaneV[LaneV.Count - 1]) > (Constants.HALF_SCALE * Step))
             {
                 LaneV.Add(VMax);
             }
 
-            Double Half = (G / 2.0) + 1e-6;
+            Double Half = (G / 2.0) + Constants.GEOMETRY_COMPARISON_TOLERANCE;
             List<(Double Vc, List<(Double U, Double Depth, Int32 Index)> Members)> Lanes = new List<(Double Vc, List<(Double U, Double Depth, Int32 Index)> Members)>();
 
             foreach (Double Vc in LaneV)
             {
                 List<(Double U, Double Depth, Int32 Index)> Members = new List<(Double U, Double Depth, Int32 Index)>();
-                for (Int32 i = 0; i < cellList.Count; i += 1)
+                for (Int32 i = 0; i < CellList.Count; i += 1)
                 {
                     if (Math.Abs(Vs[i] - Vc) <= Half)
                     {
@@ -4714,20 +4721,20 @@ namespace HaulBuilder
                 }
             }
 
-            for (Int32 i = 0; i < cellList.Count; i += 1)
+            for (Int32 i = 0; i < CellList.Count; i += 1)
             {
                 if (!Covered.Contains(i))
                 {
                     Int32 Best = 0;
                     Double BestDist = Double.MaxValue;
 
-                    for (Int32 laneIndex = 0; laneIndex < Lanes.Count; laneIndex += 1)
+                    for (Int32 LaneIndex = 0; LaneIndex < Lanes.Count; LaneIndex += 1)
                     {
-                        Double Distance = Math.Abs(Lanes[laneIndex].Vc - Vs[i]);
+                        Double Distance = Math.Abs(Lanes[LaneIndex].Vc - Vs[i]);
                         if (Distance < BestDist)
                         {
                             BestDist = Distance;
-                            Best = laneIndex;
+                            Best = LaneIndex;
                         }
                     }
 
@@ -4764,16 +4771,16 @@ namespace HaulBuilder
                 }
             }
 
-            if (orientEndXy.HasValue && (Points.Count > 0))
+            if (OrientEndXy.HasValue && (Points.Count > 0))
             {
-                if (D2((Points[0].X, Points[0].Y), orientEndXy.Value) < D2((Points[Points.Count - 1].X, Points[Points.Count - 1].Y), orientEndXy.Value))
+                if (D2((Points[0].X, Points[0].Y), OrientEndXy.Value) < D2((Points[Points.Count - 1].X, Points[Points.Count - 1].Y), OrientEndXy.Value))
                 {
                     Points.Reverse();
                 }
             }
-            else if (orientStartXy.HasValue && (Points.Count > 0))
+            else if (OrientStartXy.HasValue && (Points.Count > 0))
             {
-                if (D2((Points[Points.Count - 1].X, Points[Points.Count - 1].Y), orientStartXy.Value) < D2((Points[0].X, Points[0].Y), orientStartXy.Value))
+                if (D2((Points[Points.Count - 1].X, Points[Points.Count - 1].Y), OrientStartXy.Value) < D2((Points[0].X, Points[0].Y), OrientStartXy.Value))
                 {
                     Points.Reverse();
                 }
@@ -4785,16 +4792,16 @@ namespace HaulBuilder
         /// <summary>
         /// Splits a patch into 8-connected pockets.
         /// </summary>
-        /// <param name="cellList">Patch cells with depth.</param>
+        /// <param name="CellList">Patch cells with depth.</param>
         /// <returns>Connected components with original entries preserved.</returns>
         static private List<List<((Int32 Bx, Int32 By) Cell, Double DepthM)>> ConnectedPockets
             (
-            List<((Int32 Bx, Int32 By) Cell, Double DepthM)> cellList
+            List<((Int32 Bx, Int32 By) Cell, Double DepthM)> CellList
             )
         {
             // Discover connected bins first, then reattach all original entries for each component.
             HashSet<(Int32 Bx, Int32 By)> Cells = new HashSet<(Int32 Bx, Int32 By)>();
-            foreach (((Int32 Bx, Int32 By) Cell, Double DepthM) Entry in cellList)
+            foreach (((Int32 Bx, Int32 By) Cell, Double DepthM) Entry in CellList)
             {
                 Cells.Add(Entry.Cell);
             }
@@ -4845,7 +4852,7 @@ namespace HaulBuilder
             foreach (HashSet<(Int32 Bx, Int32 By)> Component in Components)
             {
                 List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Bucket = new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>();
-                foreach (((Int32 Bx, Int32 By) Cell, Double DepthM) Entry in cellList)
+                foreach (((Int32 Bx, Int32 By) Cell, Double DepthM) Entry in CellList)
                 {
                     if (Component.Contains(Entry.Cell))
                     {
@@ -4861,19 +4868,19 @@ namespace HaulBuilder
         /// <summary>
         /// Computes greedy nearest-neighbour ordering of centroids.
         /// </summary>
-        /// <param name="cents">Centroids to chain.</param>
-        /// <param name="orientStartXy">Optional anchor for first centroid.</param>
-        /// <param name="orientEndXy">Optional anchor for last centroid.</param>
+        /// <param name="Cents">Centroids to chain.</param>
+        /// <param name="OrientStartXy">Optional anchor for first centroid.</param>
+        /// <param name="OrientEndXy">Optional anchor for last centroid.</param>
         /// <returns>Ordered centroid indices.</returns>
         static private List<Int32> NnOrder
             (
-            List<(Double X, Double Y)> cents,
-            (Double X, Double Y)? orientStartXy = null,
-            (Double X, Double Y)? orientEndXy = null
+            List<(Double X, Double Y)> Cents,
+            (Double X, Double Y)? OrientStartXy = null,
+            (Double X, Double Y)? OrientEndXy = null
             )
         {
             // Keep cut and fill anchoring behavior symmetric with Python chain construction.
-            Int32 N = cents.Count;
+            Int32 N = Cents.Count;
             if (N <= 1)
             {
                 List<Int32> Identity = new List<Int32>();
@@ -4890,16 +4897,16 @@ namespace HaulBuilder
                 Remaining.Add(i);
             }
 
-            if (orientEndXy.HasValue)
+            if (OrientEndXy.HasValue)
             {
-                Int32 Last = ArgMinDistanceToPoint(Remaining, cents, orientEndXy.Value);
+                Int32 Last = ArgMinDistanceToPoint(Remaining, Cents, OrientEndXy.Value);
                 List<Int32> Chain = new List<Int32> { Last };
                 Remaining.Remove(Last);
 
                 while (Remaining.Count > 0)
                 {
                     Int32 Front = Chain[0];
-                    Int32 Next = ArgMinDistanceToCentroid(Remaining, cents, cents[Front]);
+                    Int32 Next = ArgMinDistanceToCentroid(Remaining, Cents, Cents[Front]);
                     Chain.Insert(0, Next);
                     Remaining.Remove(Next);
                 }
@@ -4907,15 +4914,15 @@ namespace HaulBuilder
                 return Chain;
             }
 
-            (Double X, Double Y) Source = orientStartXy.HasValue ? orientStartXy.Value : cents[0];
-            Int32 First = ArgMinDistanceToPoint(Remaining, cents, Source);
+            (Double X, Double Y) Source = OrientStartXy.HasValue ? OrientStartXy.Value : Cents[0];
+            Int32 First = ArgMinDistanceToPoint(Remaining, Cents, Source);
             List<Int32> Forward = new List<Int32> { First };
             Remaining.Remove(First);
 
             while (Remaining.Count > 0)
             {
                 Int32 Back = Forward[Forward.Count - 1];
-                Int32 Next = ArgMinDistanceToCentroid(Remaining, cents, cents[Back]);
+                Int32 Next = ArgMinDistanceToCentroid(Remaining, Cents, Cents[Back]);
                 Forward.Add(Next);
                 Remaining.Remove(Next);
             }
@@ -4926,11 +4933,11 @@ namespace HaulBuilder
         /// <summary>
         /// Splits a flow strip into maximal runs of consecutive 8-adjacent cells.
         /// </summary>
-        /// <param name="cellList">Ordered streamline cells with depth.</param>
+        /// <param name="CellList">Ordered streamline cells with depth.</param>
         /// <returns>Runs preserving original in-run order.</returns>
         static private List<List<((Int32 Bx, Int32 By) Cell, Double DepthM)>> OrderedRuns
             (
-            List<((Int32 Bx, Int32 By) Cell, Double DepthM)> cellList
+            List<((Int32 Bx, Int32 By) Cell, Double DepthM)> CellList
             )
         {
             // Preserve flow order and break only at non-adjacent jumps that represent multi-drop hops.
@@ -4938,7 +4945,7 @@ namespace HaulBuilder
             List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Current = new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>();
             (Int32 Bx, Int32 By)? Prev = null;
 
-            foreach (((Int32 Bx, Int32 By) Cell, Double DepthM) Entry in cellList)
+            foreach (((Int32 Bx, Int32 By) Cell, Double DepthM) Entry in CellList)
             {
                 if (!Prev.HasValue || ((Math.Abs(Entry.Cell.Bx - Prev.Value.Bx) <= 1) && (Math.Abs(Entry.Cell.By - Prev.Value.By) <= 1)))
                 {
@@ -4963,21 +4970,21 @@ namespace HaulBuilder
         /// <summary>
         /// Builds lanes by following streamline order per run.
         /// </summary>
-        /// <param name="cellList">Cells in flow order.</param>
-        /// <param name="grid">Grid geometry.</param>
-        /// <param name="orientStartXy">Optional anchor for first run.</param>
-        /// <param name="orientEndXy">Optional anchor for last run.</param>
+        /// <param name="CellList">Cells in flow order.</param>
+        /// <param name="Grid">Grid geometry.</param>
+        /// <param name="OrientStartXy">Optional anchor for first run.</param>
+        /// <param name="OrientEndXy">Optional anchor for last run.</param>
         /// <returns>Drive-ordered lane points.</returns>
         static private List<(Double X, Double Y, Double DepthM)> LanesFlow
             (
-            List<((Int32 Bx, Int32 By) Cell, Double DepthM)> cellList,
-            Grid grid,
-            (Double X, Double Y)? orientStartXy = null,
-            (Double X, Double Y)? orientEndXy = null
+            List<((Int32 Bx, Int32 By) Cell, Double DepthM)> CellList,
+            Grid Grid,
+            (Double X, Double Y)? OrientStartXy = null,
+            (Double X, Double Y)? OrientEndXy = null
             )
         {
             // Keep each run intact and only flip whole runs to honor haul-side orientation.
-            List<List<((Int32 Bx, Int32 By) Cell, Double DepthM)>> Runs = OrderedRuns(cellList);
+            List<List<((Int32 Bx, Int32 By) Cell, Double DepthM)>> Runs = OrderedRuns(CellList);
             List<List<(Double X, Double Y, Double DepthM)>> Segments = new List<List<(Double X, Double Y, Double DepthM)>>();
 
             foreach (List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Run in Runs)
@@ -4990,7 +4997,7 @@ namespace HaulBuilder
                 List<(Double X, Double Y, Double DepthM)> Segment = new List<(Double X, Double Y, Double DepthM)>();
                 foreach (((Int32 Bx, Int32 By) Cell, Double DepthM) Entry in Run)
                 {
-                    (Double X, Double Y) Center = grid.CellCenterXY(Entry.Cell.Bx, Entry.Cell.By);
+                    (Double X, Double Y) Center = Grid.CellCenterXY(Entry.Cell.Bx, Entry.Cell.By);
                     Segment.Add((Center.X, Center.Y, Entry.DepthM));
                 }
                 Segments.Add(Segment);
@@ -5013,13 +5020,13 @@ namespace HaulBuilder
             }
 
             List<(Double X, Double Y, Double DepthM)> Points = new List<(Double X, Double Y, Double DepthM)>();
-            if (orientEndXy.HasValue)
+            if (OrientEndXy.HasValue)
             {
-                List<Int32> Order = NnOrder(Cents, null, orientEndXy);
+                List<Int32> Order = NnOrder(Cents, null, OrientEndXy);
                 for (Int32 Rank = 0; Rank < Order.Count; Rank += 1)
                 {
                     Int32 Index = Order[Rank];
-                    (Double X, Double Y) Target = (Rank == (Order.Count - 1)) ? orientEndXy.Value : Cents[Order[Rank + 1]];
+                    (Double X, Double Y) Target = (Rank == (Order.Count - 1)) ? OrientEndXy.Value : Cents[Order[Rank + 1]];
                     List<(Double X, Double Y, Double DepthM)> Segment = new List<(Double X, Double Y, Double DepthM)>(Segments[Index]);
 
                     if ((Segment.Count >= 2) && (D2((Segment[0].X, Segment[0].Y), Target) < D2((Segment[Segment.Count - 1].X, Segment[Segment.Count - 1].Y), Target)))
@@ -5032,8 +5039,8 @@ namespace HaulBuilder
             }
             else
             {
-                (Double X, Double Y) Source = orientStartXy.HasValue ? orientStartXy.Value : Cents[0];
-                List<Int32> Order = NnOrder(Cents, orientStartXy, null);
+                (Double X, Double Y) Source = OrientStartXy.HasValue ? OrientStartXy.Value : Cents[0];
+                List<Int32> Order = NnOrder(Cents, OrientStartXy, null);
 
                 for (Int32 Rank = 0; Rank < Order.Count; Rank += 1)
                 {
@@ -5056,39 +5063,39 @@ namespace HaulBuilder
         /// <summary>
         /// Builds a lane directly from existing cell order.
         /// </summary>
-        /// <param name="cellList">Cell list already in drivable order.</param>
-        /// <param name="grid">Grid projection helper.</param>
-        /// <param name="orientStartXy">Optional orientation start point.</param>
-        /// <param name="orientEndXy">Optional orientation end point.</param>
+        /// <param name="CellList">Cell list already in drivable order.</param>
+        /// <param name="Grid">Grid projection helper.</param>
+        /// <param name="OrientStartXy">Optional orientation start point.</param>
+        /// <param name="OrientEndXy">Optional orientation end point.</param>
         /// <returns>Drive-ordered lane points.</returns>
         static private List<(Double X, Double Y, Double DepthM)> LaneDirect
             (
-            List<((Int32 Bx, Int32 By) Cell, Double DepthM)> cellList,
-            Grid grid,
-            (Double X, Double Y)? orientStartXy = null,
-            (Double X, Double Y)? orientEndXy = null
+            List<((Int32 Bx, Int32 By) Cell, Double DepthM)> CellList,
+            Grid Grid,
+            (Double X, Double Y)? OrientStartXy = null,
+            (Double X, Double Y)? OrientEndXy = null
             )
         {
             // Keep knot-reduced cell order untouched except for whole-lane orientation flip.
             List<(Double X, Double Y, Double DepthM)> Points = new List<(Double X, Double Y, Double DepthM)>();
-            foreach (((Int32 Bx, Int32 By) Cell, Double DepthM) Entry in cellList)
+            foreach (((Int32 Bx, Int32 By) Cell, Double DepthM) Entry in CellList)
             {
-                (Double X, Double Y) Center = grid.CellCenterXY(Entry.Cell.Bx, Entry.Cell.By);
+                (Double X, Double Y) Center = Grid.CellCenterXY(Entry.Cell.Bx, Entry.Cell.By);
                 Points.Add((Center.X, Center.Y, Entry.DepthM));
             }
 
             if (Points.Count >= 2)
             {
-                if (orientEndXy.HasValue)
+                if (OrientEndXy.HasValue)
                 {
-                    if (D2((Points[0].X, Points[0].Y), orientEndXy.Value) < D2((Points[Points.Count - 1].X, Points[Points.Count - 1].Y), orientEndXy.Value))
+                    if (D2((Points[0].X, Points[0].Y), OrientEndXy.Value) < D2((Points[Points.Count - 1].X, Points[Points.Count - 1].Y), OrientEndXy.Value))
                     {
                         Points.Reverse();
                     }
                 }
-                else if (orientStartXy.HasValue)
+                else if (OrientStartXy.HasValue)
                 {
-                    if (D2((Points[Points.Count - 1].X, Points[Points.Count - 1].Y), orientStartXy.Value) < D2((Points[0].X, Points[0].Y), orientStartXy.Value))
+                    if (D2((Points[Points.Count - 1].X, Points[Points.Count - 1].Y), OrientStartXy.Value) < D2((Points[0].X, Points[0].Y), OrientStartXy.Value))
                     {
                         Points.Reverse();
                     }
@@ -5101,30 +5108,30 @@ namespace HaulBuilder
         /// <summary>
         /// Builds pocket-aware lanes for multi-drop patches.
         /// </summary>
-        /// <param name="cellList">Patch cells with depth.</param>
-        /// <param name="grid">Grid geometry.</param>
-        /// <param name="bladeM">Blade width in metres.</param>
-        /// <param name="headingDeg">Lane heading in degrees.</param>
-        /// <param name="overlap">Lane overlap fraction.</param>
-        /// <param name="orientStartXy">Optional sweep start anchor.</param>
-        /// <param name="orientEndXy">Optional sweep end anchor.</param>
+        /// <param name="CellList">Patch cells with depth.</param>
+        /// <param name="Grid">Grid geometry.</param>
+        /// <param name="BladeM">Blade width in metres.</param>
+        /// <param name="HeadingDeg">Lane heading in degrees.</param>
+        /// <param name="Overlap">Lane overlap fraction.</param>
+        /// <param name="OrientStartXy">Optional sweep start anchor.</param>
+        /// <param name="OrientEndXy">Optional sweep end anchor.</param>
         /// <returns>Combined lane points across pockets.</returns>
         static private List<(Double X, Double Y, Double DepthM)> LanesMulti
             (
-            List<((Int32 Bx, Int32 By) Cell, Double DepthM)> cellList,
-            Grid grid,
-            Double bladeM,
-            Double headingDeg,
-            Double overlap,
-            (Double X, Double Y)? orientStartXy = null,
-            (Double X, Double Y)? orientEndXy = null
+            List<((Int32 Bx, Int32 By) Cell, Double DepthM)> CellList,
+            Grid Grid,
+            Double BladeM,
+            Double HeadingDeg,
+            Double Overlap,
+            (Double X, Double Y)? OrientStartXy = null,
+            (Double X, Double Y)? OrientEndXy = null
             )
         {
             // Sequence pockets so inter-pocket blade-up hops stay short while honoring haul-side anchors.
-            List<List<((Int32 Bx, Int32 By) Cell, Double DepthM)>> Pockets = ConnectedPockets(cellList);
+            List<List<((Int32 Bx, Int32 By) Cell, Double DepthM)>> Pockets = ConnectedPockets(CellList);
             if (Pockets.Count <= 1)
             {
-                return LanesForPatch(cellList, grid, bladeM, headingDeg, overlap, orientStartXy, orientEndXy);
+                return LanesForPatch(CellList, Grid, BladeM, HeadingDeg, Overlap, OrientStartXy, OrientEndXy);
             }
 
             List<(Double X, Double Y)> Cents = new List<(Double X, Double Y)>();
@@ -5133,31 +5140,31 @@ namespace HaulBuilder
                 List<(Double X, Double Y)> PocketCenters = new List<(Double X, Double Y)>();
                 foreach (((Int32 Bx, Int32 By) Cell, Double DepthM) Entry in Pocket)
                 {
-                    PocketCenters.Add(grid.CellCenterXY(Entry.Cell.Bx, Entry.Cell.By));
+                    PocketCenters.Add(Grid.CellCenterXY(Entry.Cell.Bx, Entry.Cell.By));
                 }
                 Cents.Add(Centroid(PocketCenters));
             }
 
             List<(Double X, Double Y, Double DepthM)> Points = new List<(Double X, Double Y, Double DepthM)>();
-            if (orientEndXy.HasValue)
+            if (OrientEndXy.HasValue)
             {
-                List<Int32> Order = NnOrder(Cents, null, orientEndXy);
+                List<Int32> Order = NnOrder(Cents, null, OrientEndXy);
                 for (Int32 Rank = 0; Rank < Order.Count; Rank += 1)
                 {
                     Int32 Index = Order[Rank];
-                    (Double X, Double Y) Target = (Rank == (Order.Count - 1)) ? orientEndXy.Value : Cents[Order[Rank + 1]];
-                    Points.AddRange(LanesForPatch(Pockets[Index], grid, bladeM, headingDeg, overlap, null, Target));
+                    (Double X, Double Y) Target = (Rank == (Order.Count - 1)) ? OrientEndXy.Value : Cents[Order[Rank + 1]];
+                    Points.AddRange(LanesForPatch(Pockets[Index], Grid, BladeM, HeadingDeg, Overlap, null, Target));
                 }
             }
             else
             {
-                (Double X, Double Y) Source = orientStartXy.HasValue ? orientStartXy.Value : Cents[0];
-                List<Int32> Order = NnOrder(Cents, orientStartXy, null);
+                (Double X, Double Y) Source = OrientStartXy.HasValue ? OrientStartXy.Value : Cents[0];
+                List<Int32> Order = NnOrder(Cents, OrientStartXy, null);
                 for (Int32 Rank = 0; Rank < Order.Count; Rank += 1)
                 {
                     Int32 Index = Order[Rank];
                     (Double X, Double Y) StartRef = (Rank == 0) ? Source : Cents[Order[Rank - 1]];
-                    Points.AddRange(LanesForPatch(Pockets[Index], grid, bladeM, headingDeg, overlap, StartRef, null));
+                    Points.AddRange(LanesForPatch(Pockets[Index], Grid, BladeM, HeadingDeg, Overlap, StartRef, null));
                 }
             }
 
@@ -5167,45 +5174,45 @@ namespace HaulBuilder
         /// <summary>
         /// Re-tiles a tangled sweep along principal axis when it strictly improves hairpins.
         /// </summary>
-        /// <param name="lane">Current lane points.</param>
-        /// <param name="cells">Original cells and depths.</param>
-        /// <param name="grid">Grid geometry.</param>
-        /// <param name="bladeM">Blade width in metres.</param>
-        /// <param name="orientStartXy">Optional start anchor.</param>
-        /// <param name="orientEndXy">Optional end anchor.</param>
+        /// <param name="Lane">Current lane points.</param>
+        /// <param name="Cells">Original cells and depths.</param>
+        /// <param name="Grid">Grid geometry.</param>
+        /// <param name="BladeM">Blade width in metres.</param>
+        /// <param name="OrientStartXy">Optional start anchor.</param>
+        /// <param name="OrientEndXy">Optional end anchor.</param>
         /// <returns>Tuple of selected lane and repair flag (1 repaired, 0 unchanged).</returns>
         static private (List<(Double X, Double Y, Double DepthM)> Lane, Int32 Repaired) RepairIfTangled
             (
-            List<(Double X, Double Y, Double DepthM)> lane,
-            List<((Int32 Bx, Int32 By) Cell, Double DepthM)> cells,
-            Grid grid,
-            Double bladeM,
-            (Double X, Double Y)? orientStartXy = null,
-            (Double X, Double Y)? orientEndXy = null
+            List<(Double X, Double Y, Double DepthM)> Lane,
+            List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Cells,
+            Grid Grid,
+            Double BladeM,
+            (Double X, Double Y)? OrientStartXy = null,
+            (Double X, Double Y)? OrientEndXy = null
             )
         {
             // Apply conservative replacement: only keep alternate lane when it strictly lowers hairpin count.
-            Int32 Initial = HardTurnCount(lane, grid, bladeM);
+            Int32 Initial = HardTurnCount(Lane, Grid, BladeM);
             if (Initial == 0)
             {
-                return (lane, 0);
+                return (Lane, 0);
             }
 
             List<(Double X, Double Y)> Centers = new List<(Double X, Double Y)>();
-            foreach (((Int32 Bx, Int32 By) Cell, Double DepthM) Entry in cells)
+            foreach (((Int32 Bx, Int32 By) Cell, Double DepthM) Entry in Cells)
             {
-                Centers.Add(grid.CellCenterXY(Entry.Cell.Bx, Entry.Cell.By));
+                Centers.Add(Grid.CellCenterXY(Entry.Cell.Bx, Entry.Cell.By));
             }
 
             Double PcaHeading = PrincipalHeadingDeg(Centers);
-            List<(Double X, Double Y, Double DepthM)> Alternate = LanesMulti(cells, grid, bladeM, PcaHeading, 0.0, orientStartXy, orientEndXy);
+            List<(Double X, Double Y, Double DepthM)> Alternate = LanesMulti(Cells, Grid, BladeM, PcaHeading, 0.0, OrientStartXy, OrientEndXy);
 
-            if ((Alternate.Count > 0) && (HardTurnCount(Alternate, grid, bladeM) < Initial))
+            if ((Alternate.Count > 0) && (HardTurnCount(Alternate, Grid, BladeM) < Initial))
             {
                 return (Alternate, 1);
             }
 
-            return (lane, 0);
+            return (Lane, 0);
         }
 
         /// <summary>
@@ -5216,34 +5223,34 @@ namespace HaulBuilder
         /// <summary>
         /// Decomposes a patch into parallel blade-width lanes along the min-lane sweep heading.
         /// </summary>
-        /// <param name="cells">Patch cells.</param>
-        /// <param name="grid">Grid geometry.</param>
-        /// <param name="bladeM">Blade width in metres.</param>
+        /// <param name="Cells">Patch cells.</param>
+        /// <param name="Grid">Grid geometry.</param>
+        /// <param name="BladeM">Blade width in metres.</param>
         /// <returns>Lanes in cross-axis order, each sorted along the sweep axis.</returns>
         static private List<List<((Int32 Bx, Int32 By) Cell, Double DepthM)>> PatchDrivableLanes
             (
-            List<((Int32 Bx, Int32 By) Cell, Double DepthM)> cells,
-            Grid grid,
-            Double bladeM
+            List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Cells,
+            Grid Grid,
+            Double BladeM
             )
         {
             // Intent: fewer lanes ⇒ fewer U-turn keyholes; search headings, not PCA alone.
-            if (cells.Count <= 1)
+            if (Cells.Count <= 1)
             {
-                return new List<List<((Int32 Bx, Int32 By) Cell, Double DepthM)>> { new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>(cells) };
+                return new List<List<((Int32 Bx, Int32 By) Cell, Double DepthM)>> { new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>(Cells) };
             }
 
             List<(Double X, Double Y)> Centers = new List<(Double X, Double Y)>();
-            foreach (((Int32 Bx, Int32 By) Cell, Double DepthM) Entry in cells)
+            foreach (((Int32 Bx, Int32 By) Cell, Double DepthM) Entry in Cells)
             {
-                Centers.Add(grid.CellCenterXY(Entry.Cell.Bx, Entry.Cell.By));
+                Centers.Add(Grid.CellCenterXY(Entry.Cell.Bx, Entry.Cell.By));
             }
 
             Double BestHeading = PrincipalHeadingDeg(Centers);
-            (Int32 NLanes, Double AlongSpan) BestScore = LaneCountAndSpan(Centers, BestHeading, bladeM);
-            for (Double Deg = 0.0; Deg < 180.0; Deg += MIN_LANE_HEADING_STEP_DEG)
+            (Int32 NLanes, Double AlongSpan) BestScore = LaneCountAndSpan(Centers, BestHeading, BladeM);
+            for (Double Deg = 0.0; Deg < Constants.DEGREES_PER_HALF_TURN; Deg += MIN_LANE_HEADING_STEP_DEG)
             {
-                (Int32 NLanes, Double AlongSpan) Score = LaneCountAndSpan(Centers, Deg, bladeM);
+                (Int32 NLanes, Double AlongSpan) Score = LaneCountAndSpan(Centers, Deg, BladeM);
                 // Intent: only leave PCA when another heading truly needs fewer U-turns.
                 if (Score.NLanes < BestScore.NLanes)
                 {
@@ -5252,32 +5259,32 @@ namespace HaulBuilder
                 }
             }
 
-            return LanesAtHeading(cells, Centers, BestHeading, bladeM);
+            return LanesAtHeading(Cells, Centers, BestHeading, BladeM);
         }
 
         /// <summary>
         /// Counts blade-width lanes and along-axis span for a candidate sweep heading.
         /// </summary>
-        /// <param name="centers">Cell centers.</param>
-        /// <param name="headingDeg">Sweep heading in compass degrees.</param>
-        /// <param name="bladeM">Blade width in metres.</param>
+        /// <param name="Centers">Cell centers.</param>
+        /// <param name="HeadingDeg">Sweep heading in compass degrees.</param>
+        /// <param name="BladeM">Blade width in metres.</param>
         /// <returns>Lane count and along-axis span in metres.</returns>
         static private (Int32 NLanes, Double AlongSpan) LaneCountAndSpan
             (
-            List<(Double X, Double Y)> centers,
-            Double headingDeg,
-            Double bladeM
+            List<(Double X, Double Y)> Centers,
+            Double HeadingDeg,
+            Double BladeM
             )
         {
-            Double Theta = DegreesToRadians(headingDeg);
+            Double Theta = DegreesToRadians(HeadingDeg);
             (Double X, Double Y) Uh = (Math.Sin(Theta), Math.Cos(Theta));
             (Double X, Double Y) Vh = (Math.Cos(Theta), -Math.Sin(Theta));
-            (Double X, Double Y) Origin = Centroid(centers);
+            (Double X, Double Y) Origin = Centroid(Centers);
             Double UMin = Double.PositiveInfinity;
             Double UMax = Double.NegativeInfinity;
             Double VMin = Double.PositiveInfinity;
             Double VMax = Double.NegativeInfinity;
-            foreach ((Double X, Double Y) Point in centers)
+            foreach ((Double X, Double Y) Point in Centers)
             {
                 Double Dx = Point.X - Origin.X;
                 Double Dy = Point.Y - Origin.Y;
@@ -5289,9 +5296,9 @@ namespace HaulBuilder
                 if (V > VMax) { VMax = V; }
             }
 
-            Double Step = Math.Max(bladeM, 1e-3);
-            Int32 NLanes = Math.Max(1, (Int32)Math.Floor(((VMax - VMin) / Step) + 1e-9) + 1);
-            if ((VMax - (VMin + (Step * (NLanes - 1)))) > (0.5 * Step))
+            Double Step = Math.Max(BladeM, Constants.PATH_JOIN_COMPARISON_TOLERANCE);
+            Int32 NLanes = Math.Max(1, (Int32)Math.Floor(((VMax - VMin) / Step) + Constants.NUMERIC_COMPARISON_TOLERANCE) + 1);
+            if ((VMax - (VMin + (Step * (NLanes - 1)))) > (Constants.HALF_SCALE * Step))
             {
                 NLanes += 1;
             }
@@ -5302,27 +5309,27 @@ namespace HaulBuilder
         /// <summary>
         /// Bins cells into blade-width lanes at a fixed sweep heading.
         /// </summary>
-        /// <param name="cells">Patch cells.</param>
-        /// <param name="centers">Matching cell centers.</param>
-        /// <param name="headingDeg">Sweep heading in compass degrees.</param>
-        /// <param name="bladeM">Blade width in metres.</param>
+        /// <param name="Cells">Patch cells.</param>
+        /// <param name="Centers">Matching cell centers.</param>
+        /// <param name="HeadingDeg">Sweep heading in compass degrees.</param>
+        /// <param name="BladeM">Blade width in metres.</param>
         /// <returns>Non-empty lanes in cross-axis order.</returns>
         static private List<List<((Int32 Bx, Int32 By) Cell, Double DepthM)>> LanesAtHeading
             (
-            List<((Int32 Bx, Int32 By) Cell, Double DepthM)> cells,
-            List<(Double X, Double Y)> centers,
-            Double headingDeg,
-            Double bladeM
+            List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Cells,
+            List<(Double X, Double Y)> Centers,
+            Double HeadingDeg,
+            Double BladeM
             )
         {
-            Double Theta = DegreesToRadians(headingDeg);
+            Double Theta = DegreesToRadians(HeadingDeg);
             (Double X, Double Y) Uh = (Math.Sin(Theta), Math.Cos(Theta));
             (Double X, Double Y) Vh = (Math.Cos(Theta), -Math.Sin(Theta));
-            (Double X, Double Y) Origin = Centroid(centers);
+            (Double X, Double Y) Origin = Centroid(Centers);
 
             List<Double> Us = new List<Double>();
             List<Double> Vs = new List<Double>();
-            foreach ((Double X, Double Y) Point in centers)
+            foreach ((Double X, Double Y) Point in Centers)
             {
                 Double Dx = Point.X - Origin.X;
                 Double Dy = Point.Y - Origin.Y;
@@ -5330,16 +5337,16 @@ namespace HaulBuilder
                 Vs.Add((Dx * Vh.X) + (Dy * Vh.Y));
             }
 
-            Double Step = Math.Max(bladeM, 1e-3);
+            Double Step = Math.Max(BladeM, Constants.PATH_JOIN_COMPARISON_TOLERANCE);
             Double VMin = Min(Vs);
             Double VMax = Max(Vs);
-            Int32 NLanes = Math.Max(1, (Int32)Math.Floor(((VMax - VMin) / Step) + 1e-9) + 1);
+            Int32 NLanes = Math.Max(1, (Int32)Math.Floor(((VMax - VMin) / Step) + Constants.NUMERIC_COMPARISON_TOLERANCE) + 1);
             List<Double> LaneV = new List<Double>();
             for (Int32 k = 0; k < NLanes; k += 1)
             {
                 LaneV.Add(VMin + (Step * k));
             }
-            if ((VMax - LaneV[LaneV.Count - 1]) > (0.5 * Step))
+            if ((VMax - LaneV[LaneV.Count - 1]) > (Constants.HALF_SCALE * Step))
             {
                 LaneV.Add(VMax);
             }
@@ -5350,7 +5357,7 @@ namespace HaulBuilder
                 Groups.Add(new List<Int32>());
             }
 
-            for (Int32 i = 0; i < cells.Count; i += 1)
+            for (Int32 i = 0; i < Cells.Count; i += 1)
             {
                 Int32 Best = 0;
                 Double BestDist = Double.MaxValue;
@@ -5378,7 +5385,7 @@ namespace HaulBuilder
                 List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Lane = new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>();
                 foreach (Int32 Index in Members)
                 {
-                    Lane.Add(cells[Index]);
+                    Lane.Add(Cells[Index]);
                 }
                 Lanes.Add(Lane);
             }
@@ -5389,23 +5396,23 @@ namespace HaulBuilder
         /// <summary>
         /// Builds boustrophedon ordering for one connected pocket.
         /// </summary>
-        /// <param name="cells">Connected pocket cells.</param>
-        /// <param name="grid">Grid geometry.</param>
-        /// <param name="bladeM">Blade width in metres.</param>
-        /// <param name="orientStartXy">Optional start anchor.</param>
-        /// <param name="orientEndXy">Optional end anchor.</param>
+        /// <param name="Cells">Connected pocket cells.</param>
+        /// <param name="Grid">Grid geometry.</param>
+        /// <param name="BladeM">Blade width in metres.</param>
+        /// <param name="OrientStartXy">Optional start anchor.</param>
+        /// <param name="OrientEndXy">Optional end anchor.</param>
         /// <returns>Cell ordering in serpentine lane walk.</returns>
         static private List<((Int32 Bx, Int32 By) Cell, Double DepthM)> BoustrophedonOne
             (
-            List<((Int32 Bx, Int32 By) Cell, Double DepthM)> cells,
-            Grid grid,
-            Double bladeM,
-            (Double X, Double Y)? orientStartXy = null,
-            (Double X, Double Y)? orientEndXy = null
+            List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Cells,
+            Grid Grid,
+            Double BladeM,
+            (Double X, Double Y)? OrientStartXy = null,
+            (Double X, Double Y)? OrientEndXy = null
             )
         {
             // Alternate lane direction to create one turn per lane transition.
-            List<List<((Int32 Bx, Int32 By) Cell, Double DepthM)>> Lanes = PatchDrivableLanes(cells, grid, bladeM);
+            List<List<((Int32 Bx, Int32 By) Cell, Double DepthM)>> Lanes = PatchDrivableLanes(Cells, Grid, BladeM);
             List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Out = new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>();
 
             for (Int32 j = 0; j < Lanes.Count; j += 1)
@@ -5420,19 +5427,19 @@ namespace HaulBuilder
 
             if (Out.Count >= 2)
             {
-                (Double X, Double Y) C0 = grid.CellCenterXY(Out[0].Cell.Bx, Out[0].Cell.By);
-                (Double X, Double Y) C1 = grid.CellCenterXY(Out[Out.Count - 1].Cell.Bx, Out[Out.Count - 1].Cell.By);
+                (Double X, Double Y) C0 = Grid.CellCenterXY(Out[0].Cell.Bx, Out[0].Cell.By);
+                (Double X, Double Y) C1 = Grid.CellCenterXY(Out[Out.Count - 1].Cell.Bx, Out[Out.Count - 1].Cell.By);
 
-                if (orientEndXy.HasValue)
+                if (OrientEndXy.HasValue)
                 {
-                    if (D2(C0, orientEndXy.Value) < D2(C1, orientEndXy.Value))
+                    if (D2(C0, OrientEndXy.Value) < D2(C1, OrientEndXy.Value))
                     {
                         Out.Reverse();
                     }
                 }
-                else if (orientStartXy.HasValue)
+                else if (OrientStartXy.HasValue)
                 {
-                    if (D2(C1, orientStartXy.Value) < D2(C0, orientStartXy.Value))
+                    if (D2(C1, OrientStartXy.Value) < D2(C0, OrientStartXy.Value))
                     {
                         Out.Reverse();
                     }
@@ -5445,26 +5452,26 @@ namespace HaulBuilder
         /// <summary>
         /// Builds boustrophedon ordering pocket-by-pocket for multi-drop patches.
         /// </summary>
-        /// <param name="cells">Patch cells.</param>
-        /// <param name="grid">Grid geometry.</param>
-        /// <param name="bladeM">Blade width in metres.</param>
-        /// <param name="orientStartXy">Optional start anchor.</param>
-        /// <param name="orientEndXy">Optional end anchor.</param>
+        /// <param name="Cells">Patch cells.</param>
+        /// <param name="Grid">Grid geometry.</param>
+        /// <param name="BladeM">Blade width in metres.</param>
+        /// <param name="OrientStartXy">Optional start anchor.</param>
+        /// <param name="OrientEndXy">Optional end anchor.</param>
         /// <returns>Boustrophedon cell sequence with all original cells retained.</returns>
         static private List<((Int32 Bx, Int32 By) Cell, Double DepthM)> BoustrophedonCells
             (
-            List<((Int32 Bx, Int32 By) Cell, Double DepthM)> cells,
-            Grid grid,
-            Double bladeM,
-            (Double X, Double Y)? orientStartXy = null,
-            (Double X, Double Y)? orientEndXy = null
+            List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Cells,
+            Grid Grid,
+            Double BladeM,
+            (Double X, Double Y)? OrientStartXy = null,
+            (Double X, Double Y)? OrientEndXy = null
             )
         {
             // Sequence pockets with nearest-neighbour chaining to minimize blade-up reposition gaps.
-            List<List<((Int32 Bx, Int32 By) Cell, Double DepthM)>> Pockets = ConnectedPockets(cells);
+            List<List<((Int32 Bx, Int32 By) Cell, Double DepthM)>> Pockets = ConnectedPockets(Cells);
             if (Pockets.Count <= 1)
             {
-                return BoustrophedonOne(cells, grid, bladeM, orientStartXy, orientEndXy);
+                return BoustrophedonOne(Cells, Grid, BladeM, OrientStartXy, OrientEndXy);
             }
 
             List<(Double X, Double Y)> Cents = new List<(Double X, Double Y)>();
@@ -5473,32 +5480,32 @@ namespace HaulBuilder
                 List<(Double X, Double Y)> PocketCenters = new List<(Double X, Double Y)>();
                 foreach (((Int32 Bx, Int32 By) Cell, Double DepthM) Entry in Pocket)
                 {
-                    PocketCenters.Add(grid.CellCenterXY(Entry.Cell.Bx, Entry.Cell.By));
+                    PocketCenters.Add(Grid.CellCenterXY(Entry.Cell.Bx, Entry.Cell.By));
                 }
                 Cents.Add(Centroid(PocketCenters));
             }
 
             List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Out = new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>();
 
-            if (orientEndXy.HasValue)
+            if (OrientEndXy.HasValue)
             {
-                List<Int32> Order = NnOrder(Cents, null, orientEndXy);
+                List<Int32> Order = NnOrder(Cents, null, OrientEndXy);
                 for (Int32 Rank = 0; Rank < Order.Count; Rank += 1)
                 {
                     Int32 Index = Order[Rank];
-                    (Double X, Double Y) Target = (Rank == (Order.Count - 1)) ? orientEndXy.Value : Cents[Order[Rank + 1]];
-                    Out.AddRange(BoustrophedonOne(Pockets[Index], grid, bladeM, null, Target));
+                    (Double X, Double Y) Target = (Rank == (Order.Count - 1)) ? OrientEndXy.Value : Cents[Order[Rank + 1]];
+                    Out.AddRange(BoustrophedonOne(Pockets[Index], Grid, BladeM, null, Target));
                 }
             }
             else
             {
-                (Double X, Double Y) Source = orientStartXy.HasValue ? orientStartXy.Value : Cents[0];
-                List<Int32> Order = NnOrder(Cents, orientStartXy, null);
+                (Double X, Double Y) Source = OrientStartXy.HasValue ? OrientStartXy.Value : Cents[0];
+                List<Int32> Order = NnOrder(Cents, OrientStartXy, null);
                 for (Int32 Rank = 0; Rank < Order.Count; Rank += 1)
                 {
                     Int32 Index = Order[Rank];
                     (Double X, Double Y) StartRef = (Rank == 0) ? Source : Cents[Order[Rank - 1]];
-                    Out.AddRange(BoustrophedonOne(Pockets[Index], grid, bladeM, StartRef, null));
+                    Out.AddRange(BoustrophedonOne(Pockets[Index], Grid, BladeM, StartRef, null));
                 }
             }
 
@@ -5508,81 +5515,81 @@ namespace HaulBuilder
         /// <summary>
         /// Renders a pass lane exactly as current guidance logic would draw it.
         /// </summary>
-        /// <param name="cells">Pass cells.</param>
-        /// <param name="grid">Grid geometry.</param>
-        /// <param name="bladeM">Blade width in metres.</param>
-        /// <param name="flowPass">Whether pass follows flow ordering.</param>
-        /// <param name="headingDeg">Fallback heading for lane tiling.</param>
-        /// <param name="overlap">Lane overlap fraction.</param>
-        /// <param name="orientStartXy">Optional start anchor.</param>
-        /// <param name="orientEndXy">Optional end anchor.</param>
+        /// <param name="Cells">Pass cells.</param>
+        /// <param name="Grid">Grid geometry.</param>
+        /// <param name="BladeM">Blade width in metres.</param>
+        /// <param name="FlowPass">Whether pass follows flow ordering.</param>
+        /// <param name="HeadingDeg">Fallback heading for lane tiling.</param>
+        /// <param name="Overlap">Lane overlap fraction.</param>
+        /// <param name="OrientStartXy">Optional start anchor.</param>
+        /// <param name="OrientEndXy">Optional end anchor.</param>
         /// <returns>Rendered lane points after optional knot repair.</returns>
         static private List<(Double X, Double Y, Double DepthM)> RenderedLane
             (
-            List<((Int32 Bx, Int32 By) Cell, Double DepthM)> cells,
-            Grid grid,
-            Double bladeM,
-            Boolean flowPass,
-            Double headingDeg,
-            Double overlap,
-            (Double X, Double Y)? orientStartXy = null,
-            (Double X, Double Y)? orientEndXy = null
+            List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Cells,
+            Grid Grid,
+            Double BladeM,
+            Boolean FlowPass,
+            Double HeadingDeg,
+            Double Overlap,
+            (Double X, Double Y)? OrientStartXy = null,
+            (Double X, Double Y)? OrientEndXy = null
             )
         {
             // Mirror production rendering path so knot detection targets real current behavior.
-            List<(Double X, Double Y, Double DepthM)> Lane = flowPass
-                ? LanesFlow(cells, grid, orientStartXy, orientEndXy)
-                : LanesMulti(cells, grid, bladeM, headingDeg, overlap, orientStartXy, orientEndXy);
+            List<(Double X, Double Y, Double DepthM)> Lane = FlowPass
+                ? LanesFlow(Cells, Grid, OrientStartXy, OrientEndXy)
+                : LanesMulti(Cells, Grid, BladeM, HeadingDeg, Overlap, OrientStartXy, OrientEndXy);
 
-            (Lane, Int32 _) = RepairIfTangled(Lane, cells, grid, bladeM, orientStartXy, orientEndXy);
+            (Lane, Int32 _) = RepairIfTangled(Lane, Cells, Grid, BladeM, OrientStartXy, OrientEndXy);
             return Lane;
         }
 
         /// <summary>
         /// Returns whether the rendered cut or fill sweep for a pass still hairpins.
         /// </summary>
-        /// <param name="pass">Pass to test.</param>
-        /// <param name="grid">Grid geometry.</param>
-        /// <param name="bladeM">Blade width in metres.</param>
-        /// <param name="hairpinMin">Minimum hairpin count to flag knot.</param>
-        /// <param name="headingDeg">Fallback heading.</param>
-        /// <param name="overlap">Lane overlap fraction.</param>
+        /// <param name="Pass">Pass to test.</param>
+        /// <param name="Grid">Grid geometry.</param>
+        /// <param name="BladeM">Blade width in metres.</param>
+        /// <param name="HairpinMin">Minimum hairpin count to flag knot.</param>
+        /// <param name="HeadingDeg">Fallback heading.</param>
+        /// <param name="Overlap">Lane overlap fraction.</param>
         /// <returns>True if cut or fill sweep appears knotted.</returns>
         static private Boolean PassIsKnot
             (
-            Pass pass,
-            Grid grid,
-            Double bladeM,
-            Int32 hairpinMin,
-            Double headingDeg = 0.0,
-            Double overlap = 0.0
+            Pass Pass,
+            Grid Grid,
+            Double BladeM,
+            Int32 HairpinMin,
+            Double HeadingDeg = 0.0,
+            Double Overlap = 0.0
             )
         {
             // Evaluate the rendered lane rather than raw cells so existing repairs are honored.
-            Boolean FlowPass = pass.CutHeadingDeg.HasValue || pass.FillHeadingDeg.HasValue;
-            Double CutHeading = pass.CutHeadingDeg.HasValue ? pass.CutHeadingDeg.Value : headingDeg;
-            Double FillHeading = pass.FillHeadingDeg.HasValue ? pass.FillHeadingDeg.Value : headingDeg;
+            Boolean FlowPass = Pass.CutHeadingDeg.HasValue || Pass.FillHeadingDeg.HasValue;
+            Double CutHeading = Pass.CutHeadingDeg.HasValue ? Pass.CutHeadingDeg.Value : HeadingDeg;
+            Double FillHeading = Pass.FillHeadingDeg.HasValue ? Pass.FillHeadingDeg.Value : HeadingDeg;
 
-            if (pass.CutCells.Count > 3)
+            if (Pass.CutCells.Count > 3)
             {
-                List<(Double X, Double Y, Double DepthM)> Lane = RenderedLane(pass.CutCells, grid, bladeM, FlowPass, CutHeading, overlap, null, pass.FillStartXy);
-                if (HardTurnCount(Lane, grid, bladeM) >= hairpinMin)
+                List<(Double X, Double Y, Double DepthM)> Lane = RenderedLane(Pass.CutCells, Grid, BladeM, FlowPass, CutHeading, Overlap, null, Pass.FillStartXy);
+                if (HardTurnCount(Lane, Grid, BladeM) >= HairpinMin)
                 {
                     return true;
                 }
             }
 
-            if (pass.FillCells.Count > 3)
+            if (Pass.FillCells.Count > 3)
             {
                 (Double X, Double Y)? CutEnd = null;
-                if (pass.CutCells.Count > 0)
+                if (Pass.CutCells.Count > 0)
                 {
-                    (Int32 Bx, Int32 By) Last = pass.CutCells[pass.CutCells.Count - 1].Cell;
-                    CutEnd = grid.CellCenterXY(Last.Bx, Last.By);
+                    (Int32 Bx, Int32 By) Last = Pass.CutCells[Pass.CutCells.Count - 1].Cell;
+                    CutEnd = Grid.CellCenterXY(Last.Bx, Last.By);
                 }
 
-                List<(Double X, Double Y, Double DepthM)> Lane = RenderedLane(pass.FillCells, grid, bladeM, FlowPass, FillHeading, overlap, CutEnd, null);
-                if (HardTurnCount(Lane, grid, bladeM) >= hairpinMin)
+                List<(Double X, Double Y, Double DepthM)> Lane = RenderedLane(Pass.FillCells, Grid, BladeM, FlowPass, FillHeading, Overlap, CutEnd, null);
+                if (HardTurnCount(Lane, Grid, BladeM) >= HairpinMin)
                 {
                     return true;
                 }
@@ -5594,19 +5601,19 @@ namespace HaulBuilder
         /// <summary>
         /// Ramer-Douglas-Peucker simplification retaining indices of kept vertices.
         /// </summary>
-        /// <param name="xs">Polyline x coordinates.</param>
-        /// <param name="ys">Polyline y coordinates.</param>
-        /// <param name="tol">Tolerance in metres.</param>
+        /// <param name="Xs">Polyline x coordinates.</param>
+        /// <param name="Ys">Polyline y coordinates.</param>
+        /// <param name="Tol">Tolerance in metres.</param>
         /// <returns>Indices retained by simplification.</returns>
         static private List<Int32> RdpKeep
             (
-            List<Double> xs,
-            List<Double> ys,
-            Double tol
+            List<Double> Xs,
+            List<Double> Ys,
+            Double Tol
             )
         {
             // Use iterative stack form so long guidance tracks avoid recursion depth issues.
-            Int32 N = xs.Count;
+            Int32 N = Xs.Count;
             if (N < 3)
             {
                 List<Int32> All = new List<Int32>();
@@ -5625,17 +5632,17 @@ namespace HaulBuilder
             Keep[0] = true;
             Keep[N - 1] = true;
 
-            Double Tol2 = tol * tol;
+            Double Tol2 = Tol * Tol;
             Stack<(Int32 A, Int32 B)> Stack = new Stack<(Int32 A, Int32 B)>();
             Stack.Push((0, N - 1));
 
             while (Stack.Count > 0)
             {
                 (Int32 A, Int32 B) Segment = Stack.Pop();
-                Double Ax = xs[Segment.A];
-                Double Ay = ys[Segment.A];
-                Double Bx = xs[Segment.B];
-                Double By = ys[Segment.B];
+                Double Ax = Xs[Segment.A];
+                Double Ay = Ys[Segment.A];
+                Double Bx = Xs[Segment.B];
+                Double By = Ys[Segment.B];
                 Double Dx = Bx - Ax;
                 Double Dy = By - Ay;
                 Double SegLen2 = (Dx * Dx) + (Dy * Dy);
@@ -5648,14 +5655,14 @@ namespace HaulBuilder
                     Double D2Local;
                     if (SegLen2 == 0.0)
                     {
-                        D2Local = ((xs[i] - Ax) * (xs[i] - Ax)) + ((ys[i] - Ay) * (ys[i] - Ay));
+                        D2Local = ((Xs[i] - Ax) * (Xs[i] - Ax)) + ((Ys[i] - Ay) * (Ys[i] - Ay));
                     }
                     else
                     {
-                        Double T = (((xs[i] - Ax) * Dx) + ((ys[i] - Ay) * Dy)) / SegLen2;
+                        Double T = (((Xs[i] - Ax) * Dx) + ((Ys[i] - Ay) * Dy)) / SegLen2;
                         Double Px = Ax + (T * Dx);
                         Double Py = Ay + (T * Dy);
-                        D2Local = ((xs[i] - Px) * (xs[i] - Px)) + ((ys[i] - Py) * (ys[i] - Py));
+                        D2Local = ((Xs[i] - Px) * (Xs[i] - Px)) + ((Ys[i] - Py) * (Ys[i] - Py));
                     }
 
                     if (D2Local > Dmax)
@@ -5687,36 +5694,36 @@ namespace HaulBuilder
         /// <summary>
         /// Computes total turn count and summed turn angle from raw track geometry.
         /// </summary>
-        /// <param name="xs">Raw x coordinates.</param>
-        /// <param name="ys">Raw y coordinates.</param>
-        /// <param name="gridSizeM">Grid size in metres.</param>
-        /// <param name="bladeM">Blade width in metres.</param>
-        /// <param name="turnThresholdDeg">Minimum heading change counted as turn.</param>
+        /// <param name="Xs">Raw x coordinates.</param>
+        /// <param name="Ys">Raw y coordinates.</param>
+        /// <param name="GridSizeM">Grid size in metres.</param>
+        /// <param name="BladeM">Blade width in metres.</param>
+        /// <param name="TurnThresholdDeg">Minimum heading change counted as turn.</param>
         /// <returns>Turn count and total turn angle in radians.</returns>
         static private (Int32 NTurns, Double TurnAngleRad) TurnMetrics
             (
-            List<Double> xs,
-            List<Double> ys,
-            Double gridSizeM,
-            Double bladeM,
-            Double turnThresholdDeg = 60.0
+            List<Double> Xs,
+            List<Double> Ys,
+            Double GridSizeM,
+            Double BladeM,
+            Double TurnThresholdDeg = 60.0
             )
         {
             // Simplify first so raster stair-steps are not mistaken for real slow-down turns.
-            if (xs.Count < 3)
+            if (Xs.Count < 3)
             {
                 return (0, 0.0);
             }
 
-            Double Tol = Math.Max(bladeM, gridSizeM) * 1.5;
-            List<Int32> Idx = RdpKeep(xs, ys, Tol);
+            Double Tol = Math.Max(BladeM, GridSizeM) * 1.5;
+            List<Int32> Idx = RdpKeep(Xs, Ys, Tol);
             List<Double> Bearings = new List<Double>();
 
             for (Int32 k = 0; k < (Idx.Count - 1); k += 1)
             {
                 Int32 i = Idx[k];
                 Int32 j = Idx[k + 1];
-                Bearings.Add(RadiansToDegrees(Math.Atan2(xs[j] - xs[i], ys[j] - ys[i])));
+                Bearings.Add(RadiansToDegrees(Math.Atan2(Xs[j] - Xs[i], Ys[j] - Ys[i])));
             }
 
             Int32 TurnCount = 0;
@@ -5724,8 +5731,8 @@ namespace HaulBuilder
 
             for (Int32 k = 1; k < Bearings.Count; k += 1)
             {
-                Double Delta = Math.Abs(((Bearings[k] - Bearings[k - 1] + 180.0) % 360.0) - 180.0);
-                if (Delta >= turnThresholdDeg)
+                Double Delta = Math.Abs(((Bearings[k] - Bearings[k - 1] + Constants.DEGREES_PER_HALF_TURN) % Constants.DEGREES_PER_TURN) - Constants.DEGREES_PER_HALF_TURN);
+                if (Delta >= TurnThresholdDeg)
                 {
                     Total += DegreesToRadians(Delta);
                     TurnCount += 1;
@@ -5738,46 +5745,46 @@ namespace HaulBuilder
         /// <summary>
         /// Builds operator instruction text for one action/depth pair.
         /// </summary>
-        /// <param name="action">Action code.</param>
-        /// <param name="depthMm">Target depth in millimetres.</param>
+        /// <param name="Action">Action code.</param>
+        /// <param name="DepthMm">Target depth in millimetres.</param>
         /// <returns>Instruction string.</returns>
         static private String Instruction
             (
-            String action,
-            Double depthMm
+            String Action,
+            Double DepthMm
             )
         {
             // Keep exact phrase mapping so downstream operator prompts stay consistent.
-            Int32 D = (Int32)Math.Round(depthMm);
-            if (action == START)
+            Int32 D = (Int32)Math.Round(DepthMm);
+            if (Action == START)
             {
                 return $"Start: drive to first cut, lower blade, cut {D} mm";
             }
-            if (action == RETURN)
+            if (Action == RETURN)
             {
                 return $"Raise blade, drive to next cut, lower blade, cut {D} mm";
             }
-            if (action == CUT)
+            if (Action == CUT)
             {
                 return $"Cut {D} mm";
             }
-            if (action == HAUL)
+            if (Action == HAUL)
             {
                 return $"Raise blade, haul to fill, lower blade, spread {D} mm";
             }
-            if (action == FILL)
+            if (Action == FILL)
             {
                 return $"Spread {D} mm";
             }
-            if (action == GRADE)
+            if (Action == GRADE)
             {
                 return "Turn back over fill, grade & compact";
             }
-            if (action == MOVE)
+            if (Action == MOVE)
             {
                 return $"Raise blade, drive to next pocket, lower blade, {D} mm";
             }
-            if (action == MANUAL_MOVE)
+            if (Action == MANUAL_MOVE)
             {
                 return "MANUAL MOVE: verify and drive clear of obstruction";
             }
@@ -5787,151 +5794,151 @@ namespace HaulBuilder
         /// <summary>
         /// Converts UTM point to latitude/longitude.
         /// </summary>
-        /// <param name="field">Field metadata and conversion context.</param>
-        /// <param name="x">UTM easting.</param>
-        /// <param name="y">UTM northing.</param>
+        /// <param name="Field">Field metadata and conversion context.</param>
+        /// <param name="X">UTM easting.</param>
+        /// <param name="Y">UTM northing.</param>
         /// <returns>Latitude and longitude tuple.</returns>
         static private (Double Lat, Double Lon) LatLonFromUtm
             (
-            AgdField field,
-            Double x,
-            Double y
+            AgdField Field,
+            Double X,
+            Double Y
             )
         {
             // Delegate to the AGD field conversion utility expected in the C# AGD port.
-            return field.LatLonFromUtm(x, y);
+            return Field.LatLonFromUtm(X, Y);
         }
 
         /// <summary>
         /// Computes move time for one trapezoidal accel/decel travel leg.
         /// </summary>
-        /// <param name="distanceM">Distance in metres.</param>
-        /// <param name="vMaxMps">Maximum speed in metres per second.</param>
-        /// <param name="accelTimeS">Acceleration time in seconds.</param>
-        /// <param name="decelTimeS">Deceleration time in seconds.</param>
+        /// <param name="DistanceM">Distance in metres.</param>
+        /// <param name="VMaxMps">Maximum speed in metres per second.</param>
+        /// <param name="AccelTimeS">Acceleration time in seconds.</param>
+        /// <param name="DecelTimeS">Deceleration time in seconds.</param>
         /// <returns>Move time in seconds.</returns>
         static private Double MoveTime
             (
-            Double distanceM,
-            Double vMaxMps,
-            Double accelTimeS,
-            Double decelTimeS
+            Double DistanceM,
+            Double VMaxMps,
+            Double AccelTimeS,
+            Double DecelTimeS
             )
         {
             // Reproduce timemodel._move_time behavior locally so Swaths stays self-contained.
-            if ((distanceM <= 0.0) || (vMaxMps <= 0.0))
+            if ((DistanceM <= 0.0) || (VMaxMps <= 0.0))
             {
                 return 0.0;
             }
 
-            Double AccelDist = 0.5 * vMaxMps * Math.Max(accelTimeS, 0.0);
-            Double DecelDist = 0.5 * vMaxMps * Math.Max(decelTimeS, 0.0);
+            Double AccelDist = Constants.HALF_SCALE * VMaxMps * Math.Max(AccelTimeS, 0.0);
+            Double DecelDist = Constants.HALF_SCALE * VMaxMps * Math.Max(DecelTimeS, 0.0);
             Double RampDist = AccelDist + DecelDist;
 
-            if (distanceM > RampDist)
+            if (DistanceM > RampDist)
             {
-                Double Cruise = (distanceM - RampDist) / vMaxMps;
-                return Math.Max(accelTimeS, 0.0) + Cruise + Math.Max(decelTimeS, 0.0);
+                Double Cruise = (DistanceM - RampDist) / VMaxMps;
+                return Math.Max(AccelTimeS, 0.0) + Cruise + Math.Max(DecelTimeS, 0.0);
             }
 
-            Double Scale = (RampDist > 0.0) ? (distanceM / RampDist) : 0.0;
-            return (Math.Max(accelTimeS, 0.0) + Math.Max(decelTimeS, 0.0)) * Scale;
+            Double Scale = (RampDist > 0.0) ? (DistanceM / RampDist) : 0.0;
+            return (Math.Max(AccelTimeS, 0.0) + Math.Max(DecelTimeS, 0.0)) * Scale;
         }
 
         /// <summary>
         /// Determines whether an action is blade-up travel.
         /// </summary>
-        /// <param name="action">Action code.</param>
+        /// <param name="Action">Action code.</param>
         /// <returns>True for START/RETURN/HAUL/MOVE.</returns>
         static private Boolean IsBladeUp
             (
-            String action
+            String Action
             )
         {
             // Keep travel-state categorization centralized for detours and blade labels.
-            return (action == START) || (action == RETURN)
-                || (action == HAUL) || (action == MOVE)
-                || (action == MANUAL_MOVE);
+            return (Action == START) || (Action == RETURN)
+                || (Action == HAUL) || (Action == MOVE)
+                || (Action == MANUAL_MOVE);
         }
 
         /// <summary>
         /// Escapes one CSV field with quote doubling as needed.
         /// </summary>
-        /// <param name="value">Raw field value.</param>
+        /// <param name="Value">Raw field value.</param>
         /// <returns>CSV-safe field text.</returns>
         static private String CsvEscape
             (
-            String value
+            String Value
             )
         {
             // Quote only when required so output matches compact Python csv.writer behavior.
-            if ((value.Contains(',')) || (value.Contains('"')) || (value.Contains('\n')) || (value.Contains('\r')))
+            if ((Value.Contains(',')) || (Value.Contains('"')) || (Value.Contains('\n')) || (Value.Contains('\r')))
             {
-                return "\"" + value.Replace("\"", "\"\"") + "\"";
+                return "\"" + Value.Replace("\"", "\"\"") + "\"";
             }
-            return value;
+            return Value;
         }
 
         /// <summary>
         /// Converts radians to degrees.
         /// </summary>
-        /// <param name="radians">Angle in radians.</param>
+        /// <param name="Radians">Angle in radians.</param>
         /// <returns>Angle in degrees.</returns>
         static private Double RadiansToDegrees
             (
-            Double radians
+            Double Radians
             )
         {
             // Keep explicit conversion helper to avoid scattered magic factors.
-            return radians * (180.0 / Math.PI);
+            return Radians * (Constants.DEGREES_PER_HALF_TURN / Math.PI);
         }
 
         /// <summary>
         /// Converts degrees to radians.
         /// </summary>
-        /// <param name="degrees">Angle in degrees.</param>
+        /// <param name="Degrees">Angle in degrees.</param>
         /// <returns>Angle in radians.</returns>
         static private Double DegreesToRadians
             (
-            Double degrees
+            Double Degrees
             )
         {
             // Keep explicit conversion helper to avoid scattered magic factors.
-            return degrees * (Math.PI / 180.0);
+            return Degrees * (Math.PI / Constants.DEGREES_PER_HALF_TURN);
         }
 
         /// <summary>
         /// Normalizes an angle to [0, 360).
         /// </summary>
-        /// <param name="degrees">Raw degree value.</param>
+        /// <param name="Degrees">Raw degree value.</param>
         /// <returns>Normalized degree value.</returns>
         static private Double Mod360
             (
-            Double degrees
+            Double Degrees
             )
         {
             // Preserve Python modulo normalization semantics for negative bearings.
-            Double Mod = degrees % 360.0;
-            return (Mod < 0.0) ? (Mod + 360.0) : Mod;
+            Double Mod = Degrees % Constants.DEGREES_PER_TURN;
+            return (Mod < 0.0) ? (Mod + Constants.DEGREES_PER_TURN) : Mod;
         }
 
         /// <summary>
         /// Returns minimum value from a non-empty list.
         /// </summary>
-        /// <param name="values">Input values.</param>
+        /// <param name="Values">Input values.</param>
         /// <returns>Minimum value.</returns>
         static private Double Min
             (
-            List<Double> values
+            List<Double> Values
             )
         {
             // Avoid LINQ to keep explicit style and allocation behavior.
-            Double Best = values[0];
-            for (Int32 i = 1; i < values.Count; i += 1)
+            Double Best = Values[0];
+            for (Int32 i = 1; i < Values.Count; i += 1)
             {
-                if (values[i] < Best)
+                if (Values[i] < Best)
                 {
-                    Best = values[i];
+                    Best = Values[i];
                 }
             }
             return Best;
@@ -5940,20 +5947,20 @@ namespace HaulBuilder
         /// <summary>
         /// Returns maximum value from a non-empty list.
         /// </summary>
-        /// <param name="values">Input values.</param>
+        /// <param name="Values">Input values.</param>
         /// <returns>Maximum value.</returns>
         static private Double Max
             (
-            List<Double> values
+            List<Double> Values
             )
         {
             // Avoid LINQ to keep explicit style and allocation behavior.
-            Double Best = values[0];
-            for (Int32 i = 1; i < values.Count; i += 1)
+            Double Best = Values[0];
+            for (Int32 i = 1; i < Values.Count; i += 1)
             {
-                if (values[i] > Best)
+                if (Values[i] > Best)
                 {
-                    Best = values[i];
+                    Best = Values[i];
                 }
             }
             return Best;
@@ -5962,23 +5969,23 @@ namespace HaulBuilder
         /// <summary>
         /// Finds index in candidate set with minimum squared distance to point.
         /// </summary>
-        /// <param name="candidates">Candidate indices.</param>
-        /// <param name="cents">Centroid list.</param>
-        /// <param name="point">Target point.</param>
+        /// <param name="Candidates">Candidate indices.</param>
+        /// <param name="Cents">Centroid list.</param>
+        /// <param name="Point">Target point.</param>
         /// <returns>Best candidate index.</returns>
         static private Int32 ArgMinDistanceToPoint
             (
-            HashSet<Int32> candidates,
-            List<(Double X, Double Y)> cents,
-            (Double X, Double Y) point
+            HashSet<Int32> Candidates,
+            List<(Double X, Double Y)> Cents,
+            (Double X, Double Y) Point
             )
         {
             // Keep deterministic tie behavior by preserving first-seen minimum.
             Int32 BestIndex = -1;
             Double BestDist = Double.MaxValue;
-            foreach (Int32 Candidate in candidates)
+            foreach (Int32 Candidate in Candidates)
             {
-                Double Distance = D2(cents[Candidate], point);
+                Double Distance = D2(Cents[Candidate], Point);
                 if (Distance < BestDist)
                 {
                     BestDist = Distance;
@@ -5991,23 +5998,23 @@ namespace HaulBuilder
         /// <summary>
         /// Finds index in candidate set with minimum squared distance to target centroid.
         /// </summary>
-        /// <param name="candidates">Candidate indices.</param>
-        /// <param name="cents">Centroid list.</param>
-        /// <param name="target">Target centroid.</param>
+        /// <param name="Candidates">Candidate indices.</param>
+        /// <param name="Cents">Centroid list.</param>
+        /// <param name="Target">Target centroid.</param>
         /// <returns>Best candidate index.</returns>
         static private Int32 ArgMinDistanceToCentroid
             (
-            HashSet<Int32> candidates,
-            List<(Double X, Double Y)> cents,
-            (Double X, Double Y) target
+            HashSet<Int32> Candidates,
+            List<(Double X, Double Y)> Cents,
+            (Double X, Double Y) Target
             )
         {
             // Share nearest-neighbour selection behavior with point-anchored variant.
             Int32 BestIndex = -1;
             Double BestDist = Double.MaxValue;
-            foreach (Int32 Candidate in candidates)
+            foreach (Int32 Candidate in Candidates)
             {
-                Double Distance = D2(cents[Candidate], target);
+                Double Distance = D2(Cents[Candidate], Target);
                 if (Distance < BestDist)
                 {
                     BestDist = Distance;

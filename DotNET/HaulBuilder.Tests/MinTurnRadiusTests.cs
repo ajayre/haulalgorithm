@@ -13,22 +13,22 @@ namespace HaulBuilder.Tests
         /// <summary>
         /// Circumradius of triangle ABC in metres; infinity when collinear.
         /// </summary>
-        /// <param name="a">First vertex.</param>
-        /// <param name="b">Second vertex.</param>
-        /// <param name="c">Third vertex.</param>
+        /// <param name="A">First vertex.</param>
+        /// <param name="B">Second vertex.</param>
+        /// <param name="C">Third vertex.</param>
         /// <returns>Circumradius in metres.</returns>
         private static Double CircumRadiusM
             (
-            (Double X, Double Y) a,
-            (Double X, Double Y) b,
-            (Double X, Double Y) c
+            (Double X, Double Y) A,
+            (Double X, Double Y) B,
+            (Double X, Double Y) C
             )
         {
-            Double La = Math.Sqrt(((b.X - c.X) * (b.X - c.X)) + ((b.Y - c.Y) * (b.Y - c.Y)));
-            Double Lb = Math.Sqrt(((a.X - c.X) * (a.X - c.X)) + ((a.Y - c.Y) * (a.Y - c.Y)));
-            Double Lc = Math.Sqrt(((a.X - b.X) * (a.X - b.X)) + ((a.Y - b.Y) * (a.Y - b.Y)));
-            Double Cross = Math.Abs((a.X * (b.Y - c.Y)) + (b.X * (c.Y - a.Y)) + (c.X * (a.Y - b.Y)));
-            if (Cross < 1e-9)
+            Double La = Math.Sqrt(((B.X - C.X) * (B.X - C.X)) + ((B.Y - C.Y) * (B.Y - C.Y)));
+            Double Lb = Math.Sqrt(((A.X - C.X) * (A.X - C.X)) + ((A.Y - C.Y) * (A.Y - C.Y)));
+            Double Lc = Math.Sqrt(((A.X - B.X) * (A.X - B.X)) + ((A.Y - B.Y) * (A.Y - B.Y)));
+            Double Cross = Math.Abs((A.X * (B.Y - C.Y)) + (B.X * (C.Y - A.Y)) + (C.X * (A.Y - B.Y)));
+            if (Cross < Constants.NUMERIC_COMPARISON_TOLERANCE)
             {
                 return Double.PositiveInfinity;
             }
@@ -39,56 +39,56 @@ namespace HaulBuilder.Tests
         /// <summary>
         /// Absolute heading change at b along aâ†’bâ†’c in degrees.
         /// </summary>
-        /// <param name="a">Inbound start.</param>
-        /// <param name="b">Corner.</param>
-        /// <param name="c">Outbound end.</param>
+        /// <param name="A">Inbound start.</param>
+        /// <param name="B">Corner.</param>
+        /// <param name="C">Outbound end.</param>
         /// <returns>Absolute turn angle in degrees.</returns>
         private static Double HeadingChangeDeg
             (
-            (Double X, Double Y) a,
-            (Double X, Double Y) b,
-            (Double X, Double Y) c
+            (Double X, Double Y) A,
+            (Double X, Double Y) B,
+            (Double X, Double Y) C
             )
         {
-            Double Dx1 = b.X - a.X;
-            Double Dy1 = b.Y - a.Y;
-            Double Dx2 = c.X - b.X;
-            Double Dy2 = c.Y - b.Y;
-            return Math.Abs((Math.Atan2((Dx1 * Dy2) - (Dy1 * Dx2), (Dx1 * Dx2) + (Dy1 * Dy2)) * (180.0 / Math.PI)));
+            Double Dx1 = B.X - A.X;
+            Double Dy1 = B.Y - A.Y;
+            Double Dx2 = C.X - B.X;
+            Double Dy2 = C.Y - B.Y;
+            return Math.Abs((Math.Atan2((Dx1 * Dy2) - (Dy1 * Dx2), (Dx1 * Dx2) + (Dy1 * Dy2)) * (Constants.DEGREES_PER_HALF_TURN / Math.PI)));
         }
 
         /// <summary>
         /// Asserts every meaningful bend on the full steering polyline (including MOVE) respects R.
         /// </summary>
-        /// <param name="points">Guidance waypoints.</param>
-        /// <param name="turnRadiusM">Minimum allowed radius in metres.</param>
-        /// <param name="turnThresholdDeg">Heading-change noise floor.</param>
+        /// <param name="Points">Guidance waypoints.</param>
+        /// <param name="TurnRadiusM">Minimum allowed radius in metres.</param>
+        /// <param name="TurnThresholdDeg">Heading-change noise floor.</param>
         private static void AssertSteeringRespectsTurnRadius
             (
-            IReadOnlyList<GuidancePoint> points,
-            Double turnRadiusM,
-            Double turnThresholdDeg = 60.0
+            IReadOnlyList<GuidancePoint> Points,
+            Double TurnRadiusM,
+            Double TurnThresholdDeg = 60.0
             )
         {
             // Intent: caller sets the minimum heading change that must respect R.
-            Double NoiseFloor = turnThresholdDeg;
-            for (Int32 K = 1; K < (points.Count - 1); K += 1)
+            Double NoiseFloor = TurnThresholdDeg;
+            for (Int32 K = 1; K < (Points.Count - 1); K += 1)
             {
                 // START/END are synthetic markers, not steered vertices.
-                if ((points[K - 1].Action == "START") || (points[K].Action == "START")
-                    || (points[K + 1].Action == "START") || (points[K - 1].Action == "END")
-                    || (points[K].Action == "END") || (points[K + 1].Action == "END"))
+                if ((Points[K - 1].Action == "START") || (Points[K].Action == "START")
+                    || (Points[K + 1].Action == "START") || (Points[K - 1].Action == "END")
+                    || (Points[K].Action == "END") || (Points[K + 1].Action == "END"))
                 {
                     continue;
                 }
 
-                (Double X, Double Y) A = (points[K - 1].X, points[K - 1].Y);
-                (Double X, Double Y) B = (points[K].X, points[K].Y);
-                (Double X, Double Y) C = (points[K + 1].X, points[K + 1].Y);
+                (Double X, Double Y) A = (Points[K - 1].X, Points[K - 1].Y);
+                (Double X, Double Y) B = (Points[K].X, Points[K].Y);
+                (Double X, Double Y) C = (Points[K + 1].X, Points[K + 1].Y);
                 // Zero-length steering pins (coalesced mid-cells) are not real bends.
                 Double Lab = Math.Sqrt(((A.X - B.X) * (A.X - B.X)) + ((A.Y - B.Y) * (A.Y - B.Y)));
                 Double Lbc = Math.Sqrt(((B.X - C.X) * (B.X - C.X)) + ((B.Y - C.Y) * (B.Y - C.Y)));
-                if ((Lab < 1e-6) || (Lbc < 1e-6))
+                if ((Lab < Constants.GEOMETRY_COMPARISON_TOLERANCE) || (Lbc < Constants.GEOMETRY_COMPARISON_TOLERANCE))
                 {
                     continue;
                 }
@@ -100,15 +100,15 @@ namespace HaulBuilder.Tests
 
                 Double R = CircumRadiusM(A, B, C);
                 Assert.True(
-                    R >= (turnRadiusM * 0.98),
+                    R >= (TurnRadiusM * 0.98),
                     String.Format(
                         CultureInfo.InvariantCulture,
                         "undrivable {0}->{1}->{2} bend radius={3:F3}m < R={4:F3}m at ({5:F2},{6:F2})",
-                        points[K - 1].Action,
-                        points[K].Action,
-                        points[K + 1].Action,
+                        Points[K - 1].Action,
+                        Points[K].Action,
+                        Points[K + 1].Action,
                         R,
-                        turnRadiusM,
+                        TurnRadiusM,
                         B.X,
                         B.Y));
             }
@@ -117,23 +117,23 @@ namespace HaulBuilder.Tests
         /// <summary>
         /// Total length of all MOVE legs in metres.
         /// </summary>
-        /// <param name="points">Guidance waypoints.</param>
+        /// <param name="Points">Guidance waypoints.</param>
         /// <returns>Sum of MOVE segment lengths.</returns>
         private static Double TotalMoveLengthM
             (
-            IReadOnlyList<GuidancePoint> points
+            IReadOnlyList<GuidancePoint> Points
             )
         {
             Double Len = 0.0;
-            for (Int32 I = 1; I < points.Count; I += 1)
+            for (Int32 I = 1; I < Points.Count; I += 1)
             {
-                if (points[I].Action != "MOVE")
+                if (Points[I].Action != "MOVE")
                 {
                     continue;
                 }
 
-                GuidancePoint A = points[I - 1];
-                GuidancePoint B = points[I];
+                GuidancePoint A = Points[I - 1];
+                GuidancePoint B = Points[I];
                 Len += Math.Sqrt(((A.X - B.X) * (A.X - B.X)) + ((A.Y - B.Y) * (A.Y - B.Y)));
             }
 
@@ -143,21 +143,21 @@ namespace HaulBuilder.Tests
         /// <summary>
         /// Longest contiguous MOVE run length in metres.
         /// </summary>
-        /// <param name="points">Guidance waypoints.</param>
+        /// <param name="Points">Guidance waypoints.</param>
         /// <returns>Max contiguous MOVE length.</returns>
         private static Double MaxContiguousMoveLengthM
             (
-            IReadOnlyList<GuidancePoint> points
+            IReadOnlyList<GuidancePoint> Points
             )
         {
             Double RunLen = 0.0;
             Double MaxRun = 0.0;
-            for (Int32 I = 1; I < points.Count; I += 1)
+            for (Int32 I = 1; I < Points.Count; I += 1)
             {
-                if (points[I].Action == "MOVE")
+                if (Points[I].Action == "MOVE")
                 {
-                    GuidancePoint A = points[I - 1];
-                    GuidancePoint B = points[I];
+                    GuidancePoint A = Points[I - 1];
+                    GuidancePoint B = Points[I];
                     RunLen += Math.Sqrt(((A.X - B.X) * (A.X - B.X)) + ((A.Y - B.Y) * (A.Y - B.Y)));
                 }
                 else
@@ -210,7 +210,7 @@ namespace HaulBuilder.Tests
                 FillKnotReduced = true,
             };
             Route Route = new Route(new List<Int32> { 0 }, new List<Pass> { Pass }, 0.0);
-            Double TurnRadiusM = Constants.DEFAULT_TURNING_CIRCLE_FT * 0.5 * Constants.FEET_TO_METERS;
+            Double TurnRadiusM = Constants.DEFAULT_TURNING_CIRCLE_FT * Constants.HALF_SCALE * Constants.FEET_TO_METERS;
             GuidanceResult Guidance = Swaths.BuildGuidance(
                 Grid,
                 Field,
@@ -229,7 +229,7 @@ namespace HaulBuilder.Tests
 
             Assert.Contains(Guidance.Points, Point => Point.Action == "MOVE");
             AssertSteeringRespectsTurnRadius(Guidance.Points, TurnRadiusM);
-            Assert.True(Guidance.CutDistM >= Guidance.PlannedCutDistM - 1e-6);
+            Assert.True(Guidance.CutDistM >= Guidance.PlannedCutDistM - Constants.GEOMETRY_COMPARISON_TOLERANCE);
 
             // Hairpin MOVE headlands must be compact keyholes, not ~540 deg CSC loops.
             Double RunLen = 0.0;
@@ -299,7 +299,7 @@ namespace HaulBuilder.Tests
                 FillKnotReduced = true,
             };
             Route Route = new Route(new List<Int32> { 0 }, new List<Pass> { Pass }, 0.0);
-            Double TurnRadiusM = Constants.DEFAULT_TURNING_CIRCLE_FT * 0.5 * Constants.FEET_TO_METERS;
+            Double TurnRadiusM = Constants.DEFAULT_TURNING_CIRCLE_FT * Constants.HALF_SCALE * Constants.FEET_TO_METERS;
             GuidanceResult Guidance = Swaths.BuildGuidance(
                 Grid,
                 Field,
@@ -372,7 +372,7 @@ namespace HaulBuilder.Tests
                 FillKnotReduced = true,
             };
             Route Route = new Route(new List<Int32> { 0 }, new List<Pass> { Pass }, 0.0);
-            Double TurnRadiusM = Constants.DEFAULT_TURNING_CIRCLE_FT * 0.5 * Constants.FEET_TO_METERS;
+            Double TurnRadiusM = Constants.DEFAULT_TURNING_CIRCLE_FT * Constants.HALF_SCALE * Constants.FEET_TO_METERS;
             GuidanceResult Guidance = Swaths.BuildGuidance(
                 Grid,
                 Field,
@@ -464,7 +464,7 @@ namespace HaulBuilder.Tests
                 ScraperBcy,
                 0,
                 null,
-                0.5,
+                Constants.HALF_SCALE,
                 50.0,
                 Constants.DEFAULT_MAX_DROP_HOP_FT * Constants.FEET_TO_METERS,
                 Flow,
@@ -486,7 +486,7 @@ namespace HaulBuilder.Tests
             Assert.True(FullRoute.OrderedPasses.Count >= 3, "expected at least 3 sequenced passes");
             Pass Pass3 = FullRoute.OrderedPasses[2];
             Route Mini = new Route(new List<Int32> { 0 }, new List<Pass> { Pass3 }, 0.0);
-            Double TurnRadiusM = Constants.DEFAULT_TURNING_CIRCLE_FT * 0.5 * Constants.FEET_TO_METERS;
+            Double TurnRadiusM = Constants.DEFAULT_TURNING_CIRCLE_FT * Constants.HALF_SCALE * Constants.FEET_TO_METERS;
             GuidanceResult Guidance = Swaths.BuildGuidance(
                 Grid,
                 Field,
@@ -563,7 +563,7 @@ namespace HaulBuilder.Tests
                 ScraperBcy,
                 0,
                 null,
-                0.5,
+                Constants.HALF_SCALE,
                 50.0,
                 Constants.DEFAULT_MAX_DROP_HOP_FT * Constants.FEET_TO_METERS,
                 Flow,
@@ -629,7 +629,7 @@ namespace HaulBuilder.Tests
                 ScraperBcy,
                 0,
                 null,
-                0.5,
+                Constants.HALF_SCALE,
                 50.0,
                 Constants.DEFAULT_MAX_DROP_HOP_FT * Constants.FEET_TO_METERS,
                 Flow,
@@ -650,7 +650,7 @@ namespace HaulBuilder.Tests
 
             Pass Pass7 = FullRoute.OrderedPasses[6];
             Route Mini = new Route(new List<Int32> { 0 }, new List<Pass> { Pass7 }, 0.0);
-            Double TurnRadiusM = Constants.DEFAULT_TURNING_CIRCLE_FT * 0.5 * Constants.FEET_TO_METERS;
+            Double TurnRadiusM = Constants.DEFAULT_TURNING_CIRCLE_FT * Constants.HALF_SCALE * Constants.FEET_TO_METERS;
             GuidanceResult Guidance = Swaths.BuildGuidance(
                 Grid,
                 Field,
@@ -745,7 +745,7 @@ namespace HaulBuilder.Tests
             };
             Route Route = new Route(new List<Int32> { 0 }, new List<Pass> { Pass }, 0.0);
             // headland at the real U-tip (not the soft mid-run kink).
-            Double TurnRadiusM = Constants.DEFAULT_TURNING_CIRCLE_FT * 0.5 * Constants.FEET_TO_METERS;
+            Double TurnRadiusM = Constants.DEFAULT_TURNING_CIRCLE_FT * Constants.HALF_SCALE * Constants.FEET_TO_METERS;
             GuidanceResult Guidance = Swaths.BuildGuidance(
                 Grid,
                 Field,

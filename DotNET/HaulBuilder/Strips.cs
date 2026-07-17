@@ -38,7 +38,7 @@ namespace HaulBuilder
     /// <summary>
     /// Streamline tracing utilities.
     /// </summary>
-    public static class Strips
+    static public class Strips
     {
         /// <summary>
         /// Bilinearly samples a field at fractional grid coordinates.
@@ -95,7 +95,7 @@ namespace HaulBuilder
                 WSum += W11;
             }
 
-            if (WSum <= 1e-9)
+            if (WSum <= Constants.NUMERIC_COMPARISON_TOLERANCE)
             {
                 return 0.0;
             }
@@ -159,7 +159,7 @@ namespace HaulBuilder
                 WSum += W11;
             }
 
-            if (WSum <= 1e-9)
+            if (WSum <= Constants.NUMERIC_COMPARISON_TOLERANCE)
             {
                 return (0.0, 0.0);
             }
@@ -206,7 +206,7 @@ namespace HaulBuilder
             Double X,
             Double Y,
             Func<Int32, Int32, Boolean> Predicate,
-            Double Step = 0.5,
+            Double Step = Constants.HALF_SCALE,
             Int32 MaxSteps = 4000
             )
         {
@@ -230,7 +230,7 @@ namespace HaulBuilder
                 Double Ux = Bilinear(FxS, Valid, X, Y);
                 Double Uy = Bilinear(FyS, Valid, X, Y);
                 Double Norm = Math.Sqrt((Ux * Ux) + (Uy * Uy));
-                if (Norm < 1e-6)
+                if (Norm < Constants.GEOMETRY_COMPARISON_TOLERANCE)
                 {
                     return null;
                 }
@@ -257,7 +257,7 @@ namespace HaulBuilder
             Grid Grid,
             FlowField Flow,
             Int32 MaxSeeds = 4000,
-            Double Step = 0.5,
+            Double Step = Constants.HALF_SCALE,
             Int32 MaxSteps = 4000,
             Int32 SmoothPasses = 12
             )
@@ -272,8 +272,8 @@ namespace HaulBuilder
             List<Strip> Out = new List<Strip>();
             foreach ((Int32 Bx, Int32 By) Seed in Seeds)
             {
-                Double X = Seed.Bx + 0.5;
-                Double Y = Seed.By + 0.5;
+                Double X = Seed.Bx + Constants.HALF_SCALE;
+                Double Y = Seed.By + Constants.HALF_SCALE;
                 List<(Double X, Double Y)> Path = new List<(Double X, Double Y)> { (X, Y) };
                 List<(Int32 Bx, Int32 By)> Cells = new List<(Int32 Bx, Int32 By)>();
                 HashSet<(Int32 Bx, Int32 By)> Visited = new HashSet<(Int32 Bx, Int32 By)>();
@@ -303,7 +303,7 @@ namespace HaulBuilder
                     Double Ux = Bilinear(FxS, Valid, X, Y);
                     Double Uy = Bilinear(FyS, Valid, X, Y);
                     Double Norm = Math.Sqrt((Ux * Ux) + (Uy * Uy));
-                    if (Norm < 1e-6)
+                    if (Norm < Constants.GEOMETRY_COMPARISON_TOLERANCE)
                     {
                         break;
                     }
@@ -375,7 +375,7 @@ namespace HaulBuilder
                             }
                         }
 
-                        Next[By, Bx] = Sum / Math.Max(Den, 1e-9);
+                        Next[By, Bx] = Sum / Math.Max(Den, Constants.NUMERIC_COMPARISON_TOLERANCE);
                     }
                 }
 
@@ -424,7 +424,7 @@ namespace HaulBuilder
                     Double RawX = -Gx[By, Bx];
                     Double RawY = -Gy[By, Bx];
                     Double Mag = Math.Sqrt((RawX * RawX) + (RawY * RawY));
-                    if (Mag > 1e-12)
+                    if (Mag > Constants.STRICT_NUMERIC_COMPARISON_TOLERANCE)
                     {
                         Fx[By, Bx] = RawX / Mag;
                         Fy[By, Bx] = RawY / Mag;
@@ -483,7 +483,7 @@ namespace HaulBuilder
                             Int32 Nx = Bx + Dx;
                             if ((Ny >= 0) && (Ny < Height) && (Nx >= 0) && (Nx < Width) && Grid.Valid[Ny, Nx])
                             {
-                                if (Phi[Ny, Nx] > (Here + 1e-12))
+                                if (Phi[Ny, Nx] > (Here + Constants.STRICT_NUMERIC_COMPARISON_TOLERANCE))
                                 {
                                     IsMax = false;
                                 }

@@ -53,7 +53,7 @@ namespace HaulBuilder
         public Int32 CycleChainCandidatesPerRoute { get; set; } = 1;
 
         /// <summary>Gets or sets minimum production-objective saving per chain exchange.</summary>
-        public Double CycleChainMinimumImprovementSeconds { get; set; } = 0.25;
+        public Double CycleChainMinimumImprovementSeconds { get; set; } = Constants.QUARTER_SCALE;
 
         /// <summary>Gets or sets route relocation search window; zero disables relocation.</summary>
         public Int32 RouteReorderWindow { get; set; } = 200;

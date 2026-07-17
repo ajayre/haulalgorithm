@@ -7,11 +7,11 @@ namespace HaulBuilder
     /// <summary>
     /// Builds the isolated cut, fill, optional grade, and next-cut guidance lifecycle.
     /// </summary>
-    public static class LifecyclePlanner
+    static public class LifecyclePlanner
     {
         private const Double CORRIDOR_HEADING_TOLERANCE_DEG = 20.0;
         private const Double CORRIDOR_BRIDGE_HEADING_TOLERANCE_DEG = 30.0;
-        private const Double CORRIDOR_LATERAL_TOLERANCE_CELLS = 0.5;
+        private const Double CORRIDOR_LATERAL_TOLERANCE_CELLS = Constants.HALF_SCALE;
         private const Double WORK_LANE_SHIFT_LATERAL_TOLERANCE_CELLS = 2.0;
         private const Double CORRIDOR_GAP_TOLERANCE_CELLS = 2.0;
         private const Double NESTED_FILL_FRAGMENT_MAX_LENGTH_CELLS = 1.25;
@@ -537,7 +537,7 @@ namespace HaulBuilder
                                 if ((Connector == null) || !Connector.Success) continue;
                                 Int32 NextMask = Mask | (1 << NextIndex);
                                 Double CandidateCostM = CurrentCostM + ConnectorScoreM(Connector);
-                                if (CandidateCostM + 1e-9
+                                if (CandidateCostM + Constants.NUMERIC_COMPARISON_TOLERANCE
                                     >= Costs[NextMask, NextIndex, NextOrientation])
                                 {
                                     continue;
@@ -567,7 +567,7 @@ namespace HaulBuilder
                             SampleSpacingM,
                             Field,
                             Reverse: true);
-                    if (CandidateCostM + 1e-9 >= BestCostM) continue;
+                    if (CandidateCostM + Constants.NUMERIC_COMPARISON_TOLERANCE >= BestCostM) continue;
                     BestCostM = CandidateCostM;
                     BestIndex = RunIndex;
                     BestOrientation = Orientation;
@@ -674,6 +674,16 @@ namespace HaulBuilder
             return BuildCutSequenceResult(Runs, Connectors);
         }
 
+        /// <summary>
+        /// Builds cut connector.
+        /// </summary>
+        /// <param name="Previous">The previous used by the operation.</param>
+        /// <param name="Next">The next used by the operation.</param>
+        /// <param name="MinimumRadiusM">The minimum radius m used by the operation.</param>
+        /// <param name="SampleSpacingM">The sample spacing m used by the operation.</param>
+        /// <param name="Field">The field used by the operation.</param>
+        /// <returns>The resulting cut connector.</returns>
+
         private static TransitPlanner.Result? BuildCutConnector
             (
             RunSequencer.SequencedRun Previous,
@@ -696,6 +706,15 @@ namespace HaulBuilder
             return Strict.Success ? Strict : null;
         }
 
+        /// <summary>
+        /// Executes the try build direct cut bridge operation.
+        /// </summary>
+        /// <param name="Previous">The previous used by the operation.</param>
+        /// <param name="Next">The next used by the operation.</param>
+        /// <param name="SampleSpacingM">The sample spacing m used by the operation.</param>
+        /// <param name="Field">The field used by the operation.</param>
+        /// <returns>The resulting try build direct cut bridge.</returns>
+
         private static TransitPlanner.Result? TryBuildDirectCutBridge
             (
             CoveragePlanner.Run Previous,
@@ -707,7 +726,7 @@ namespace HaulBuilder
             if (HeadingDifferenceDeg(Previous.HeadingDeg, Next.HeadingDeg)
                 > CORRIDOR_HEADING_TOLERANCE_DEG) return null;
             Double DirectM = Distance(Previous.EndXy, Next.StartXy);
-            if ((DirectM <= 1e-9)
+            if ((DirectM <= Constants.NUMERIC_COMPARISON_TOLERANCE)
                 || (DirectM > CORRIDOR_GAP_TOLERANCE_CELLS * Field.GridSizeM)) return null;
             Double BridgeHeadingDeg = BearingDeg(Previous.EndXy, Next.StartXy);
             if ((HeadingDifferenceDeg(Previous.HeadingDeg, BridgeHeadingDeg)
@@ -717,6 +736,14 @@ namespace HaulBuilder
             return BuildDirectCorridorBridge(
                 Previous.EndXy, Next.StartXy, SampleSpacingM, Field);
         }
+
+        /// <summary>
+        /// Executes the with internal cut poses operation.
+        /// </summary>
+        /// <param name="Source">The source used by the operation.</param>
+        /// <param name="DirectEntry">The direct entry used by the operation.</param>
+        /// <param name="DirectExit">The direct exit used by the operation.</param>
+        /// <returns>The resulting with internal cut poses.</returns>
 
         private static RunSequencer.SequencedRun WithInternalCutPoses
             (
@@ -732,6 +759,13 @@ namespace HaulBuilder
                 Source.StartCoverageShortfallM,
                 Source.EndCoverageShortfallM);
 
+        /// <summary>
+        /// Builds cut sequence result.
+        /// </summary>
+        /// <param name="Runs">The runs used by the operation.</param>
+        /// <param name="Connectors">The connectors used by the operation.</param>
+        /// <returns>The resulting cut sequence result.</returns>
+
         private static RunSequencer.Result BuildCutSequenceResult
             (
             List<RunSequencer.SequencedRun> Runs,
@@ -745,6 +779,17 @@ namespace HaulBuilder
                 true, Runs, Connectors, ConnectorDistanceM,
                 MinimumLineupM, String.Empty);
         }
+
+        /// <summary>
+        /// Executes the anchor connector cost operation.
+        /// </summary>
+        /// <param name="Anchor">The anchor used by the operation.</param>
+        /// <param name="RunPose">The run pose used by the operation.</param>
+        /// <param name="MinimumRadiusM">The minimum radius m used by the operation.</param>
+        /// <param name="SampleSpacingM">The sample spacing m used by the operation.</param>
+        /// <param name="Field">The field used by the operation.</param>
+        /// <param name="Reverse">The reverse used by the operation.</param>
+        /// <returns>The resulting anchor connector cost.</returns>
 
         private static Double AnchorConnectorCost
             (
@@ -767,12 +812,24 @@ namespace HaulBuilder
             return Connector.Success ? ConnectorScoreM(Connector) : Double.PositiveInfinity;
         }
 
+        /// <summary>
+        /// Executes the connector score m operation.
+        /// </summary>
+        /// <param name="Connector">The connector used by the operation.</param>
+        /// <returns>The resulting connector score m.</returns>
+
         private static Double ConnectorScoreM
             (
             TransitPlanner.Result Connector
             ) => Connector.LengthM + (Connector.OperatorAlignmentRequired
                 ? MANUAL_CONNECTOR_PENALTY_M
                 : 0.0);
+
+        /// <summary>
+        /// Determines whether corridor bridge.
+        /// </summary>
+        /// <param name="Connector">The connector used by the operation.</param>
+        /// <returns>True when corridor bridge; otherwise false.</returns>
 
         private static Boolean IsCorridorBridge
             (
@@ -899,7 +956,7 @@ namespace HaulBuilder
             Double FirstHeadingDeg = Sequence.Runs[0].Run.HeadingDeg;
             for (Int32 DirectionIndex = 0; DirectionIndex < 2; DirectionIndex += 1)
             {
-                Double DirectionDeg = (FirstHeadingDeg + (180.0 * DirectionIndex)) % 360.0;
+                Double DirectionDeg = (FirstHeadingDeg + (Constants.DEGREES_PER_HALF_TURN * DirectionIndex)) % Constants.DEGREES_PER_TURN;
                 if (!TryBuildCorridorCandidate(
                     Sequence,
                     Inbound,
@@ -912,7 +969,7 @@ namespace HaulBuilder
                 {
                     continue;
                 }
-                if (ScoreM + 1e-9 < BestScoreM)
+                if (ScoreM + Constants.NUMERIC_COMPARISON_TOLERANCE < BestScoreM)
                 {
                     Best = Candidate;
                     BestScoreM = ScoreM;
@@ -976,7 +1033,7 @@ namespace HaulBuilder
                     || (Envelope.WorkDistanceM > OriginalWorkM
                         * FILL_ENVELOPE_MAX_WORK_INFLATION)
                     || (Envelope.MaximumLateralErrorM
-                        > (0.5 * Field.GridSizeM) + 1e-9))
+                        > (Constants.HALF_SCALE * Field.GridSizeM) + Constants.NUMERIC_COMPARISON_TOLERANCE))
                 {
                     continue;
                 }
@@ -1028,7 +1085,7 @@ namespace HaulBuilder
                         DirectionIndex += 1)
                     {
                         Double DirectionDeg = (HeadingDeg
-                            + (180.0 * DirectionIndex)) % 360.0;
+                            + (Constants.DEGREES_PER_HALF_TURN * DirectionIndex)) % Constants.DEGREES_PER_TURN;
                         if (TryBuildCorridorCandidate(
                             Repacked,
                             Inbound,
@@ -1038,7 +1095,7 @@ namespace HaulBuilder
                             Field,
                             out RunSequencer.Result Corridor,
                             out Double CorridorScoreM)
-                            && (CorridorScoreM + 1e-9 < BestCorridorScoreM))
+                            && (CorridorScoreM + Constants.NUMERIC_COMPARISON_TOLERANCE < BestCorridorScoreM))
                         {
                             BestCorridor = Corridor;
                             BestCorridorScoreM = CorridorScoreM;
@@ -1065,7 +1122,7 @@ namespace HaulBuilder
                 Double LineupDistanceM = Prepared.Runs.Sum(Run =>
                     Run.EntryLineupM + Run.ExitLineupM);
                 Double ManualPenaltyM = Prepared.Connectors.Sum(Connector =>
-                    Connector.ManualAssistDistanceM > 1e-9
+                    Connector.ManualAssistDistanceM > Constants.NUMERIC_COMPARISON_TOLERANCE
                         ? MANUAL_CONNECTOR_PENALTY_M
                             + Connector.ManualAssistDistanceM
                         : 0.0);
@@ -1077,8 +1134,8 @@ namespace HaulBuilder
                     + Prepared.ConnectorDistanceM
                     + LineupDistanceM)
                     + ManualPenaltyM;
-                if ((ScoreM + 1e-9 < BestScoreM)
-                    || ((Math.Abs(ScoreM - BestScoreM) <= 1e-9)
+                if ((ScoreM + Constants.NUMERIC_COMPARISON_TOLERANCE < BestScoreM)
+                    || ((Math.Abs(ScoreM - BestScoreM) <= Constants.NUMERIC_COMPARISON_TOLERANCE)
                         && (HeadingDeg < BestHeadingDeg)))
                 {
                     Best = Prepared;
@@ -1190,7 +1247,7 @@ namespace HaulBuilder
                         && Envelope.WorkDistanceM <= ComponentWorkM
                             * FILL_ENVELOPE_MAX_WORK_INFLATION
                         && Envelope.MaximumLateralErrorM
-                            <= (0.5 * Field.GridSizeM) + 1e-9)
+                            <= (Constants.HALF_SCALE * Field.GridSizeM) + Constants.NUMERIC_COMPARISON_TOLERANCE)
                     .OrderBy(Envelope => 2.0 * (
                         Envelope.WorkDistanceM
                         + Envelope.ConnectorDistanceM
@@ -1280,7 +1337,7 @@ namespace HaulBuilder
                             Double Dx = Candidate.Bx - Current.Bx;
                             Double Dy = Candidate.By - Current.By;
                             return ((Dx * Dx) + (Dy * Dy))
-                                <= MaximumDistanceSquared + 1e-9;
+                                <= MaximumDistanceSquared + Constants.NUMERIC_COMPARISON_TOLERANCE;
                         })
                         .ToList();
                     foreach ((Int32 Bx, Int32 By) Neighbor in Neighbors)
@@ -1314,7 +1371,7 @@ namespace HaulBuilder
                 Double Normalized = NormalizeAxialHeading(HeadingDeg);
                 if (!Headings.Any(Existing =>
                     FieldEdgePolicy.AxialHeadingDifferenceDeg(
-                        Existing, Normalized) <= 0.25))
+                        Existing, Normalized) <= Constants.QUARTER_SCALE))
                 {
                     Headings.Add(Normalized);
                 }
@@ -1337,20 +1394,20 @@ namespace HaulBuilder
                 CovarianceXy += Dx * Dy;
                 CovarianceYy += Dy * Dy;
             }
-            if ((CovarianceXx + CovarianceYy) > 1e-9)
+            if ((CovarianceXx + CovarianceYy) > Constants.NUMERIC_COMPARISON_TOLERANCE)
             {
-                Double MajorAxisFromXRad = 0.5 * Math.Atan2(
+                Double MajorAxisFromXRad = Constants.HALF_SCALE * Math.Atan2(
                     2.0 * CovarianceXy,
                     CovarianceXx - CovarianceYy);
                 Double MajorHeadingDeg = Math.Atan2(
                     Math.Cos(MajorAxisFromXRad),
-                    Math.Sin(MajorAxisFromXRad)) * 180.0 / Math.PI;
+                    Math.Sin(MajorAxisFromXRad)) * Constants.DEGREES_PER_HALF_TURN / Math.PI;
                 AddHeading(MajorHeadingDeg);
                 AddHeading(MajorHeadingDeg + 90.0);
             }
 
             Int32 BinCount = (Int32)Math.Round(
-                180.0 / FILL_ENVELOPE_HEADING_BIN_DEG);
+                Constants.DEGREES_PER_HALF_TURN / FILL_ENVELOPE_HEADING_BIN_DEG);
             Double[] BinWeights = new Double[BinCount];
             Double[] BinSinTwice = new Double[BinCount];
             Double[] BinCosTwice = new Double[BinCount];
@@ -1363,18 +1420,18 @@ namespace HaulBuilder
                     Double Dx = Cells[Second].Cell.Bx - Cells[First].Cell.Bx;
                     Double Dy = Cells[Second].Cell.By - Cells[First].Cell.By;
                     Double DistanceCells = Math.Sqrt((Dx * Dx) + (Dy * Dy));
-                    if ((DistanceCells <= 1e-9)
+                    if ((DistanceCells <= Constants.NUMERIC_COMPARISON_TOLERANCE)
                         || (DistanceCells > MaximumPairDistanceCells))
                     {
                         continue;
                     }
                     Double HeadingDeg = NormalizeAxialHeading(
-                        Math.Atan2(Dx, Dy) * 180.0 / Math.PI);
+                        Math.Atan2(Dx, Dy) * Constants.DEGREES_PER_HALF_TURN / Math.PI);
                     Int32 Bin = (Int32)Math.Floor(
-                        (HeadingDeg + (0.5 * FILL_ENVELOPE_HEADING_BIN_DEG))
+                        (HeadingDeg + (Constants.HALF_SCALE * FILL_ENVELOPE_HEADING_BIN_DEG))
                             / FILL_ENVELOPE_HEADING_BIN_DEG) % BinCount;
                     Double Weight = 1.0 / DistanceCells;
-                    Double TwiceRad = 2.0 * HeadingDeg * Math.PI / 180.0;
+                    Double TwiceRad = 2.0 * HeadingDeg * Math.PI / Constants.DEGREES_PER_HALF_TURN;
                     BinWeights[Bin] += Weight;
                     BinSinTwice[Bin] += Weight * Math.Sin(TwiceRad);
                     BinCosTwice[Bin] += Weight * Math.Cos(TwiceRad);
@@ -1386,9 +1443,9 @@ namespace HaulBuilder
                 .ThenBy(Index => Index)
                 .Take(FILL_ENVELOPE_PROXIMITY_HEADING_LIMIT))
             {
-                AddHeading(0.5 * Math.Atan2(
+                AddHeading(Constants.HALF_SCALE * Math.Atan2(
                     BinSinTwice[Bin],
-                    BinCosTwice[Bin]) * 180.0 / Math.PI);
+                    BinCosTwice[Bin]) * Constants.DEGREES_PER_HALF_TURN / Math.PI);
             }
 
             foreach (((Int32 Bx, Int32 By) Cell, Double DepthM) Entry in Cells)
@@ -1406,7 +1463,7 @@ namespace HaulBuilder
         private static Double NormalizeAxialHeading
             (
             Double HeadingDeg
-            ) => ((HeadingDeg % 180.0) + 180.0) % 180.0;
+            ) => ((HeadingDeg % Constants.DEGREES_PER_HALF_TURN) + Constants.DEGREES_PER_HALF_TURN) % Constants.DEGREES_PER_HALF_TURN;
 
         /// <summary>
         /// Stops the final fill early only when needed to leave enough forward
@@ -1426,17 +1483,17 @@ namespace HaulBuilder
             RunSequencer.SequencedRun Original =
                 Runs[Runs.Count - 1];
             Double MinimumWorkM = Math.Max(
-                0.5 * Field.GridSizeM,
+                Constants.HALF_SCALE * Field.GridSizeM,
                 SampleSpacingM);
             Double MaximumRetreatM = Math.Max(
                 0.0,
                 Original.Run.LengthM - MinimumWorkM);
-            Double StepM = Math.Min(SampleSpacingM, 0.5 * Field.GridSizeM);
-            Double HeadingRad = Original.Run.HeadingDeg * Math.PI / 180.0;
+            Double StepM = Math.Min(SampleSpacingM, Constants.HALF_SCALE * Field.GridSizeM);
+            Double HeadingRad = Original.Run.HeadingDeg * Math.PI / Constants.DEGREES_PER_HALF_TURN;
             Double UnitX = Math.Sin(HeadingRad);
             Double UnitY = Math.Cos(HeadingRad);
             for (Double RetreatM = 0.0;
-                RetreatM <= MaximumRetreatM + 1e-9;
+                RetreatM <= MaximumRetreatM + Constants.NUMERIC_COMPARISON_TOLERANCE;
                 RetreatM += StepM)
             {
                 Double CandidateRetreatM = Math.Min(RetreatM, MaximumRetreatM);
@@ -1452,7 +1509,7 @@ namespace HaulBuilder
                     new ConnectorPlanner.Pose(
                         End.X,
                         End.Y,
-                        Original.Run.HeadingDeg + 180.0);
+                        Original.Run.HeadingDeg + Constants.DEGREES_PER_HALF_TURN);
                 TransitPlanner.Result GradeTurn =
                     TransitPlanner.Connect(
                         FillExit,
@@ -1464,7 +1521,7 @@ namespace HaulBuilder
                         AllowForwardDetour: true);
                 if (!GradeTurn.Success)
                 {
-                    if (CandidateRetreatM >= MaximumRetreatM - 1e-9) break;
+                    if (CandidateRetreatM >= MaximumRetreatM - Constants.NUMERIC_COMPARISON_TOLERANCE) break;
                     continue;
                 }
                 CoveragePlanner.Run RetreatedRun =
@@ -1589,7 +1646,7 @@ namespace HaulBuilder
             Double HeadingDifference = HeadingDifferenceDeg(
                 Host.Run.HeadingDeg,
                 Fragment.Run.HeadingDeg);
-            if (Math.Min(HeadingDifference, 180.0 - HeadingDifference)
+            if (Math.Min(HeadingDifference, Constants.DEGREES_PER_HALF_TURN - HeadingDifference)
                 > CORRIDOR_HEADING_TOLERANCE_DEG)
             {
                 return false;
@@ -1597,15 +1654,15 @@ namespace HaulBuilder
             Double Dx = Host.Run.EndXy.X - Host.Run.StartXy.X;
             Double Dy = Host.Run.EndXy.Y - Host.Run.StartXy.Y;
             Double LengthSquaredM = (Dx * Dx) + (Dy * Dy);
-            if (LengthSquaredM <= 1e-9) return false;
+            if (LengthSquaredM <= Constants.NUMERIC_COMPARISON_TOLERANCE) return false;
             Double StartFraction = ((Fragment.Run.StartXy.X - Host.Run.StartXy.X) * Dx
                 + (Fragment.Run.StartXy.Y - Host.Run.StartXy.Y) * Dy)
                 / LengthSquaredM;
             Double EndFraction = ((Fragment.Run.EndXy.X - Host.Run.StartXy.X) * Dx
                 + (Fragment.Run.EndXy.Y - Host.Run.StartXy.Y) * Dy)
                 / LengthSquaredM;
-            if ((StartFraction < -1e-6) || (StartFraction > 1.0 + 1e-6)
-                || (EndFraction < -1e-6) || (EndFraction > 1.0 + 1e-6))
+            if ((StartFraction < -Constants.GEOMETRY_COMPARISON_TOLERANCE) || (StartFraction > 1.0 + Constants.GEOMETRY_COMPARISON_TOLERANCE)
+                || (EndFraction < -Constants.GEOMETRY_COMPARISON_TOLERANCE) || (EndFraction > 1.0 + Constants.GEOMETRY_COMPARISON_TOLERANCE))
             {
                 return false;
             }
@@ -1622,16 +1679,16 @@ namespace HaulBuilder
             }
 
             (Double X, Double Y) FragmentMidpoint = (
-                0.5 * (Fragment.Run.StartXy.X + Fragment.Run.EndXy.X),
-                0.5 * (Fragment.Run.StartXy.Y + Fragment.Run.EndXy.Y));
+                Constants.HALF_SCALE * (Fragment.Run.StartXy.X + Fragment.Run.EndXy.X),
+                Constants.HALF_SCALE * (Fragment.Run.StartXy.Y + Fragment.Run.EndXy.Y));
             Double MidpointFraction = ((FragmentMidpoint.X - Host.Run.StartXy.X) * Dx
                 + (FragmentMidpoint.Y - Host.Run.StartXy.Y) * Dy)
                 / LengthSquaredM;
             (Double X, Double Y) Projection = (
                 Host.Run.StartXy.X + (MidpointFraction * Dx),
                 Host.Run.StartXy.Y + (MidpointFraction * Dy));
-            Double ShiftX = 0.5 * (FragmentMidpoint.X - Projection.X);
-            Double ShiftY = 0.5 * (FragmentMidpoint.Y - Projection.Y);
+            Double ShiftX = Constants.HALF_SCALE * (FragmentMidpoint.X - Projection.X);
+            Double ShiftY = Constants.HALF_SCALE * (FragmentMidpoint.Y - Projection.Y);
             List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Cells =
                 new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>(Host.Run.Cells);
             foreach (((Int32 Bx, Int32 By) Cell, Double DepthM) Cell
@@ -1653,7 +1710,7 @@ namespace HaulBuilder
                 MinimumRadiusM,
                 SampleSpacingM,
                 Field);
-            return Merged.Run.LengthM > 1e-9;
+            return Merged.Run.LengthM > Constants.NUMERIC_COMPARISON_TOLERANCE;
         }
 
         /// <summary>Builds one consistently oriented, projection-ordered corridor candidate.</summary>
@@ -1671,7 +1728,7 @@ namespace HaulBuilder
         {
             Candidate = Sequence;
             ScoreM = Double.PositiveInfinity;
-            Double DirectionRad = DirectionDeg * Math.PI / 180.0;
+            Double DirectionRad = DirectionDeg * Math.PI / Constants.DEGREES_PER_HALF_TURN;
             Double UnitX = Math.Sin(DirectionRad);
             Double UnitY = Math.Cos(DirectionRad);
             Double PerpendicularX = UnitY;
@@ -1697,15 +1754,15 @@ namespace HaulBuilder
 
             CoveragePlanner.Run Reference = Oriented[0].Run;
             Double ReferenceLateralM = Projection((
-                0.5 * (Reference.StartXy.X + Reference.EndXy.X),
-                0.5 * (Reference.StartXy.Y + Reference.EndXy.Y)),
+                Constants.HALF_SCALE * (Reference.StartXy.X + Reference.EndXy.X),
+                Constants.HALF_SCALE * (Reference.StartXy.Y + Reference.EndXy.Y)),
                 PerpendicularX,
                 PerpendicularY);
             foreach (RunSequencer.SequencedRun Run in Oriented)
             {
                 Double LateralM = Projection((
-                    0.5 * (Run.Run.StartXy.X + Run.Run.EndXy.X),
-                    0.5 * (Run.Run.StartXy.Y + Run.Run.EndXy.Y)),
+                    Constants.HALF_SCALE * (Run.Run.StartXy.X + Run.Run.EndXy.X),
+                    Constants.HALF_SCALE * (Run.Run.StartXy.Y + Run.Run.EndXy.Y)),
                     PerpendicularX,
                     PerpendicularY);
                 if (Math.Abs(LateralM - ReferenceLateralM)
@@ -1726,7 +1783,7 @@ namespace HaulBuilder
                 RunSequencer.SequencedRun Next = ContinuousRuns[Index];
                 Double DirectM = Distance(Previous.Run.EndXy, Next.Run.StartXy);
                 if ((DirectM > CORRIDOR_GAP_TOLERANCE_CELLS * Field.GridSizeM)
-                    || (DirectM <= 1e-9))
+                    || (DirectM <= Constants.NUMERIC_COMPARISON_TOLERANCE))
                 {
                     return false;
                 }
@@ -1809,7 +1866,7 @@ namespace HaulBuilder
                 new ConnectorPlanner.Pose(
                     LastRun.Run.EndXy.X,
                     LastRun.Run.EndXy.Y,
-                    LastRun.Run.HeadingDeg + 180.0);
+                    LastRun.Run.HeadingDeg + Constants.DEGREES_PER_HALF_TURN);
             TransitPlanner.Result GradeTurn =
                 TransitPlanner.Connect(
                     LastRun.ExitPose,
@@ -1825,7 +1882,7 @@ namespace HaulBuilder
                     ? MANUAL_CONNECTOR_PENALTY_M
                     : 0.0);
             Double LoadedOverlapPenaltyM = LoadedFillOverlapM
-                >= 0.5 * Field.GridSizeM
+                >= Constants.HALF_SCALE * Field.GridSizeM
                     ? LOADED_FILL_OVERLAP_PENALTY_M + LoadedFillOverlapM
                     : 0.0;
             ScoreM = InboundM
@@ -1919,14 +1976,14 @@ namespace HaulBuilder
                 return false;
             }
 
-            Double HeadingRad = Previous.Run.HeadingDeg * Math.PI / 180.0;
+            Double HeadingRad = Previous.Run.HeadingDeg * Math.PI / Constants.DEGREES_PER_HALF_TURN;
             Double UnitX = Math.Sin(HeadingRad);
             Double UnitY = Math.Cos(HeadingRad);
             Double Dx = Next.Run.StartXy.X - Previous.Run.EndXy.X;
             Double Dy = Next.Run.StartXy.Y - Previous.Run.EndXy.Y;
             Double ForwardM = (Dx * UnitX) + (Dy * UnitY);
             Double LateralM = Math.Abs((-Dx * UnitY) + (Dy * UnitX));
-            if ((ForwardM < -0.25 * Field.GridSizeM)
+            if ((ForwardM < -Constants.QUARTER_SCALE * Field.GridSizeM)
                 || (LateralM <= CORRIDOR_LATERAL_TOLERANCE_CELLS * Field.GridSizeM)
                 || (LateralM > WORK_LANE_SHIFT_LATERAL_TOLERANCE_CELLS
                     * Field.GridSizeM))
@@ -1934,7 +1991,7 @@ namespace HaulBuilder
                 return false;
             }
 
-            Double MinimumRemainingWorkM = 0.5 * Field.GridSizeM;
+            Double MinimumRemainingWorkM = Constants.HALF_SCALE * Field.GridSizeM;
             Double MaximumBorrowM = Math.Min(
                 4.0 * MinimumRadiusM,
                 Previous.Run.LengthM - MinimumRemainingWorkM);
@@ -1943,7 +2000,7 @@ namespace HaulBuilder
                 SampleSpacingM,
                 0.125 * Field.GridSizeM);
             for (Double BorrowM = BorrowStepM;
-                BorrowM <= MaximumBorrowM + 1e-9;
+                BorrowM <= MaximumBorrowM + Constants.NUMERIC_COMPARISON_TOLERANCE;
                 BorrowM += BorrowStepM)
             {
                 Double CandidateBorrowM = Math.Min(BorrowM, MaximumBorrowM);
@@ -1969,9 +2026,9 @@ namespace HaulBuilder
                     ShiftStart,
                     Next.Run.StartXy);
                 if (!Candidate.Success
-                    || (Candidate.LengthM > 1.5 * DirectCandidateM + 1e-9))
+                    || (Candidate.LengthM > 1.5 * DirectCandidateM + Constants.NUMERIC_COMPARISON_TOLERANCE))
                 {
-                    if (CandidateBorrowM >= MaximumBorrowM - 1e-9) break;
+                    if (CandidateBorrowM >= MaximumBorrowM - Constants.NUMERIC_COMPARISON_TOLERANCE) break;
                     continue;
                 }
 
@@ -2039,7 +2096,7 @@ namespace HaulBuilder
                 Cells,
                 Source.Run.EndXy,
                 Source.Run.StartXy,
-                (Source.Run.HeadingDeg + 180.0) % 360.0,
+                (Source.Run.HeadingDeg + Constants.DEGREES_PER_HALF_TURN) % Constants.DEGREES_PER_TURN,
                 Source.Run.MaximumLateralErrorM);
             return new RunSequencer.SequencedRun(
                 Reversed,
@@ -2070,7 +2127,7 @@ namespace HaulBuilder
             (
             ConnectorPlanner.Pose Pose
             ) => new ConnectorPlanner.Pose(
-                Pose.X, Pose.Y, (Pose.HeadingDeg + 180.0) % 360.0);
+                Pose.X, Pose.Y, (Pose.HeadingDeg + Constants.DEGREES_PER_HALF_TURN) % Constants.DEGREES_PER_TURN);
 
         /// <summary>Projects one point onto a unit direction.</summary>
         private static Double Projection
@@ -2099,8 +2156,8 @@ namespace HaulBuilder
             (Double X, Double Y) B
             )
         {
-            Double Bearing = Math.Atan2(B.X - A.X, B.Y - A.Y) * 180.0 / Math.PI;
-            return (Bearing + 360.0) % 360.0;
+            Double Bearing = Math.Atan2(B.X - A.X, B.Y - A.Y) * Constants.DEGREES_PER_HALF_TURN / Math.PI;
+            return (Bearing + Constants.DEGREES_PER_TURN) % Constants.DEGREES_PER_TURN;
         }
 
         /// <summary>Returns the unsigned shortest heading difference.</summary>
@@ -2110,7 +2167,7 @@ namespace HaulBuilder
             Double B
             )
         {
-            Double Delta = Math.Abs(((A - B + 540.0) % 360.0) - 180.0);
+            Double Delta = Math.Abs(((A - B + Constants.ANGLE_NORMALIZATION_OFFSET_DEGREES) % Constants.DEGREES_PER_TURN) - Constants.DEGREES_PER_HALF_TURN);
             return Delta;
         }
 
@@ -2132,17 +2189,17 @@ namespace HaulBuilder
                 (Double X, Double Y) Start = IncomingPoints[Index - 1];
                 (Double X, Double Y) End = IncomingPoints[Index];
                 Double SegmentLengthM = Distance(Start, End);
-                if (SegmentLengthM <= 1e-9) continue;
+                if (SegmentLengthM <= Constants.NUMERIC_COMPARISON_TOLERANCE) continue;
 
                 Double SegmentHeadingDeg = BearingDeg(Start, End);
                 (Double X, Double Y) Midpoint = (
-                    0.5 * (Start.X + End.X),
-                    0.5 * (Start.Y + End.Y));
+                    Constants.HALF_SCALE * (Start.X + End.X),
+                    Constants.HALF_SCALE * (Start.Y + End.Y));
                 foreach (RunSequencer.SequencedRun FillRun in FillRuns)
                 {
                     Double AlignmentDeg = HeadingDifferenceDeg(
                         SegmentHeadingDeg, FillRun.Run.HeadingDeg);
-                    AlignmentDeg = Math.Min(AlignmentDeg, 180.0 - AlignmentDeg);
+                    AlignmentDeg = Math.Min(AlignmentDeg, Constants.DEGREES_PER_HALF_TURN - AlignmentDeg);
                     if (AlignmentDeg > LOADED_FILL_ALIGNMENT_TOLERANCE_DEG)
                     {
                         continue;
@@ -2172,7 +2229,7 @@ namespace HaulBuilder
             Double Dx = End.X - Start.X;
             Double Dy = End.Y - Start.Y;
             Double LengthSquaredM = (Dx * Dx) + (Dy * Dy);
-            if (LengthSquaredM <= 1e-12) return Distance(Point, Start);
+            if (LengthSquaredM <= Constants.STRICT_NUMERIC_COMPARISON_TOLERANCE) return Distance(Point, Start);
             Double Fraction = ((Point.X - Start.X) * Dx
                 + (Point.Y - Start.Y) * Dy) / LengthSquaredM;
             Fraction = Math.Max(0.0, Math.Min(1.0, Fraction));
@@ -2545,7 +2602,7 @@ namespace HaulBuilder
             }
 
             if (Connector.OperatorAlignmentRequired
-                || ((PreviousEndWorkM <= 1e-9) && (NextStartWorkM <= 1e-9)))
+                || ((PreviousEndWorkM <= Constants.NUMERIC_COMPARISON_TOLERANCE) && (NextStartWorkM <= Constants.NUMERIC_COMPARISON_TOLERANCE)))
             {
                 AppendTransitResult(
                     Output, ref ManualAssistCount, Connector, TransitPhase);
@@ -2553,7 +2610,7 @@ namespace HaulBuilder
             }
 
             Double LengthM = PolylineLength(Connector.Points);
-            if (LengthM <= 1e-9)
+            if (LengthM <= Constants.NUMERIC_COMPARISON_TOLERANCE)
             {
                 AppendTransitResult(
                     Output, ref ManualAssistCount, Connector, TransitPhase);
@@ -2588,7 +2645,7 @@ namespace HaulBuilder
             )
         {
             List<(Double X, Double Y)> Slice = PolylineSlice(Points, StartM, EndM);
-            if ((Slice.Count >= 2) && (PolylineLength(Slice) > 1e-9))
+            if ((Slice.Count >= 2) && (PolylineLength(Slice) > Constants.NUMERIC_COMPARISON_TOLERANCE))
             {
                 Output.Add(new Segment(SelectedPhase, BladeDown, Slice));
             }
@@ -2615,34 +2672,34 @@ namespace HaulBuilder
                 Double Dx = B.X - A.X;
                 Double Dy = B.Y - A.Y;
                 Double SegmentM = Math.Sqrt((Dx * Dx) + (Dy * Dy));
-                if (SegmentM <= 1e-12) continue;
+                if (SegmentM <= Constants.STRICT_NUMERIC_COMPARISON_TOLERANCE) continue;
                 Double SegmentStartM = TravelM;
                 Double SegmentEndM = TravelM + SegmentM;
-                if ((SegmentEndM + 1e-9 >= ClampedStartM)
-                    && (SegmentStartM - 1e-9 <= ClampedEndM))
+                if ((SegmentEndM + Constants.NUMERIC_COMPARISON_TOLERANCE >= ClampedStartM)
+                    && (SegmentStartM - Constants.NUMERIC_COMPARISON_TOLERANCE <= ClampedEndM))
                 {
                     Double LocalStartM = Math.Max(ClampedStartM, SegmentStartM);
                     Double LocalEndM = Math.Min(ClampedEndM, SegmentEndM);
-                    if (LocalEndM + 1e-9 >= LocalStartM)
+                    if (LocalEndM + Constants.NUMERIC_COMPARISON_TOLERANCE >= LocalStartM)
                     {
                         (Double X, Double Y) SliceStart = InterpolatePoint(
                             A, B, (LocalStartM - SegmentStartM) / SegmentM);
                         (Double X, Double Y) SliceEnd = InterpolatePoint(
                             A, B, (LocalEndM - SegmentStartM) / SegmentM);
                         if ((Output.Count == 0)
-                            || (Distance(Output[Output.Count - 1], SliceStart) > 1e-9))
+                            || (Distance(Output[Output.Count - 1], SliceStart) > Constants.NUMERIC_COMPARISON_TOLERANCE))
                         {
                             Output.Add(SliceStart);
                         }
                         if ((Output.Count == 0)
-                            || (Distance(Output[Output.Count - 1], SliceEnd) > 1e-9))
+                            || (Distance(Output[Output.Count - 1], SliceEnd) > Constants.NUMERIC_COMPARISON_TOLERANCE))
                         {
                             Output.Add(SliceEnd);
                         }
                     }
                 }
                 TravelM = SegmentEndM;
-                if (TravelM > ClampedEndM + 1e-9) break;
+                if (TravelM > ClampedEndM + Constants.NUMERIC_COMPARISON_TOLERANCE) break;
             }
             return Output;
         }

@@ -83,14 +83,14 @@ namespace HaulBuilder
             )
         {
             // Match Python heading convention atan2(fx, fy).
-            return (Math.Atan2(Fx[By, Bx], Fy[By, Bx]) * 180.0 / Math.PI + 360.0) % 360.0;
+            return (Math.Atan2(Fx[By, Bx], Fy[By, Bx]) * Constants.DEGREES_PER_HALF_TURN / Math.PI + Constants.DEGREES_PER_TURN) % Constants.DEGREES_PER_TURN;
         }
     }
 
     /// <summary>
     /// Flow-field solvers (Poisson default, mincostflow fallback behavior).
     /// </summary>
-    public static class FlowFieldSolver
+    static public class FlowFieldSolver
     {
         /// <summary>
         /// Computes a flow field from the grid in selected mode.
@@ -292,6 +292,12 @@ namespace HaulBuilder
             }
         }
 
+        /// <summary>
+        /// Builds valid coords.
+        /// </summary>
+        /// <param name="Valid">The valid used by the operation.</param>
+        /// <returns>The resulting valid coords.</returns>
+
         static private List<(Int32 By, Int32 Bx)> BuildValidCoords
             (
             Boolean[,] Valid
@@ -482,7 +488,7 @@ namespace HaulBuilder
                     Double RawY = -Gy[By, Bx];
                     Double Magnitude = Math.Sqrt((RawX * RawX) + (RawY * RawY));
                     Mag[By, Bx] = Magnitude;
-                    if (Magnitude > 1e-12)
+                    if (Magnitude > Constants.STRICT_NUMERIC_COMPARISON_TOLERANCE)
                     {
                         Fx[By, Bx] = RawX / Magnitude;
                         Fy[By, Bx] = RawY / Magnitude;

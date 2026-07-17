@@ -11,10 +11,10 @@ namespace HaulBuilder
     /// into nearby routes with spare scraper capacity.  Cut and fill are rebuilt
     /// to identical BCY targets, so balance cannot ripple outside the group.
     /// </summary>
-    public static class HaulRouteConsolidationOptimizer
+    static public class HaulRouteConsolidationOptimizer
     {
         private const Double TOLERANCE_BCY = 1e-7;
-        private const Double TOLERANCE_DEPTH_M = 1e-9;
+        private const Double TOLERANCE_DEPTH_M = Constants.NUMERIC_COMPARISON_TOLERANCE;
 
         /// <summary>Consolidation diagnostics.</summary>
         public sealed class Result
@@ -144,6 +144,23 @@ namespace HaulBuilder
             return new Result(Passes, Removed, Attempts, BeforeM, AfterM);
         }
 
+        /// <summary>
+        /// Executes the try consolidate operation.
+        /// </summary>
+        /// <param name="Source">The source used by the operation.</param>
+        /// <param name="Group">The group used by the operation.</param>
+        /// <param name="RemovedIndex">Zero-based item index.</param>
+        /// <param name="Grid">Field grid used by the operation.</param>
+        /// <param name="MaximumLoadBcy">Count limit applied by the operation.</param>
+        /// <param name="MaximumDepthM">Count limit applied by the operation.</param>
+        /// <param name="BladeWidthM">The blade width m used by the operation.</param>
+        /// <param name="GradeReturn">The grade return used by the operation.</param>
+        /// <param name="Obstacles">The obstacles used by the operation.</param>
+        /// <param name="Candidate">The candidate used by the operation.</param>
+        /// <param name="BeforeM">The before m used by the operation.</param>
+        /// <param name="AfterM">The after m used by the operation.</param>
+        /// <returns>The resulting try consolidate.</returns>
+
         private static Boolean TryConsolidate
             (
             IReadOnlyList<Pass> Source,
@@ -226,7 +243,7 @@ namespace HaulBuilder
                 BeforeM += Before.DistanceM;
                 BeforeRuns += Before.CutRunCount + Before.FillRunCount;
             }
-            if ((AfterM >= BeforeM - 1e-6) || (AfterRuns > BeforeRuns))
+            if ((AfterM >= BeforeM - Constants.GEOMETRY_COMPARISON_TOLERANCE) || (AfterRuns > BeforeRuns))
             {
                 return false;
             }
@@ -239,6 +256,18 @@ namespace HaulBuilder
             Candidate = Output;
             return true;
         }
+
+        /// <summary>
+        /// Executes the allocate kind operation.
+        /// </summary>
+        /// <param name="Source">The source used by the operation.</param>
+        /// <param name="Group">The group used by the operation.</param>
+        /// <param name="Retained">The retained used by the operation.</param>
+        /// <param name="TargetsBcy">The targets bcy used by the operation.</param>
+        /// <param name="Grid">Field grid used by the operation.</param>
+        /// <param name="MaximumDepthM">Count limit applied by the operation.</param>
+        /// <param name="FillKind">The fill kind used by the operation.</param>
+        /// <returns>The resulting allocate kind.</returns>
 
         private static List<List<((Int32 Bx, Int32 By) Cell, Double DepthM)>>?
             AllocateKind
@@ -308,16 +337,37 @@ namespace HaulBuilder
                 .ToList()).ToList();
         }
 
+        /// <summary>
+        /// Executes the cells operation.
+        /// </summary>
+        /// <param name="Pass">The pass used by the operation.</param>
+        /// <param name="FillKind">The fill kind used by the operation.</param>
+        /// <returns>The resulting cells.</returns>
+
         private static IReadOnlyList<((Int32 Bx, Int32 By) Cell, Double DepthM)>
             Cells(Pass Pass, Boolean FillKind) =>
                 FillKind ? Pass.FillCells : Pass.CutCells;
+
+        /// <summary>
+        /// Executes the combined centroid operation.
+        /// </summary>
+        /// <param name="Pass">The pass used by the operation.</param>
+        /// <param name="Grid">Field grid used by the operation.</param>
+        /// <returns>The resulting combined centroid.</returns>
 
         private static (Double X, Double Y) CombinedCentroid(Pass Pass, Grid Grid)
         {
             (Double X, Double Y) Cut = Centroid(Pass.CutCells, Grid);
             (Double X, Double Y) Fill = Centroid(Pass.FillCells, Grid);
-            return ((Cut.X + Fill.X) * 0.5, (Cut.Y + Fill.Y) * 0.5);
+            return ((Cut.X + Fill.X) * Constants.HALF_SCALE, (Cut.Y + Fill.Y) * Constants.HALF_SCALE);
         }
+
+        /// <summary>
+        /// Executes the centroid operation.
+        /// </summary>
+        /// <param name="Cells">The cells used by the operation.</param>
+        /// <param name="Grid">Field grid used by the operation.</param>
+        /// <returns>The resulting centroid.</returns>
 
         private static (Double X, Double Y) Centroid
             (
@@ -338,6 +388,14 @@ namespace HaulBuilder
             }
             return (X / Weight, Y / Weight);
         }
+
+        /// <summary>
+        /// Executes the same work operation.
+        /// </summary>
+        /// <param name="First">The first used by the operation.</param>
+        /// <param name="Second">The second used by the operation.</param>
+        /// <param name="FillKind">The fill kind used by the operation.</param>
+        /// <returns>The resulting same work.</returns>
 
         private static Boolean SameWork
             (
@@ -360,6 +418,13 @@ namespace HaulBuilder
                 A.GetValueOrDefault(Cell) - B.GetValueOrDefault(Cell))
                     <= TOLERANCE_DEPTH_M);
         }
+
+        /// <summary>
+        /// Executes the distance operation.
+        /// </summary>
+        /// <param name="First">The first used by the operation.</param>
+        /// <param name="Second">The second used by the operation.</param>
+        /// <returns>The resulting distance.</returns>
 
         private static Double Distance
             (

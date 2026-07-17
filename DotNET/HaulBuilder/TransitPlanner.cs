@@ -9,7 +9,7 @@ namespace HaulBuilder
     /// <summary>
     /// Builds forward-only radius-valid transit with explicit operator-alignment fallback.
     /// </summary>
-    public static class TransitPlanner
+    static public class TransitPlanner
     {
         private const Double AUTOMATIC_ALIGNMENT_TOLERANCE_DEG = 5.0;
         private const Double SHORT_ALIGNMENT_JOG_TOLERANCE_DEG = 15.0;
@@ -20,6 +20,10 @@ namespace HaulBuilder
             (FieldEdgePolicy Policy, Grid AllowanceGrid)> AllowanceCache =
                 new Dictionary<(Grid Field, Int64 AllowanceBits),
                     (FieldEdgePolicy Policy, Grid AllowanceGrid)>();
+        /// <summary>
+        /// Provides connect cache key behavior.
+        /// </summary>
+
         private readonly record struct ConnectCacheKey
             (
             Int64 StartX,
@@ -144,7 +148,7 @@ namespace HaulBuilder
             Grid Field,
             Boolean AllowManualAssist = true,
             Double MaxManualAssistM = 45.0 * Constants.FEET_TO_METERS,
-            Double EdgeAllowanceM = Constants.DEFAULT_BLADE_WIDTH_MM / 1000.0,
+            Double EdgeAllowanceM = Constants.DEFAULT_BLADE_WIDTH_MM / Constants.MILLIMETERS_PER_METER,
             Boolean AllowForwardDetour = false,
             Boolean RetainResult = false
             )
@@ -299,10 +303,10 @@ namespace HaulBuilder
             Double HeadingDeg
             )
         {
-            Double Normalized = HeadingDeg % 360.0;
-            if (Normalized < 0.0) Normalized += 360.0;
-            if ((Math.Abs(Normalized) <= 1e-12)
-                || (Math.Abs(Normalized - 360.0) <= 1e-12))
+            Double Normalized = HeadingDeg % Constants.DEGREES_PER_TURN;
+            if (Normalized < 0.0) Normalized += Constants.DEGREES_PER_TURN;
+            if ((Math.Abs(Normalized) <= Constants.STRICT_NUMERIC_COMPARISON_TOLERANCE)
+                || (Math.Abs(Normalized - Constants.DEGREES_PER_TURN) <= Constants.STRICT_NUMERIC_COMPARISON_TOLERANCE))
             {
                 Normalized = 0.0;
             }
@@ -352,7 +356,7 @@ namespace HaulBuilder
                     "AUTO_SHORT_ALIGNMENT_JOG", String.Empty);
             }
             if (GentleAllowed
-                && (!AutomaticAllowed || (GentleLengthM + 1e-9 < Automatic.LengthM)))
+                && (!AutomaticAllowed || (GentleLengthM + Constants.NUMERIC_COMPARISON_TOLERANCE < Automatic.LengthM)))
             {
                 return new Result(true, false, Gentle,
                     GentleLengthM,
@@ -474,6 +478,10 @@ namespace HaulBuilder
                 SampleSpacingM);
         }
 
+        /// <summary>
+        /// Provides forward state key behavior.
+        /// </summary>
+
         private readonly record struct ForwardStateKey
         {
             /// <summary>Initializes one quantized forward-search state.</summary>
@@ -488,6 +496,10 @@ namespace HaulBuilder
             public Int32 Y { get; }
             public Int32 Heading { get; }
         }
+
+        /// <summary>
+        /// Provides forward search node behavior.
+        /// </summary>
 
         private sealed class ForwardSearchNode
         {
@@ -532,7 +544,7 @@ namespace HaulBuilder
             Interlocked.Increment(ref ForwardDetourCalls);
             Double SpatialResolutionM = Math.Max(
                 SampleSpacingM,
-                Math.Min(0.5 * AllowedField.GridSizeM, 0.25 * MinimumRadiusM));
+                Math.Min(Constants.HALF_SCALE * AllowedField.GridSizeM, Constants.QUARTER_SCALE * MinimumRadiusM));
             Double PrimitiveLengthM = Math.Max(
                 2.0 * SampleSpacingM,
                 Math.Min(AllowedField.GridSizeM, Math.PI * MinimumRadiusM / 12.0));
@@ -564,7 +576,7 @@ namespace HaulBuilder
                 ForwardStateKey NodeKey = QuantizeForwardState(
                     Node.Pose, AllowedField, SpatialResolutionM, HEADING_BIN_COUNT);
                 if (BestCost.TryGetValue(NodeKey, out Double KnownCostM)
-                    && (Node.CostM > KnownCostM + 1e-9))
+                    && (Node.CostM > KnownCostM + Constants.NUMERIC_COMPARISON_TOLERANCE))
                 {
                     continue;
                 }
@@ -581,7 +593,7 @@ namespace HaulBuilder
                 {
                     List<(Double X, Double Y)> Points = ReconstructForwardPath(
                         Nodes, NodeIndex, Exact.Points);
-                    if (PolylineLength(Points) <= MaximumLengthM + 1e-9
+                    if (PolylineLength(Points) <= MaximumLengthM + Constants.NUMERIC_COMPARISON_TOLERANCE
                         && IsForwardContinuous(Points))
                     {
                         Double LengthM = PolylineLength(Points);
@@ -602,7 +614,7 @@ namespace HaulBuilder
                     }
                 }
 
-                if (Node.CostM + PrimitiveLengthM > MaximumLengthM + 1e-9) continue;
+                if (Node.CostM + PrimitiveLengthM > MaximumLengthM + Constants.NUMERIC_COMPARISON_TOLERANCE) continue;
                 foreach (Int32 Steering in new[] { -1, 0, 1 })
                 {
                     List<(Double X, Double Y)> Primitive = SampleForwardPrimitive(
@@ -621,7 +633,7 @@ namespace HaulBuilder
                     ForwardStateKey NextKey = QuantizeForwardState(
                         NextPose, AllowedField, SpatialResolutionM, HEADING_BIN_COUNT);
                     if (BestCost.TryGetValue(NextKey, out Double PreviousCostM)
-                        && (PreviousCostM <= NextCostM + 1e-9))
+                        && (PreviousCostM <= NextCostM + Constants.NUMERIC_COMPARISON_TOLERANCE))
                     {
                         continue;
                     }
@@ -691,7 +703,7 @@ namespace HaulBuilder
             {
                 (Start.X, Start.Y),
             };
-            Double HeadingRad = Start.HeadingDeg * Math.PI / 180.0;
+            Double HeadingRad = Start.HeadingDeg * Math.PI / Constants.DEGREES_PER_HALF_TURN;
             if (Steering == 0)
             {
                 for (Int32 Index = 1; Index <= Count; Index += 1)
@@ -726,7 +738,7 @@ namespace HaulBuilder
             End = new ConnectorPlanner.Pose(
                 ArcEnd.X,
                 ArcEnd.Y,
-                Start.HeadingDeg + (TotalTurnRad * 180.0 / Math.PI));
+                Start.HeadingDeg + (TotalTurnRad * Constants.DEGREES_PER_HALF_TURN / Math.PI));
             return Points;
         }
 
@@ -746,7 +758,7 @@ namespace HaulBuilder
                 (Pose.Y - Field.MinY) / SpatialResolutionM,
                 MidpointRounding.AwayFromZero);
             Int32 Heading = (Int32)Math.Round(
-                Pose.HeadingDeg * HeadingBinCount / 360.0,
+                Pose.HeadingDeg * HeadingBinCount / Constants.DEGREES_PER_TURN,
                 MidpointRounding.AwayFromZero) % HeadingBinCount;
             if (Heading < 0) Heading += HeadingBinCount;
             return new ForwardStateKey(X, Y, Heading);
@@ -762,7 +774,7 @@ namespace HaulBuilder
         {
             Double PositionM = Distance((Start.X, Start.Y), (End.X, End.Y));
             Double HeadingM = RadiusM * HeadingDifferenceDeg(
-                Start.HeadingDeg, End.HeadingDeg) * Math.PI / 180.0;
+                Start.HeadingDeg, End.HeadingDeg) * Math.PI / Constants.DEGREES_PER_HALF_TURN;
             return Math.Max(PositionM, HeadingM);
         }
 
@@ -849,7 +861,7 @@ namespace HaulBuilder
             if (Curve.Success
                 && Curve.Points.Any(Point => Policy.IsPermittedExterior(Point.X, Point.Y))
                 && DensePolylineAllowed(Curve.Points, Field, Policy)
-                && (Curve.LengthM < SelectedLengthM - 1e-9))
+                && (Curve.LengthM < SelectedLengthM - Constants.NUMERIC_COMPARISON_TOLERANCE))
             {
                 Selected = Curve.Points;
                 SelectedLengthM = Curve.LengthM;
@@ -921,7 +933,7 @@ namespace HaulBuilder
             if (DirectM <= SampleSpacingM) return new List<(Double X, Double Y)>();
             Double DirectHeadingDeg = Math.Atan2(
                 End.X - Start.X,
-                End.Y - Start.Y) * 180.0 / Math.PI;
+                End.Y - Start.Y) * Constants.DEGREES_PER_HALF_TURN / Math.PI;
             if ((HeadingDifferenceDeg(Start.HeadingDeg, DirectHeadingDeg) > 45.0)
                 || (HeadingDifferenceDeg(End.HeadingDeg, DirectHeadingDeg) > 45.0)
                 || (HeadingDifferenceDeg(Start.HeadingDeg, End.HeadingDeg) > 45.0))
@@ -929,8 +941,8 @@ namespace HaulBuilder
                 return new List<(Double X, Double Y)>();
             }
 
-            Double StartRad = Start.HeadingDeg * Math.PI / 180.0;
-            Double EndRad = End.HeadingDeg * Math.PI / 180.0;
+            Double StartRad = Start.HeadingDeg * Math.PI / Constants.DEGREES_PER_HALF_TURN;
+            Double EndRad = End.HeadingDeg * Math.PI / Constants.DEGREES_PER_HALF_TURN;
             (Double X, Double Y) StartUnit = (Math.Sin(StartRad), Math.Cos(StartRad));
             (Double X, Double Y) EndUnit = (Math.Sin(EndRad), Math.Cos(EndRad));
             List<Double> Controls = new[]
@@ -941,7 +953,7 @@ namespace HaulBuilder
                     DirectM,
                     Math.Max(MinimumRadiusM, DirectM / 3.0),
                 }
-                .Where(Value => Value > 1e-6)
+                .Where(Value => Value > Constants.GEOMETRY_COMPARISON_TOLERANCE)
                 .Distinct()
                 .OrderBy(Value => Value)
                 .ToList();
@@ -988,7 +1000,7 @@ namespace HaulBuilder
                 }
                 if (!Valid) continue;
                 Double LengthM = PolylineLength(Points);
-                if (LengthM + 1e-9 < BestLengthM)
+                if (LengthM + Constants.NUMERIC_COMPARISON_TOLERANCE < BestLengthM)
                 {
                     Best = Points;
                     BestLengthM = LengthM;
@@ -1004,7 +1016,7 @@ namespace HaulBuilder
             Double Second
             )
         {
-            Double Difference = ((First - Second + 540.0) % 360.0) - 180.0;
+            Double Difference = ((First - Second + Constants.ANGLE_NORMALIZATION_OFFSET_DEGREES) % Constants.DEGREES_PER_TURN) - Constants.DEGREES_PER_HALF_TURN;
             return Math.Abs(Difference);
         }
 
@@ -1035,7 +1047,7 @@ namespace HaulBuilder
                 (OneMinusT * (P2.Y - (2.0 * P1.Y) + P0.Y))
                 + (T * (P3.Y - (2.0 * P2.Y) + P1.Y)));
             Double SpeedSquared = (Dx * Dx) + (Dy * Dy);
-            if (SpeedSquared <= 1e-12) return false;
+            if (SpeedSquared <= Constants.STRICT_NUMERIC_COMPARISON_TOLERANCE) return false;
             Double Curvature = Math.Abs((Dx * Ddy) - (Dy * Ddx))
                 / Math.Pow(SpeedSquared, 1.5);
             return Curvature <= (1.0 / MinimumRadiusM) * 1.001;
@@ -1070,7 +1082,7 @@ namespace HaulBuilder
 
             List<(Double FromM, Double ToM)> ManualIntervals =
                 new List<(Double FromM, Double ToM)>();
-            Double CorrectionM = Math.Min(MinimumRadiusM * 0.5, MaxManualAssistM * 0.5);
+            Double CorrectionM = Math.Min(MinimumRadiusM * Constants.HALF_SCALE, MaxManualAssistM * Constants.HALF_SCALE);
             Double StartErrorDeg = HeadingDifferenceDeg(
                 Start.HeadingDeg, BearingDeg(Points[0], Points[1]));
             Double EndErrorDeg = HeadingDifferenceDeg(
@@ -1118,13 +1130,13 @@ namespace HaulBuilder
                     new List<Leg> { new Leg(false, Points) },
                     0.0, "AUTO_POSITIONAL", String.Empty);
             }
-            if (LengthM <= MaxManualAssistM + 1e-9)
+            if (LengthM <= MaxManualAssistM + Constants.NUMERIC_COMPARISON_TOLERANCE)
             {
                 return new Result(true, true, Points, LengthM,
                     new List<Leg> { new Leg(true, Points) },
                     LengthM, Mode, String.Empty);
             }
-            if (LengthM < MinimumHybridLengthM - 1e-9)
+            if (LengthM < MinimumHybridLengthM - Constants.NUMERIC_COMPARISON_TOLERANCE)
             {
                 return new Result(false, true, new List<(Double X, Double Y)>(), 0.0,
                     new List<Leg>(), 0.0,
@@ -1136,7 +1148,7 @@ namespace HaulBuilder
                         MaxManualAssistM));
             }
             if (ManualIntervals.Any(Interval =>
-                (Interval.ToM - Interval.FromM) > MaxManualAssistM + 1e-9))
+                (Interval.ToM - Interval.FromM) > MaxManualAssistM + Constants.NUMERIC_COMPARISON_TOLERANCE))
             {
                 return new Result(false, true, new List<(Double X, Double Y)>(), 0.0,
                     new List<Leg>(), 0.0,
@@ -1148,7 +1160,7 @@ namespace HaulBuilder
             Double ManualM = 0.0;
             foreach ((Double FromM, Double ToM) Interval in ManualIntervals)
             {
-                if (Interval.FromM > PositionM + 1e-9)
+                if (Interval.FromM > PositionM + Constants.NUMERIC_COMPARISON_TOLERANCE)
                 {
                     Legs.Add(new Leg(false, Slice(Points, PositionM, Interval.FromM)));
                 }
@@ -1156,7 +1168,7 @@ namespace HaulBuilder
                 ManualM += Interval.ToM - Interval.FromM;
                 PositionM = Interval.ToM;
             }
-            if (PositionM < LengthM - 1e-9)
+            if (PositionM < LengthM - Constants.NUMERIC_COMPARISON_TOLERANCE)
             {
                 Legs.Add(new Leg(false, Slice(Points, PositionM, LengthM)));
             }
@@ -1172,7 +1184,7 @@ namespace HaulBuilder
             (Double X, Double Y) End
             )
         {
-            return Math.Atan2(End.X - Start.X, End.Y - Start.Y) * 180.0 / Math.PI;
+            return Math.Atan2(End.X - Start.X, End.Y - Start.Y) * Constants.DEGREES_PER_HALF_TURN / Math.PI;
         }
 
         /// <summary>Returns the absolute heading deflection at an interior polyline point.</summary>
@@ -1189,10 +1201,10 @@ namespace HaulBuilder
             Double OutY = After.Y - Point.Y;
             Double InLength = Math.Sqrt((InX * InX) + (InY * InY));
             Double OutLength = Math.Sqrt((OutX * OutX) + (OutY * OutY));
-            if ((InLength <= 1e-12) || (OutLength <= 1e-12)) return 0.0;
+            if ((InLength <= Constants.STRICT_NUMERIC_COMPARISON_TOLERANCE) || (OutLength <= Constants.STRICT_NUMERIC_COMPARISON_TOLERANCE)) return 0.0;
             Double Cosine = ((InX * OutX) + (InY * OutY)) / (InLength * OutLength);
             Cosine = Math.Max(-1.0, Math.Min(1.0, Cosine));
-            return Math.Acos(Cosine) * 180.0 / Math.PI;
+            return Math.Acos(Cosine) * Constants.DEGREES_PER_HALF_TURN / Math.PI;
         }
 
         /// <summary>Returns the circumradius through three points, or infinity when collinear.</summary>
@@ -1209,7 +1221,7 @@ namespace HaulBuilder
             Double TwiceArea = Math.Abs(
                 ((B.X - A.X) * (C.Y - A.Y))
                 - ((B.Y - A.Y) * (C.X - A.X)));
-            if (TwiceArea <= 1e-12) return Double.PositiveInfinity;
+            if (TwiceArea <= Constants.STRICT_NUMERIC_COMPARISON_TOLERANCE) return Double.PositiveInfinity;
             return (Ab * Bc * Ac) / (2.0 * TwiceArea);
         }
 
@@ -1243,7 +1255,7 @@ namespace HaulBuilder
                     Output.Add(Points[Index]);
                     continue;
                 }
-                if (Distance(Output[Output.Count - 1], Fillet[0]) > 1e-9)
+                if (Distance(Output[Output.Count - 1], Fillet[0]) > Constants.NUMERIC_COMPARISON_TOLERANCE)
                 {
                     Output.Add(Fillet[0]);
                 }
@@ -1252,7 +1264,7 @@ namespace HaulBuilder
                     Output.Add(Fillet[FilletIndex]);
                 }
             }
-            if (Distance(Output[Output.Count - 1], Points[Points.Count - 1]) > 1e-9)
+            if (Distance(Output[Output.Count - 1], Points[Points.Count - 1]) > Constants.NUMERIC_COMPARISON_TOLERANCE)
             {
                 Output.Add(Points[Points.Count - 1]);
             }
@@ -1276,7 +1288,7 @@ namespace HaulBuilder
             Double OutY = C.Y - B.Y;
             Double InLength = Math.Sqrt((InX * InX) + (InY * InY));
             Double OutLength = Math.Sqrt((OutX * OutX) + (OutY * OutY));
-            if ((InLength <= 1e-9) || (OutLength <= 1e-9))
+            if ((InLength <= Constants.NUMERIC_COMPARISON_TOLERANCE) || (OutLength <= Constants.NUMERIC_COMPARISON_TOLERANCE))
             {
                 return new List<(Double X, Double Y)>();
             }
@@ -1286,15 +1298,15 @@ namespace HaulBuilder
             OutY /= OutLength;
             Double Dot = Math.Max(-1.0, Math.Min(1.0, (InX * OutX) + (InY * OutY)));
             Double DeflectionRad = Math.Acos(Dot);
-            Double DeflectionDeg = DeflectionRad * 180.0 / Math.PI;
+            Double DeflectionDeg = DeflectionRad * Constants.DEGREES_PER_HALF_TURN / Math.PI;
             if ((DeflectionDeg <= AUTOMATIC_ALIGNMENT_TOLERANCE_DEG)
                 || (DeflectionDeg > 45.0))
             {
                 return new List<(Double X, Double Y)>();
             }
             Double Cross = (InX * OutY) - (InY * OutX);
-            if (Math.Abs(Cross) <= 1e-9) return new List<(Double X, Double Y)>();
-            Double TangentM = RadiusM * Math.Tan(0.5 * DeflectionRad);
+            if (Math.Abs(Cross) <= Constants.NUMERIC_COMPARISON_TOLERANCE) return new List<(Double X, Double Y)>();
+            Double TangentM = RadiusM * Math.Tan(Constants.HALF_SCALE * DeflectionRad);
             if ((TangentM >= 0.45 * InLength) || (TangentM >= 0.45 * OutLength))
             {
                 return new List<(Double X, Double Y)>();
@@ -1351,7 +1363,7 @@ namespace HaulBuilder
             foreach ((Double FromM, Double ToM) Interval in Ordered)
             {
                 if ((Output.Count == 0)
-                    || (Interval.FromM > Output[Output.Count - 1].ToM + 1e-9))
+                    || (Interval.FromM > Output[Output.Count - 1].ToM + Constants.NUMERIC_COMPARISON_TOLERANCE))
                 {
                     Output.Add(Interval);
                     continue;
@@ -1380,7 +1392,7 @@ namespace HaulBuilder
             for (Int32 Index = 1; Index < Points.Count; Index += 1)
             {
                 CumulativeM += Distance(Points[Index - 1], Points[Index]);
-                if ((CumulativeM > FromM + 1e-9) && (CumulativeM < ToM - 1e-9))
+                if ((CumulativeM > FromM + Constants.NUMERIC_COMPARISON_TOLERANCE) && (CumulativeM < ToM - Constants.NUMERIC_COMPARISON_TOLERANCE))
                 {
                     Output.Add(Points[Index]);
                 }
@@ -1401,9 +1413,9 @@ namespace HaulBuilder
             for (Int32 Index = 1; Index < Points.Count; Index += 1)
             {
                 Double SegmentM = Distance(Points[Index - 1], Points[Index]);
-                if (CumulativeM + SegmentM >= TargetM - 1e-9)
+                if (CumulativeM + SegmentM >= TargetM - Constants.NUMERIC_COMPARISON_TOLERANCE)
                 {
-                    Double Fraction = SegmentM <= 1e-12
+                    Double Fraction = SegmentM <= Constants.STRICT_NUMERIC_COMPARISON_TOLERANCE
                         ? 0.0
                         : (TargetM - CumulativeM) / SegmentM;
                     return (

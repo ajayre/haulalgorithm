@@ -3,15 +3,23 @@ using System.Diagnostics;
 using System.IO;
 using HaulBuilder;
 
+/// <summary>
+/// Provides compare paths behavior.
+/// </summary>
 internal static class ComparePaths
 {
+    /// <summary>
+    /// Runs the requested workflow.
+    /// </summary>
+    /// <param name="Fixture">The fixture used by the operation.</param>
+
     internal static void Run
         (
-        String fixture
+        String Fixture
         )
     {
         Double ScraperBcy = 21.0 / 1.25;
-        AgdField Field = Agd.Parse(fixture);
+        AgdField Field = Agd.Parse(Fixture);
         Grid Grid = GridMath.BuildGrid(Field, 7.5);
         Balance.Compute(Grid, "check", Double.PositiveInfinity);
         FlowField Flow = FlowFieldSolver.Compute(Grid, "poisson");
@@ -21,29 +29,39 @@ internal static class ComparePaths
         RunCase("flow_tube (FlowAligned + Flow)", Grid, StripList, Flow, true, ScraperBcy);
     }
 
+    /// <summary>
+    /// Executes the run case operation.
+    /// </summary>
+    /// <param name="Label">The label used by the operation.</param>
+    /// <param name="Grid">Field grid used by the operation.</param>
+    /// <param name="Strips">The strips used by the operation.</param>
+    /// <param name="Flow">The flow used by the operation.</param>
+    /// <param name="FlowAligned">The flow aligned used by the operation.</param>
+    /// <param name="ScraperBcy">The scraper bcy used by the operation.</param>
+
     private static void RunCase
         (
-        String label,
-        Grid grid,
-        System.Collections.Generic.List<Strip> strips,
-        FlowField? flow,
-        Boolean flowAligned,
-        Double scraperBcy
+        String Label,
+        Grid Grid,
+        System.Collections.Generic.List<Strip> Strips,
+        FlowField? Flow,
+        Boolean FlowAligned,
+        Double ScraperBcy
         )
     {
         Stopwatch Sw = Stopwatch.StartNew();
         PassResult Result = Passes.GeneratePasses(
-            grid,
-            strips,
+            Grid,
+            Strips,
             10.0,
-            scraperBcy,
+            ScraperBcy,
             0,
             null,
-            0.5,
+            Constants.HALF_SCALE,
             50.0,
             Constants.DEFAULT_MAX_DROP_HOP_FT * Constants.FEET_TO_METERS,
-            flow,
-            flowAligned,
+            Flow,
+            FlowAligned,
             0.9,
             Obstacles.EMPTY_OBSTACLES);
         Sw.Stop();
@@ -53,6 +71,6 @@ internal static class ComparePaths
             Moved += Result.Passes[Iter].LoadBcy;
         }
 
-        Console.WriteLine(String.Format("{0}: passes={1} moved={2:F1} time={3:F1}s", label, Result.Passes.Count, Moved, Sw.Elapsed.TotalSeconds));
+        Console.WriteLine(String.Format("{0}: passes={1} moved={2:F1} time={3:F1}s", Label, Result.Passes.Count, Moved, Sw.Elapsed.TotalSeconds));
     }
 }

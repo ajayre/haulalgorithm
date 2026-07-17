@@ -26,7 +26,7 @@ namespace HaulBuilder.Tests
             Assert.Equal(17.0, DistanceM, 9);
             Assert.Equal(
                 Math.Sqrt((87.0 * 87.0) + (96.0 * 96.0))
-                    + Math.Sqrt((180.0 * 180.0) + (188.0 * 188.0)),
+                    + Math.Sqrt((Constants.DEGREES_PER_HALF_TURN * Constants.DEGREES_PER_HALF_TURN) + (188.0 * 188.0)),
                 NoGradeDistanceM,
                 9);
         }
@@ -46,6 +46,14 @@ namespace HaulBuilder.Tests
 
             Assert.Equal(0, Route.Order[0]);
         }
+
+        /// <summary>
+        /// Builds pass.
+        /// </summary>
+        /// <param name="CutStart">The cut start used by the operation.</param>
+        /// <param name="FillStart">The fill start used by the operation.</param>
+        /// <param name="FillEnd">The fill end used by the operation.</param>
+        /// <returns>The resulting pass.</returns>
 
         private static Pass MakePass
             (

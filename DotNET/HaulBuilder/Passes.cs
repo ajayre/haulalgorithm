@@ -198,17 +198,17 @@ namespace HaulBuilder
                 }
             }
 
-            if ((Count == 0) || ((Math.Abs(SumE) < 1e-12) && (Math.Abs(SumN) < 1e-12)))
+            if ((Count == 0) || ((Math.Abs(SumE) < Constants.STRICT_NUMERIC_COMPARISON_TOLERANCE) && (Math.Abs(SumN) < Constants.STRICT_NUMERIC_COMPARISON_TOLERANCE)))
             {
                 return 0.0;
             }
 
-            Double Bearing = (Math.Atan2(SumE, SumN) * 180.0 / Math.PI + 360.0) % 360.0;
+            Double Bearing = (Math.Atan2(SumE, SumN) * Constants.DEGREES_PER_HALF_TURN / Math.PI + Constants.DEGREES_PER_TURN) % Constants.DEGREES_PER_TURN;
             Double Nearest = Math.Round(Bearing / 90.0) * 90.0;
-            Double Diff = Math.Abs((((Bearing - Nearest + 180.0) % 360.0) - 180.0));
+            Double Diff = Math.Abs((((Bearing - Nearest + Constants.DEGREES_PER_HALF_TURN) % Constants.DEGREES_PER_TURN) - Constants.DEGREES_PER_HALF_TURN));
             if (Diff <= SnapTolDeg)
             {
-                return (Nearest + 360.0) % 360.0;
+                return (Nearest + Constants.DEGREES_PER_TURN) % Constants.DEGREES_PER_TURN;
             }
 
             return Bearing;
@@ -239,7 +239,7 @@ namespace HaulBuilder
             Double MaxLoadBcy,
             Int32 MaxRounds = 0,
             Double? HeadingDeg = null,
-            Double HeadingStrength = 0.5,
+            Double HeadingStrength = Constants.HALF_SCALE,
             Double StripBias = 50.0,
             Double MaxDropHopM = DEFAULT_MAX_DROP_HOP_FT * Constants.FEET_TO_METERS,
             FlowField? Flow = null,
@@ -249,7 +249,7 @@ namespace HaulBuilder
             )
         {
             // Mirror ledger-based depletion of cut and fill depths.
-            _Ledger Ledger = new _Ledger(Grid, ToleranceMm / 1000.0);
+            _Ledger Ledger = new _Ledger(Grid, ToleranceMm / Constants.MILLIMETERS_PER_METER);
             ObstacleField ActiveObstacles = Obstacles ?? EMPTY_OBSTACLES;
             MinLoadFrac = Math.Min(Math.Max(MinLoadFrac, 0.0), 1.0);
             Double CutPerM = Ledger.CutBcyPerM();
@@ -259,7 +259,7 @@ namespace HaulBuilder
             (Double Ux, Double Uy)? StripUv = null;
             if (HeadingDeg.HasValue && (StripBias > 1.0))
             {
-                Double Radians = HeadingDeg.Value * Math.PI / 180.0;
+                Double Radians = HeadingDeg.Value * Math.PI / Constants.DEGREES_PER_HALF_TURN;
                 StripUv = (Math.Sin(Radians), Math.Cos(Radians));
             }
 
@@ -296,7 +296,7 @@ namespace HaulBuilder
 
                 Double TotalFillBcy = Tracker.FillDepthSum * FillPerM;
                 Double LoadCap = Math.Min(MaxLoadBcy, TotalFillBcy);
-                if (LoadCap <= 1e-9)
+                if (LoadCap <= Constants.NUMERIC_COMPARISON_TOLERANCE)
                 {
                     break;
                 }
@@ -318,7 +318,7 @@ namespace HaulBuilder
                 // One consume stamp for the whole cut multi-drop: never re-enter a
                 // cell already bitten this load (deep remainder waits for a later pass).
                 Context.BeginPhase();
-                while (Loaded < (LoadCap - 1e-9))
+                while (Loaded < (LoadCap - Constants.NUMERIC_COMPARISON_TOLERANCE))
                 {
                     (List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Cells, Double Got) Result;
                     if (FlowDir.HasValue)
@@ -366,12 +366,12 @@ namespace HaulBuilder
                         Loaded += Result.Got;
                     }
 
-                    if (Loaded >= (LoadCap - 1e-9))
+                    if (Loaded >= (LoadCap - Constants.NUMERIC_COMPARISON_TOLERANCE))
                     {
                         break;
                     }
 
-                    if (Loaded >= ((MinLoadFrac * LoadCap) - 1e-9))
+                    if (Loaded >= ((MinLoadFrac * LoadCap) - Constants.NUMERIC_COMPARISON_TOLERANCE))
                     {
                         break;
                     }
@@ -421,7 +421,7 @@ namespace HaulBuilder
                 (Int32 Bx, Int32 By) FillSeedValue = FillSeed.Value;
                 // Fresh stamp for fill multi-drop so cut-phase marks do not block dump cells.
                 Context.BeginPhase();
-                while (Placed < (Loaded - 1e-9))
+                while (Placed < (Loaded - Constants.NUMERIC_COMPARISON_TOLERANCE))
                 {
                     (List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Cells, Double Got) Result;
                     if (FlowDir.HasValue)
@@ -469,7 +469,7 @@ namespace HaulBuilder
                         Placed += Result.Got;
                     }
 
-                    if (Placed >= (Loaded - 1e-9))
+                    if (Placed >= (Loaded - Constants.NUMERIC_COMPARISON_TOLERANCE))
                     {
                         break;
                     }
@@ -491,14 +491,14 @@ namespace HaulBuilder
                 }
 
                 Double Leftover = Loaded - Placed;
-                if (Leftover > 1e-9)
+                if (Leftover > Constants.NUMERIC_COMPARISON_TOLERANCE)
                 {
                     // Refund unplaced cut from tail first so kept cut stays nearest served fill.
                     List<((Int32 Bx, Int32 By) Cell, Double DepthM)> KeptRev = new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>();
                     for (Int32 Index = CutPatch.Count - 1; Index >= 0; Index -= 1)
                     {
                         ((Int32 Bx, Int32 By) Cell, Double DepthM) Entry = CutPatch[Index];
-                        if (Leftover <= 1e-9)
+                        if (Leftover <= Constants.NUMERIC_COMPARISON_TOLERANCE)
                         {
                             KeptRev.Add(Entry);
                             continue;
@@ -511,7 +511,7 @@ namespace HaulBuilder
                         Tracker.NoteCutDepth(Entry.Cell.Bx, Entry.Cell.By, Old, Ledger.RemainingCut[Entry.Cell.By, Entry.Cell.Bx]);
                         Leftover -= Give;
                         Double KeepDepth = Entry.DepthM - (Give / CutPerM);
-                        if (KeepDepth > 1e-12)
+                        if (KeepDepth > Constants.STRICT_NUMERIC_COMPARISON_TOLERANCE)
                         {
                             KeptRev.Add((Entry.Cell, KeepDepth));
                         }
@@ -595,7 +595,7 @@ namespace HaulBuilder
             Double Vx = Uy;
             Double Vy = -Ux;
 
-            while ((Heap.Count > 0) && (Acc < (TargetBcy - 1e-9)))
+            while ((Heap.Count > 0) && (Acc < (TargetBcy - Constants.NUMERIC_COMPARISON_TOLERANCE)))
             {
                 (Double Key, Int32 T, Int32 X, Int32 Y) Entry = Heap.Dequeue();
                 if (Visited.Contains((Entry.X, Entry.Y)))
@@ -702,7 +702,7 @@ namespace HaulBuilder
             _ActiveTracker? Tracker,
             _PassContext? Context,
             Boolean IsFill,
-            Double Step = 0.5,
+            Double Step = Constants.HALF_SCALE,
             Int32 MaxSteps = 4000,
             Int32 MissGap = 4
             )
@@ -719,6 +719,9 @@ namespace HaulBuilder
             Int32 Sy = SeedCell.By;
             Double Acc = 0.0;
             List<((Int32 Bx, Int32 By) Cell, Double DepthM)> SeedEntry = new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>();
+
+            // Consumes available depth from one cell into the requested pass
+            // bucket without exceeding its capacity.
 
             Boolean Consume
                 (
@@ -744,7 +747,7 @@ namespace HaulBuilder
                 {
                     Bcy = TargetBcy - Acc;
                     Depth = (PerM > 0.0) ? (Bcy / PerM) : 0.0;
-                    if (Depth <= 1e-12)
+                    if (Depth <= Constants.STRICT_NUMERIC_COMPARISON_TOLERANCE)
                     {
                         return false;
                     }
@@ -777,14 +780,17 @@ namespace HaulBuilder
 
             Consume(Sx, Sy, SeedEntry);
 
+            // Traces connected residual cells having the requested cut or fill
+            // sign.
+
             List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Trace
                 (
                 Double Sign
                 )
             {
                 List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Out = new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>();
-                Double X = Sx + 0.5;
-                Double Y = Sy + 0.5;
+                Double X = Sx + Constants.HALF_SCALE;
+                Double Y = Sy + Constants.HALF_SCALE;
                 Int32 Misses = 0;
                 for (Int32 Iter = 0; Iter < MaxSteps; Iter += 1)
                 {
@@ -793,14 +799,14 @@ namespace HaulBuilder
                         PassProfiler.FlowTubeSteps += 1;
                     }
 
-                    if (Acc >= (TargetBcy - 1e-9))
+                    if (Acc >= (TargetBcy - Constants.NUMERIC_COMPARISON_TOLERANCE))
                     {
                         break;
                     }
 
                     (Double Ux, Double Uy) Flow = Strips.SampleFlow(Fxs, Fys, Valid, X, Y);
                     Double Norm = Math.Sqrt((Flow.Ux * Flow.Ux) + (Flow.Uy * Flow.Uy));
-                    if (Norm < 1e-6)
+                    if (Norm < Constants.GEOMETRY_COMPARISON_TOLERANCE)
                     {
                         break;
                     }
@@ -874,6 +880,8 @@ namespace HaulBuilder
             {
                 Parent[I] = I;
             }
+
+            // Finds the root of a disjoint-set entry with path compression.
 
             Int32 Find
                 (
@@ -1058,6 +1066,13 @@ namespace HaulBuilder
             return new Pass(CutCells, FillCells, LoadBcy, Haul, CutStart, CutEndFinal, FillStart, FillEnd);
         }
 
+        /// <summary>
+        /// Executes the sq dist operation.
+        /// </summary>
+        /// <param name="A">The a used by the operation.</param>
+        /// <param name="B">The b used by the operation.</param>
+        /// <returns>The resulting sq dist.</returns>
+
         static private Double SqDist
             (
             (Double X, Double Y) A,
@@ -1068,6 +1083,16 @@ namespace HaulBuilder
             Double Dy = (A.Y - B.Y);
             return ((Dx * Dx) + (Dy * Dy));
         }
+
+        /// <summary>
+        /// Executes the central diff operation.
+        /// </summary>
+        /// <param name="Field">The field used by the operation.</param>
+        /// <param name="Valid">The valid used by the operation.</param>
+        /// <param name="By">The by used by the operation.</param>
+        /// <param name="Bx">The bx used by the operation.</param>
+        /// <param name="XAxis">The xaxis used by the operation.</param>
+        /// <returns>The resulting central diff.</returns>
 
         static private Double? CentralDiff
             (
@@ -1109,6 +1134,13 @@ namespace HaulBuilder
             return (Field[PlusBy, PlusBx] - Field[MinusBy, MinusBx]) / 2.0;
         }
 
+        /// <summary>
+        /// Executes the cells above operation.
+        /// </summary>
+        /// <param name="Matrix">The matrix used by the operation.</param>
+        /// <param name="Tol">The tol used by the operation.</param>
+        /// <returns>The resulting cells above.</returns>
+
         static private List<(Int32 Bx, Int32 By)> CellsAbove
             (
             Double[,] Matrix,
@@ -1132,6 +1164,13 @@ namespace HaulBuilder
 
             return Out;
         }
+
+        /// <summary>
+        /// Executes the sum above operation.
+        /// </summary>
+        /// <param name="Matrix">The matrix used by the operation.</param>
+        /// <param name="Tol">The tol used by the operation.</param>
+        /// <returns>The resulting sum above.</returns>
 
         static private Double SumAbove
             (
@@ -1168,25 +1207,30 @@ namespace HaulBuilder
             private Boolean CutListDirty = true;
             private Boolean FillListDirty = true;
 
+            /// <summary>
+            /// Initializes a new Active Tracker instance.
+            /// </summary>
+            /// <param name="Ledger">The ledger used by the operation.</param>
+
             public _ActiveTracker
                 (
-                _Ledger ledger
+                _Ledger Ledger
                 )
             {
-                Tol = ledger.Tol;
-                for (Int32 By = 0; By < ledger.Grid.Height; By += 1)
+                Tol = Ledger.Tol;
+                for (Int32 By = 0; By < Ledger.Grid.Height; By += 1)
                 {
-                    for (Int32 Bx = 0; Bx < ledger.Grid.Width; Bx += 1)
+                    for (Int32 Bx = 0; Bx < Ledger.Grid.Width; Bx += 1)
                     {
-                        Double CutDepth = ledger.RemainingCut[By, Bx];
-                        if (CutDepth > Tol)
+                        Double CutDepth = Ledger.RemainingCut[By, Bx];
+                        if (CutDepth > this.Tol)
                         {
                             Cut.Add((Bx, By));
                             CutListDirty = true;
                         }
 
-                        Double FillDepth = ledger.RemainingFill[By, Bx];
-                        if (FillDepth > Tol)
+                        Double FillDepth = Ledger.RemainingFill[By, Bx];
+                        if (FillDepth > this.Tol)
                         {
                             Fill.Add((Bx, By));
                             FillListDirty = true;
@@ -1201,6 +1245,11 @@ namespace HaulBuilder
             public HashSet<(Int32 Bx, Int32 By)> Fill { get; } = new HashSet<(Int32 Bx, Int32 By)>();
 
             public Double FillDepthSum { get; private set; }
+
+            /// <summary>
+            /// Executes the cut cells operation.
+            /// </summary>
+            /// <returns>The resulting cut cells.</returns>
 
             public IReadOnlyList<(Int32 Bx, Int32 By)> CutCells
                 (
@@ -1218,6 +1267,11 @@ namespace HaulBuilder
                 return CutList;
             }
 
+            /// <summary>
+            /// Executes the fill cells operation.
+            /// </summary>
+            /// <returns>The resulting fill cells.</returns>
+
             public IReadOnlyList<(Int32 Bx, Int32 By)> FillCells
                 (
                 )
@@ -1225,65 +1279,91 @@ namespace HaulBuilder
                 if (FillListDirty)
                 {
                     FillList.Clear();
-                    FillList.AddRange(Fill.OrderBy(Cell => Cell.By).ThenBy(Cell => Cell.Bx));
+                    FillList.AddRange(this.Fill.OrderBy(Cell => Cell.By).ThenBy(Cell => Cell.Bx));
                     FillListDirty = false;
                 }
 
                 return FillList;
             }
 
+            /// <summary>
+            /// Executes the note cut depth operation.
+            /// </summary>
+            /// <param name="Bx">The bx used by the operation.</param>
+            /// <param name="By">The by used by the operation.</param>
+            /// <param name="OldDepth">The old depth used by the operation.</param>
+            /// <param name="NewDepth">The new depth used by the operation.</param>
+
             public void NoteCutDepth
                 (
-                Int32 bx,
-                Int32 by,
-                Double oldDepth,
-                Double newDepth
+                Int32 Bx,
+                Int32 By,
+                Double OldDepth,
+                Double NewDepth
                 )
             {
-                UpdateSet(Cut, ref CutListDirty, bx, by, oldDepth, newDepth);
+                UpdateSet(Cut, ref CutListDirty, Bx, By, OldDepth, NewDepth);
             }
+
+            /// <summary>
+            /// Executes the note fill depth operation.
+            /// </summary>
+            /// <param name="Bx">The bx used by the operation.</param>
+            /// <param name="By">The by used by the operation.</param>
+            /// <param name="OldDepth">The old depth used by the operation.</param>
+            /// <param name="NewDepth">The new depth used by the operation.</param>
 
             public void NoteFillDepth
                 (
-                Int32 bx,
-                Int32 by,
-                Double oldDepth,
-                Double newDepth
+                Int32 Bx,
+                Int32 By,
+                Double OldDepth,
+                Double NewDepth
                 )
             {
-                if (oldDepth > Tol)
+                if (OldDepth > this.Tol)
                 {
-                    FillDepthSum -= oldDepth;
+                    FillDepthSum -= OldDepth;
                 }
 
-                if (newDepth > Tol)
+                if (NewDepth > this.Tol)
                 {
-                    FillDepthSum += newDepth;
+                    FillDepthSum += NewDepth;
                 }
 
-                UpdateSet(Fill, ref FillListDirty, bx, by, oldDepth, newDepth);
+                UpdateSet(this.Fill, ref FillListDirty, Bx, By, OldDepth, NewDepth);
             }
+
+            /// <summary>
+            /// Executes the update set operation.
+            /// </summary>
+            /// <param name="Set">The set used by the operation.</param>
+            /// <param name="ListDirty">The list dirty used by the operation.</param>
+            /// <param name="Bx">The bx used by the operation.</param>
+            /// <param name="By">The by used by the operation.</param>
+            /// <param name="OldDepth">The old depth used by the operation.</param>
+            /// <param name="NewDepth">The new depth used by the operation.</param>
 
             private void UpdateSet
                 (
-                HashSet<(Int32 Bx, Int32 By)> set,
-                ref Boolean listDirty,
-                Int32 bx,
-                Int32 by,
-                Double oldDepth,
-                Double newDepth
+                HashSet<(Int32 Bx, Int32 By)> Set,
+                ref Boolean ListDirty,
+                Int32 Bx,
+                Int32 By,
+                Double OldDepth,
+                Double NewDepth
                 )
             {
-                (Int32 Bx, Int32 By) Key = (bx, by);
-                if ((oldDepth > Tol) && (newDepth <= Tol))
+                (Int32 Bx, Int32 By) Key = (Bx, By);
+                if ((OldDepth > this.Tol) && (NewDepth <= this.Tol))
                 {
-                    set.Remove(Key);
-                    listDirty = true;
+                    Set.Remove(Key);
+                    ListDirty = true;
                 }
-                else if ((oldDepth <= Tol) && (newDepth > Tol))
+                else if ((OldDepth <= this.Tol) && (NewDepth > this.Tol))
                 {
-                    set.Add(Key);
-                    listDirty = true;
+                    Set.Add(Key);
+                    ListDirty = true;
                 }
             }
         }
@@ -1298,13 +1378,13 @@ namespace HaulBuilder
             /// <summary>
             /// Allocates a consume-stamp grid matching the plan grid.
             /// </summary>
-            /// <param name="grid">Grid whose dimensions size the stamp array.</param>
+            /// <param name="Grid">Grid whose dimensions size the stamp array.</param>
             public _PassContext
                 (
-                Grid grid
+                Grid Grid
                 )
             {
-                _ConsumeStamp = new Int32[grid.Height, grid.Width];
+                _ConsumeStamp = new Int32[Grid.Height, Grid.Width];
             }
 
             /// <summary>
@@ -1330,34 +1410,44 @@ namespace HaulBuilder
             }
 
             /// <summary>
-            /// Returns whether <paramref name="bx"/>,<paramref name="by"/> was already bitten this phase.
+            /// Returns whether <paramref name="Bx"/>,<paramref name="By"/> was already bitten this phase.
             /// </summary>
-            /// <param name="bx">Cell column.</param>
-            /// <param name="by">Cell row.</param>
+            /// <param name="Bx">Cell column.</param>
+            /// <param name="By">Cell row.</param>
             /// <returns>True when already consumed under the current phase stamp.</returns>
             public Boolean AlreadyConsumed
                 (
-                Int32 bx,
-                Int32 by
+                Int32 Bx,
+                Int32 By
                 )
             {
-                return _ConsumeStamp[by, bx] == ConsumeStampId;
+                return _ConsumeStamp[By, Bx] == ConsumeStampId;
             }
 
             /// <summary>
-            /// Marks <paramref name="bx"/>,<paramref name="by"/> as consumed for the current phase.
+            /// Marks <paramref name="Bx"/>,<paramref name="By"/> as consumed for the current phase.
             /// </summary>
-            /// <param name="bx">Cell column.</param>
-            /// <param name="by">Cell row.</param>
+            /// <param name="Bx">Cell column.</param>
+            /// <param name="By">Cell row.</param>
             public void MarkConsumed
                 (
-                Int32 bx,
-                Int32 by
+                Int32 Bx,
+                Int32 By
                 )
             {
-                _ConsumeStamp[by, bx] = ConsumeStampId;
+                _ConsumeStamp[By, Bx] = ConsumeStampId;
             }
         }
+
+        /// <summary>
+        /// Executes the choose fill seed operation.
+        /// </summary>
+        /// <param name="FillIndex">Zero-based item index.</param>
+        /// <param name="CutCentroid">The cut centroid used by the operation.</param>
+        /// <param name="Grid">Field grid used by the operation.</param>
+        /// <param name="HeadingDeg">Direction in degrees.</param>
+        /// <param name="HeadingStrength">Direction in degrees.</param>
+        /// <returns>The resulting choose fill seed.</returns>
 
         static private (Int32 Bx, Int32 By) ChooseFillSeed
             (
@@ -1379,7 +1469,7 @@ namespace HaulBuilder
                 return FillIndex.CellAt(0);
             }
 
-            Double Radians = HeadingDeg.Value * Math.PI / 180.0;
+            Double Radians = HeadingDeg.Value * Math.PI / Constants.DEGREES_PER_HALF_TURN;
             (Double Ux, Double Uy) Hvec = (Math.Sin(Radians), Math.Cos(Radians));
             Double K = Math.Max(0.0, Math.Min(0.95, HeadingStrength));
             Int32 CandidateCount = Math.Min(200, FillIndex.Count);
@@ -1391,7 +1481,7 @@ namespace HaulBuilder
                 Double Dx = Grid.CenterX[Cell.By, Cell.Bx] - CutCentroid.X;
                 Double Dy = Grid.CenterY[Cell.By, Cell.Bx] - CutCentroid.Y;
                 Double Dist = Math.Sqrt(DistSq);
-                Double Safe = (Dist > 1e-9) ? Dist : 1e-9;
+                Double Safe = (Dist > Constants.NUMERIC_COMPARISON_TOLERANCE) ? Dist : Constants.NUMERIC_COMPARISON_TOLERANCE;
                 Double Cos = ((Dx * Hvec.Ux) + (Dy * Hvec.Uy)) / Safe;
                 Double Cost = Dist * (1.0 - (K * Cos));
                 if (Cost < BestCost)
@@ -1433,7 +1523,7 @@ namespace HaulBuilder
             // Inspect the k nearest active pockets; skip cells already consumed this
             // phase so multi-drop hops to a *new* pocket, not a hop-back restack.
             // On equal distance prefer (by, bx) so scipy vs nanoflann tie order agrees.
-            const Double DistTieEps = 1e-12;
+            const Double DISTANCE_TIE_EPSILON = Constants.STRICT_NUMERIC_COMPARISON_TOLERANCE;
             Boolean HaveBest = false;
             (Int32 Bx, Int32 By) BestCell = default;
             Double BestDist = 0.0;
@@ -1452,8 +1542,8 @@ namespace HaulBuilder
 
                 Double Dist = Math.Sqrt(DistSq);
                 if (!HaveBest
-                    || (Dist < (BestDist - DistTieEps))
-                    || ((Math.Abs(Dist - BestDist) <= DistTieEps)
+                    || (Dist < (BestDist - DISTANCE_TIE_EPSILON))
+                    || ((Math.Abs(Dist - BestDist) <= DISTANCE_TIE_EPSILON)
                         && ((Cell.By < BestCell.By)
                             || ((Cell.By == BestCell.By) && (Cell.Bx < BestCell.Bx)))))
                 {
@@ -1491,12 +1581,12 @@ namespace HaulBuilder
                 SumY += FyS[Cell.Cell.By, Cell.Cell.Bx];
             }
 
-            if (((SumX * SumX) + (SumY * SumY)) < 1e-12)
+            if (((SumX * SumX) + (SumY * SumY)) < Constants.STRICT_NUMERIC_COMPARISON_TOLERANCE)
             {
                 return Double.NaN;
             }
 
-            return (Math.Atan2(SumX, SumY) * 180.0 / Math.PI + 360.0) % 360.0;
+            return (Math.Atan2(SumX, SumY) * Constants.DEGREES_PER_HALF_TURN / Math.PI + Constants.DEGREES_PER_TURN) % Constants.DEGREES_PER_TURN;
         }
 
         /// <summary>
@@ -1590,6 +1680,14 @@ namespace HaulBuilder
             return BestIndex;
         }
 
+        /// <summary>
+        /// Executes the nearest index operation.
+        /// </summary>
+        /// <param name="Cells">The cells used by the operation.</param>
+        /// <param name="Ref">The ref used by the operation.</param>
+        /// <param name="Grid">Field grid used by the operation.</param>
+        /// <returns>The resulting nearest index.</returns>
+
         static private Int32 NearestIndex
             (
             List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Cells,
@@ -1612,6 +1710,14 @@ namespace HaulBuilder
 
             return BestIndex;
         }
+
+        /// <summary>
+        /// Executes the nn chain operation.
+        /// </summary>
+        /// <param name="Cells">The cells used by the operation.</param>
+        /// <param name="Grid">Field grid used by the operation.</param>
+        /// <param name="StartIdx">The start idx used by the operation.</param>
+        /// <returns>The resulting nn chain.</returns>
 
         static private List<((Int32 Bx, Int32 By) Cell, Double DepthM)> NnChain
             (
@@ -1673,6 +1779,13 @@ namespace HaulBuilder
             return Out;
         }
 
+        /// <summary>
+        /// Executes the distance operation.
+        /// </summary>
+        /// <param name="A">The a used by the operation.</param>
+        /// <param name="B">The b used by the operation.</param>
+        /// <returns>The resulting distance.</returns>
+
         static private Double Distance
             (
             (Double X, Double Y) A,
@@ -1730,7 +1843,7 @@ namespace HaulBuilder
                 Area = Grid.AreaM2;
                 Swell = Grid.SwellFactor;
                 Compaction = Grid.Compaction;
-                MaxDepthM = Grid.MaxDepthMm / 1000.0;
+                MaxDepthM = Grid.MaxDepthMm / Constants.MILLIMETERS_PER_METER;
             }
 
             /// <summary>

@@ -230,7 +230,7 @@ namespace HaulBuilder
     /// <summary>
     /// Zone-sequencing helpers.
     /// </summary>
-    public static class Sequence
+    static public class Sequence
     {
         /// <summary>
         /// Clusters routed passes into coarse cut zones.
@@ -411,6 +411,14 @@ namespace HaulBuilder
             return Rows;
         }
 
+        /// <summary>
+        /// Executes the zone boundary edges operation.
+        /// </summary>
+        /// <param name="Cells">The cells used by the operation.</param>
+        /// <param name="Grid">Field grid used by the operation.</param>
+        /// <param name="Half">The half used by the operation.</param>
+        /// <returns>The resulting zone boundary edges.</returns>
+
         static private List<((Double X1, Double Y1) A, (Double X2, Double Y2) B)> ZoneBoundaryEdges
             (
             HashSet<(Int32 Bx, Int32 By)> Cells,
@@ -435,6 +443,15 @@ namespace HaulBuilder
 
             return Segs;
         }
+
+        /// <summary>
+        /// Executes the kmeans operation.
+        /// </summary>
+        /// <param name="Points">The points used by the operation.</param>
+        /// <param name="K">The k used by the operation.</param>
+        /// <param name="Seed">The seed used by the operation.</param>
+        /// <param name="Iters">The iters used by the operation.</param>
+        /// <returns>The resulting kmeans.</returns>
 
         static private (Int32[] Labels, (Double X, Double Y)[] Centers) KMeans
             (
@@ -551,7 +568,7 @@ namespace HaulBuilder
                 {
                     Double Dx = NewCenters[J].X - Centers[J].X;
                     Double Dy = NewCenters[J].Y - Centers[J].Y;
-                    if (((Dx * Dx) + (Dy * Dy)) > 1e-12)
+                    if (((Dx * Dx) + (Dy * Dy)) > Constants.STRICT_NUMERIC_COMPARISON_TOLERANCE)
                     {
                         CentersClose = false;
                     }
@@ -568,6 +585,15 @@ namespace HaulBuilder
             return (Labels, Centers.ToArray());
         }
 
+        /// <summary>
+        /// Executes the compass operation.
+        /// </summary>
+        /// <param name="X">Horizontal coordinate in field units.</param>
+        /// <param name="Y">Vertical coordinate in field units.</param>
+        /// <param name="Cx">The cx used by the operation.</param>
+        /// <param name="Cy">The cy used by the operation.</param>
+        /// <returns>The resulting compass.</returns>
+
         static private String Compass
             (
             Double X,
@@ -581,18 +607,24 @@ namespace HaulBuilder
             String Ew = (X >= Cx) ? "E" : "W";
             Double SpanX = Math.Abs(X - Cx);
             Double SpanY = Math.Abs(Y - Cy);
-            if (SpanX < (0.3 * (SpanX + SpanY + 1e-9)))
+            if (SpanX < (0.3 * (SpanX + SpanY + Constants.NUMERIC_COMPARISON_TOLERANCE)))
             {
                 return Ns;
             }
 
-            if (SpanY < (0.3 * (SpanX + SpanY + 1e-9)))
+            if (SpanY < (0.3 * (SpanX + SpanY + Constants.NUMERIC_COMPARISON_TOLERANCE)))
             {
                 return Ew;
             }
 
             return Ns + Ew;
         }
+
+        /// <summary>
+        /// Executes the arg max operation.
+        /// </summary>
+        /// <param name="Values">The values used by the operation.</param>
+        /// <returns>The resulting arg max.</returns>
 
         static private Int32 ArgMax
             (

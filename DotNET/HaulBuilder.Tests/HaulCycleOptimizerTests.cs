@@ -4,8 +4,16 @@ using System.Linq;
 
 namespace HaulBuilder.Tests
 {
+    /// <summary>
+    /// Contains automated checks for haul cycle optimizer.
+    /// </summary>
+
     public sealed class HaulCycleOptimizerTests
     {
+        /// <summary>
+        /// Verifies production defaults select measured optimizer profile.
+        /// </summary>
+
         [Fact]
         public void ProductionDefaultsSelectMeasuredOptimizerProfile
             (
@@ -28,6 +36,10 @@ namespace HaulBuilder.Tests
                 Options.Optimization.CycleChainCandidatesPerRoute);
             Assert.Equal(200, Options.Optimization.RouteReorderWindow);
         }
+
+        /// <summary>
+        /// Verifies produces balanced capacity bounded complete plan.
+        /// </summary>
 
         [Fact]
         public void ProducesBalancedCapacityBoundedCompletePlan
@@ -72,6 +84,10 @@ namespace HaulBuilder.Tests
             Assert.True(Exact.Success, String.Join(Environment.NewLine, Exact.Issues));
         }
 
+        /// <summary>
+        /// Verifies arbitrary axis produces balanced plan and preserves axis metadata.
+        /// </summary>
+
         [Fact]
         public void ArbitraryAxisProducesBalancedPlanAndPreservesAxisMetadata
             (
@@ -108,6 +124,10 @@ namespace HaulBuilder.Tests
                 String.Join(Environment.NewLine, Exact.Issues));
         }
 
+        /// <summary>
+        /// Verifies edge deferral is explicit and never counted as completed.
+        /// </summary>
+
         [Fact]
         public void EdgeDeferralIsExplicitAndNeverCountedAsCompleted
             (
@@ -141,16 +161,21 @@ namespace HaulBuilder.Tests
             Assert.True(Result.UnmatchedFillBcy > 0.0);
         }
 
+        /// <summary>
+        /// Builds balanced grid.
+        /// </summary>
+        /// <returns>The resulting balanced grid.</returns>
+
         private static Grid MakeBalancedGrid
             (
             )
         {
-            const Int32 Size = 10;
-            Double[,] Existing = new Double[Size, Size];
-            Boolean[,] Valid = new Boolean[Size, Size];
-            for (Int32 By = 0; By < Size; By += 1)
+            const Int32 GRID_SIZE = 10;
+            Double[,] Existing = new Double[GRID_SIZE, GRID_SIZE];
+            Boolean[,] Valid = new Boolean[GRID_SIZE, GRID_SIZE];
+            for (Int32 By = 0; By < GRID_SIZE; By += 1)
             {
-                for (Int32 Bx = 0; Bx < Size; Bx += 1)
+                for (Int32 Bx = 0; Bx < GRID_SIZE; Bx += 1)
                 {
                     Valid[By, Bx] = true;
                 }
@@ -162,8 +187,8 @@ namespace HaulBuilder.Tests
             }
             return new Grid(
                 1.0,
-                Size,
-                Size,
+                GRID_SIZE,
+                GRID_SIZE,
                 0.0,
                 0.0,
                 12,
@@ -171,13 +196,19 @@ namespace HaulBuilder.Tests
                 0.0,
                 0.0,
                 Existing,
-                new Double[Size, Size],
+                new Double[GRID_SIZE, GRID_SIZE],
                 Valid,
                 1.3,
                 1.0,
                 61.0,
                 new List<List<(Double X, Double Y)>>());
         }
+
+        /// <summary>
+        /// Verifies zero flow.
+        /// </summary>
+        /// <param name="Grid">Field grid used by the operation.</param>
+        /// <returns>The resulting zero flow.</returns>
 
         private static FlowField ZeroFlow
             (

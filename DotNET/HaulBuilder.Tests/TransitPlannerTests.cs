@@ -26,7 +26,7 @@ namespace HaulBuilder.Tests
                 new ConnectorPlanner.Pose(20.5, 10.5, 270.0);
 
             TransitPlanner.Result Result = TransitPlanner.Connect(
-                Start, End, 5.0, 0.5, Grid, true, 30.0, 1.0, true);
+                Start, End, 5.0, Constants.HALF_SCALE, Grid, true, 30.0, 1.0, true);
 
             Assert.True(Result.Success, Result.FailureReason);
             Assert.False(Result.OperatorAlignmentRequired);
@@ -56,7 +56,7 @@ namespace HaulBuilder.Tests
                 new ConnectorPlanner.Pose(12.5, 1.5, 270.0);
 
             TransitPlanner.Result Result = TransitPlanner.Connect(
-                Start, End, 5.0, 0.25, Grid, true, 14.0, 1.0, true);
+                Start, End, 5.0, Constants.QUARTER_SCALE, Grid, true, 14.0, 1.0, true);
 
             Assert.True(Result.Success, Result.FailureReason);
             Assert.False(Result.OperatorAlignmentRequired);
@@ -87,10 +87,10 @@ namespace HaulBuilder.Tests
 
             TransitPlanner.Result First =
                 TransitPlanner.Connect(
-                    Start, End, 5.0, 0.5, Grid, true, 30.0, 1.0, true);
+                    Start, End, 5.0, Constants.HALF_SCALE, Grid, true, 30.0, 1.0, true);
             TransitPlanner.Result Second =
                 TransitPlanner.Connect(
-                    Start, End, 5.0, 0.5, Grid, true, 30.0, 1.0, true);
+                    Start, End, 5.0, Constants.HALF_SCALE, Grid, true, 30.0, 1.0, true);
 
             // A reference match proves the second call came from the field cache.
             Assert.Same(First, Second);
@@ -114,12 +114,12 @@ namespace HaulBuilder.Tests
                 Double OutY = After.Y - Point.Y;
                 Double Denominator = Math.Sqrt((InX * InX) + (InY * InY))
                     * Math.Sqrt((OutX * OutX) + (OutY * OutY));
-                if (Denominator <= 1e-12) continue;
+                if (Denominator <= Constants.STRICT_NUMERIC_COMPARISON_TOLERANCE) continue;
                 Double Cos = Math.Clamp(
                     ((InX * OutX) + (InY * OutY)) / Denominator,
                     -1.0,
                     1.0);
-                MaximumDeg = Math.Max(MaximumDeg, Math.Acos(Cos) * 180.0 / Math.PI);
+                MaximumDeg = Math.Max(MaximumDeg, Math.Acos(Cos) * Constants.DEGREES_PER_HALF_TURN / Math.PI);
             }
             return MaximumDeg;
         }
@@ -141,7 +141,7 @@ namespace HaulBuilder.Tests
                         * (Points[Index + 1].Y - Points[Index - 1].Y))
                     - ((Points[Index].Y - Points[Index - 1].Y)
                         * (Points[Index + 1].X - Points[Index - 1].X)));
-                if (Cross <= 1e-9) continue;
+                if (Cross <= Constants.NUMERIC_COMPARISON_TOLERANCE) continue;
                 MinimumM = Math.Min(MinimumM, (A * B * C) / (2.0 * Cross));
             }
             return MinimumM;
@@ -174,7 +174,7 @@ namespace HaulBuilder.Tests
                 new ConnectorPlanner.Pose(35.5, 5.5, 270.0);
 
             TransitPlanner.Result Result = TransitPlanner.Connect(
-                Start, End, 5.0, 0.5, Grid, true, 20.0);
+                Start, End, 5.0, Constants.HALF_SCALE, Grid, true, 20.0);
 
             Assert.False(Result.Success);
             Assert.Contains("heading correction", Result.FailureReason, StringComparison.OrdinalIgnoreCase);
@@ -196,7 +196,7 @@ namespace HaulBuilder.Tests
                 new ConnectorPlanner.Pose(30.5, 10.5, 85.0);
 
             TransitPlanner.Result Result = TransitPlanner.Connect(
-                Start, End, 5.0, 0.25, Grid, true, 8.0);
+                Start, End, 5.0, Constants.QUARTER_SCALE, Grid, true, 8.0);
 
             Assert.True(Result.Success, Result.FailureReason);
             Assert.False(Result.OperatorAlignmentRequired);
@@ -249,10 +249,10 @@ namespace HaulBuilder.Tests
             Double[] HeadingOffsetsDeg = { -14.0, -10.0, -5.0, 0.0, 5.0, 10.0, 14.0 };
             Int32 Cases = 0;
             for (Double TravelHeadingDeg = 0.0;
-                TravelHeadingDeg < 360.0;
+                TravelHeadingDeg < Constants.DEGREES_PER_TURN;
                 TravelHeadingDeg += 15.0)
             {
-                Double TravelRad = TravelHeadingDeg * Math.PI / 180.0;
+                Double TravelRad = TravelHeadingDeg * Math.PI / Constants.DEGREES_PER_HALF_TURN;
                 foreach (Double DistanceM in DistancesM)
                 {
                     ConnectorPlanner.Pose StartPosition =
@@ -281,7 +281,7 @@ namespace HaulBuilder.Tests
                                 2.0 * RADIUS_M);
                             Assert.True(Result.Success, Result.FailureReason);
                             Assert.True(
-                                Result.LengthM <= MaximumReasonableM + 1e-9,
+                                Result.LengthM <= MaximumReasonableM + Constants.NUMERIC_COMPARISON_TOLERANCE,
                                 String.Format(
                                     System.Globalization.CultureInfo.InvariantCulture,
                                     "heading={0:F0} start_offset={1:F0} end_offset={2:F0} distance={3:F1} mode={4} length={5:F2} limit={6:F2}",
@@ -320,7 +320,7 @@ namespace HaulBuilder.Tests
                 new ConnectorPlanner.Pose(20.5, 3.5, 90.0);
 
             TransitPlanner.Result Result = TransitPlanner.Connect(
-                Start, End, 3.0, 0.25, Grid, true, 8.0);
+                Start, End, 3.0, Constants.QUARTER_SCALE, Grid, true, 8.0);
 
             Assert.True(Result.Success, Result.FailureReason);
             Assert.True(Result.OperatorAlignmentRequired);
@@ -330,7 +330,7 @@ namespace HaulBuilder.Tests
             Assert.Contains(Result.Legs, Leg => Leg.OperatorAlignmentRequired);
             Assert.Contains(Result.Legs, Leg => !Leg.OperatorAlignmentRequired);
             Assert.All(Result.Legs.Where(Leg => Leg.OperatorAlignmentRequired), Leg =>
-                Assert.True(PolylineLength(Leg.Points) <= 8.0 + 1e-9));
+                Assert.True(PolylineLength(Leg.Points) <= 8.0 + Constants.NUMERIC_COMPARISON_TOLERANCE));
             Assert.All(Result.Points, Point => Assert.True(Grid.ContainsWorldXy(Point.X, Point.Y)));
         }
 
@@ -354,7 +354,7 @@ namespace HaulBuilder.Tests
                 new ConnectorPlanner.Pose(20.5, 3.5, 90.0);
 
             TransitPlanner.Result Result = TransitPlanner.Connect(
-                Start, End, 3.0, 0.25, Grid, true, 8.0);
+                Start, End, 3.0, Constants.QUARTER_SCALE, Grid, true, 8.0);
 
             Assert.True(Result.Success, Result.FailureReason);
             Assert.False(Result.OperatorAlignmentRequired);
@@ -395,7 +395,7 @@ namespace HaulBuilder.Tests
                 new ConnectorPlanner.Pose(15.5, 5.5, 270.0);
 
             TransitPlanner.Result Result = TransitPlanner.Connect(
-                Start, End, 5.0, 0.5, Grid, true, 8.0);
+                Start, End, 5.0, Constants.HALF_SCALE, Grid, true, 8.0);
 
             Assert.False(Result.Success);
             Assert.Contains("exceeds", Result.FailureReason, StringComparison.OrdinalIgnoreCase);
@@ -420,9 +420,9 @@ namespace HaulBuilder.Tests
             }
             Grid Grid = MakeGrid(30, 5, Invalid);
             ConnectorPlanner.Pose Start =
-                new ConnectorPlanner.Pose(5.5, 0.5, 270.0);
+                new ConnectorPlanner.Pose(5.5, Constants.HALF_SCALE, 270.0);
             ConnectorPlanner.Pose End =
-                new ConnectorPlanner.Pose(15.5, 0.5, 90.0);
+                new ConnectorPlanner.Pose(15.5, Constants.HALF_SCALE, 90.0);
 
             TransitPlanner.Result Result = TransitPlanner.Connect(
                 Start, End, 0.75, 0.10, Grid, true, 2.0, 1.0);
@@ -441,7 +441,7 @@ namespace HaulBuilder.Tests
             Assert.All(Result.Points.Where(Point => !Grid.ContainsWorldXy(Point.X, Point.Y)),
                 Point => Assert.True(
                     Policy.DistanceToNearestValidCellM(Point.X, Point.Y)
-                    <= Grid.GridSizeM + 1e-9));
+                    <= Grid.GridSizeM + Constants.NUMERIC_COMPARISON_TOLERANCE));
         }
 
         /// <summary>

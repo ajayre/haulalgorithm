@@ -13,19 +13,19 @@ internal static class DiagRouteLoops
     /// <summary>
     /// Prints MOVE-run stats for one or more 0-based pass indices.
     /// </summary>
-    /// <param name="args">Optional pass indices (default 9 11).</param>
+    /// <param name="Args">Optional pass indices (default 9 11).</param>
     /// <returns>Process exit code.</returns>
-    public static Int32 Run(String[] args)
+    static public Int32 Run(String[] Args)
     {
         List<Int32> Indices = new List<Int32>();
-        if (args.Length == 0)
+        if (Args.Length == 0)
         {
             Indices.Add(9);
             Indices.Add(11);
         }
         else
         {
-            foreach (String Arg in args)
+            foreach (String Arg in Args)
             {
                 if (!Int32.TryParse(Arg, NumberStyles.Integer, CultureInfo.InvariantCulture, out Int32 Idx))
                 {
@@ -46,7 +46,7 @@ internal static class DiagRouteLoops
         FlowField Flow = FlowFieldSolver.Compute(Grid, "poisson");
         List<Strip> StripList = Strips.TraceStrips(Grid, Flow, 400);
         PassResult PassResult = Passes.GeneratePasses(
-            Grid, StripList, Constants.DEFAULT_TOLERANCE_MM, ScraperBcy, 0, null, 0.5, 50.0,
+            Grid, StripList, Constants.DEFAULT_TOLERANCE_MM, ScraperBcy, 0, null, Constants.HALF_SCALE, 50.0,
             Constants.DEFAULT_MAX_DROP_HOP_FT * Constants.FEET_TO_METERS, Flow, true, 0.8, Obstacles.EMPTY_OBSTACLES);
         Route FullRoute = Routing.SequencePasses(
             PassResult.Passes, 1500, true, true,
@@ -58,7 +58,7 @@ internal static class DiagRouteLoops
             FullRoute, 50, true, true,
             Constants.DEFAULT_UNLOADED_TRAVEL_SPEED_MPH, Constants.DEFAULT_TURN_SPEED_MPH,
             Constants.DEFAULT_TURNING_CIRCLE_FT, 12, Obstacles.EMPTY_OBSTACLES);
-        Double R = Constants.DEFAULT_TURNING_CIRCLE_FT * 0.5 * Constants.FEET_TO_METERS;
+        Double R = Constants.DEFAULT_TURNING_CIRCLE_FT * Constants.HALF_SCALE * Constants.FEET_TO_METERS;
         Double Circ = 2.0 * Math.PI * R;
 
         foreach (Int32 Idx in Indices)
@@ -123,28 +123,28 @@ internal static class DiagRouteLoops
     /// </summary>
     private static Int32 CountNearReverseCorners
         (
-        IReadOnlyList<((Int32 Bx, Int32 By) Cell, Double DepthM)> cells,
-        Grid grid
+        IReadOnlyList<((Int32 Bx, Int32 By) Cell, Double DepthM)> Cells,
+        Grid Grid
         )
     {
         Int32 Count = 0;
-        for (Int32 K = 1; K + 1 < cells.Count; K += 1)
+        for (Int32 K = 1; K + 1 < Cells.Count; K += 1)
         {
-            (Double X, Double Y) A = grid.CellCenterXy(cells[K - 1].Cell.Bx, cells[K - 1].Cell.By);
-            (Double X, Double Y) B = grid.CellCenterXy(cells[K].Cell.Bx, cells[K].Cell.By);
-            (Double X, Double Y) C = grid.CellCenterXy(cells[K + 1].Cell.Bx, cells[K + 1].Cell.By);
+            (Double X, Double Y) A = Grid.CellCenterXy(Cells[K - 1].Cell.Bx, Cells[K - 1].Cell.By);
+            (Double X, Double Y) B = Grid.CellCenterXy(Cells[K].Cell.Bx, Cells[K].Cell.By);
+            (Double X, Double Y) C = Grid.CellCenterXy(Cells[K + 1].Cell.Bx, Cells[K + 1].Cell.By);
             Double Dx1 = B.X - A.X;
             Double Dy1 = B.Y - A.Y;
             Double Dx2 = C.X - B.X;
             Double Dy2 = C.Y - B.Y;
             Double N1 = Math.Sqrt((Dx1 * Dx1) + (Dy1 * Dy1));
             Double N2 = Math.Sqrt((Dx2 * Dx2) + (Dy2 * Dy2));
-            if ((N1 < 1e-6) || (N2 < 1e-6))
+            if ((N1 < Constants.GEOMETRY_COMPARISON_TOLERANCE) || (N2 < Constants.GEOMETRY_COMPARISON_TOLERANCE))
             {
                 continue;
             }
 
-            if (((Dx1 * Dx2) + (Dy1 * Dy2)) / (N1 * N2) < -0.5)
+            if (((Dx1 * Dx2) + (Dy1 * Dy2)) / (N1 * N2) < -Constants.HALF_SCALE)
             {
                 Count += 1;
             }

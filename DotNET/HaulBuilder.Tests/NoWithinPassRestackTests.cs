@@ -44,7 +44,7 @@ namespace HaulBuilder.Tests
                 ScraperBcy,
                 0,
                 null,
-                0.5,
+                Constants.HALF_SCALE,
                 50.0,
                 Constants.DEFAULT_MAX_DROP_HOP_FT * Constants.FEET_TO_METERS,
                 Flow,

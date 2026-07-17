@@ -13,9 +13,9 @@ internal static class DiagCutPath
     /// <summary>
     /// Prints cut-cell paths for routes 10 and 12 (0-based 9 and 11).
     /// </summary>
-    /// <param name="args">Unused.</param>
+    /// <param name="Args">Unused.</param>
     /// <returns>Process exit code.</returns>
-    public static Int32 Run(String[] args)
+    static public Int32 Run(String[] Args)
     {
         String RepoRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", ".."));
         String AgdPath = Path.Combine(RepoRoot, "DotNET", "TheShop2_2ft.agd");
@@ -26,7 +26,7 @@ internal static class DiagCutPath
         FlowField Flow = FlowFieldSolver.Compute(Grid, "poisson");
         List<Strip> StripList = Strips.TraceStrips(Grid, Flow, 400);
         PassResult PassResult = Passes.GeneratePasses(
-            Grid, StripList, Constants.DEFAULT_TOLERANCE_MM, ScraperBcy, 0, null, 0.5, 50.0,
+            Grid, StripList, Constants.DEFAULT_TOLERANCE_MM, ScraperBcy, 0, null, Constants.HALF_SCALE, 50.0,
             Constants.DEFAULT_MAX_DROP_HOP_FT * Constants.FEET_TO_METERS, Flow, true, 0.8, Obstacles.EMPTY_OBSTACLES);
         Route FullRoute = Routing.SequencePasses(
             PassResult.Passes, 1500, true, true,

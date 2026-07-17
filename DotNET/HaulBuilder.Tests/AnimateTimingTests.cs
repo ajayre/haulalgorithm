@@ -4,8 +4,16 @@ using System.Linq;
 
 namespace HaulBuilder.Tests
 {
+    /// <summary>
+    /// Contains automated checks for animate timing.
+    /// </summary>
+
     public sealed class AnimateTimingTests
     {
+        /// <summary>
+        /// Verifies exact progress duration includes four second final hold.
+        /// </summary>
+
         [Fact]
         public void ExactProgressDurationIncludesFourSecondFinalHold()
         {
@@ -20,6 +28,10 @@ namespace HaulBuilder.Tests
             Assert.Equal(400, Delays[^1]);
             Assert.All(Delays.Take(101), Delay => Assert.InRange(Delay, 9, 10));
         }
+
+        /// <summary>
+        /// Verifies unspecified progress duration retains uniform cadence.
+        /// </summary>
 
         [Fact]
         public void UnspecifiedProgressDurationRetainsUniformCadence()

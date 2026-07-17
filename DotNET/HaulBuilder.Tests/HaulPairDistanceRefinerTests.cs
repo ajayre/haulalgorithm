@@ -4,8 +4,16 @@ using System.Linq;
 
 namespace HaulBuilder.Tests
 {
+    /// <summary>
+    /// Contains automated checks for haul pair distance refiner.
+    /// </summary>
+
     public sealed class HaulPairDistanceRefinerTests
     {
+        /// <summary>
+        /// Verifies equal load exchange reduces objective without changing work.
+        /// </summary>
+
         [Fact]
         public void EqualLoadExchangeReducesObjectiveWithoutChangingWork
             (
@@ -38,6 +46,10 @@ namespace HaulBuilder.Tests
                 Assert.Equal(0.1, Pass.LoadBcy, 10));
         }
 
+        /// <summary>
+        /// Determines whether canonical refinement is deterministic.
+        /// </summary>
+
         [Fact]
         public void CanonicalRefinementIsDeterministic
             (
@@ -64,6 +76,14 @@ namespace HaulBuilder.Tests
                 Second.Passes.Select(Pass => Pass.FillCells[0].Cell));
         }
 
+        /// <summary>
+        /// Builds pass.
+        /// </summary>
+        /// <param name="Grid">Field grid used by the operation.</param>
+        /// <param name="Cut">The cut used by the operation.</param>
+        /// <param name="Fill">The fill used by the operation.</param>
+        /// <returns>The resulting pass.</returns>
+
         private static Pass MakePass
             (
             Grid Grid,
@@ -83,31 +103,36 @@ namespace HaulBuilder.Tests
                 Obstacles.EMPTY_OBSTACLES,
                 Ordered: true);
 
+        /// <summary>
+        /// Builds grid.
+        /// </summary>
+        /// <returns>The resulting grid.</returns>
+
         private static Grid MakeGrid
             (
             )
         {
-            const Int32 Size = 10;
-            Boolean[,] Valid = new Boolean[Size, Size];
-            for (Int32 By = 0; By < Size; By += 1)
+            const Int32 GRID_SIZE = 10;
+            Boolean[,] Valid = new Boolean[GRID_SIZE, GRID_SIZE];
+            for (Int32 By = 0; By < GRID_SIZE; By += 1)
             {
-                for (Int32 Bx = 0; Bx < Size; Bx += 1)
+                for (Int32 Bx = 0; Bx < GRID_SIZE; Bx += 1)
                 {
                     Valid[By, Bx] = true;
                 }
             }
             return new Grid(
                 1.0,
-                Size,
-                Size,
+                GRID_SIZE,
+                GRID_SIZE,
                 0.0,
                 0.0,
                 12,
                 true,
                 0.0,
                 0.0,
-                new Double[Size, Size],
-                new Double[Size, Size],
+                new Double[GRID_SIZE, GRID_SIZE],
+                new Double[GRID_SIZE, GRID_SIZE],
                 Valid,
                 1.0,
                 1.0,

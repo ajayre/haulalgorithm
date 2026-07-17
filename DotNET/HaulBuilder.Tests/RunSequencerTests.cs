@@ -27,7 +27,7 @@ namespace HaulBuilder.Tests
             };
 
             RunSequencer.Result Result = RunSequencer.Optimize(
-                Runs, null, null, 4.0, 5.0, 0.5, Grid);
+                Runs, null, null, 4.0, 5.0, Constants.HALF_SCALE, Grid);
 
             Assert.True(Result.Success, Result.FailureReason);
             Assert.Equal(2, Result.Runs.Count);
@@ -63,9 +63,9 @@ namespace HaulBuilder.Tests
             }
 
             RunSequencer.Result First = RunSequencer.Optimize(
-                Runs, null, null, 2.0, 3.0, 0.5, Grid);
+                Runs, null, null, 2.0, 3.0, Constants.HALF_SCALE, Grid);
             RunSequencer.Result Second = RunSequencer.Optimize(
-                Runs, null, null, 2.0, 3.0, 0.5, Grid);
+                Runs, null, null, 2.0, 3.0, Constants.HALF_SCALE, Grid);
 
             Assert.True(First.Success, First.FailureReason);
             Assert.Equal(8, First.Runs.Count);
@@ -98,10 +98,10 @@ namespace HaulBuilder.Tests
 
             RunSequencer.Result First =
                 RunSequencer.OptimizeFlexibleEndpoints(
-                    Runs, null, null, 2.0, 3.0, 0.5, Grid);
+                    Runs, null, null, 2.0, 3.0, Constants.HALF_SCALE, Grid);
             RunSequencer.Result Second =
                 RunSequencer.OptimizeFlexibleEndpoints(
-                    Runs, null, null, 2.0, 3.0, 0.5, Grid);
+                    Runs, null, null, 2.0, 3.0, Constants.HALF_SCALE, Grid);
 
             Assert.True(First.Success, First.FailureReason);
             Assert.Equal(12, First.Runs.Count);
@@ -139,7 +139,7 @@ namespace HaulBuilder.Tests
                     null,
                     4.0,
                     4.0,
-                    0.5,
+                    Constants.HALF_SCALE,
                     Grid,
                     AvoidLoadedRunOverlap: true);
 
@@ -164,7 +164,7 @@ namespace HaulBuilder.Tests
 
             RunSequencer.SequencedRun Prepared =
                 RunSequencer.Prepare(
-                    Run, 0.0, 4.0, 0.5, Grid);
+                    Run, 0.0, 4.0, Constants.HALF_SCALE, Grid);
 
             Assert.Equal(Run.StartXy, Prepared.Run.StartXy);
             Assert.True(Prepared.Run.EndXy.X < Run.EndXy.X - 3.0);

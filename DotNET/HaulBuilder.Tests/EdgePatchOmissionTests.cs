@@ -4,8 +4,16 @@ using System.Linq;
 
 namespace HaulBuilder.Tests
 {
+    /// <summary>
+    /// Contains automated checks for edge patch omission.
+    /// </summary>
+
     public sealed class EdgePatchOmissionTests
     {
+        /// <summary>
+        /// Verifies internal legacy policy defaults remain deterministic.
+        /// </summary>
+
         [Fact]
         public void InternalLegacyPolicyDefaultsRemainDeterministic
             (
@@ -13,6 +21,10 @@ namespace HaulBuilder.Tests
         {
             Assert.True(new EdgePatchOmission.Settings().Enabled);
         }
+
+        /// <summary>
+        /// Verifies policy can be disabled explicitly.
+        /// </summary>
 
         [Fact]
         public void PolicyCanBeDisabledExplicitly
@@ -36,6 +48,10 @@ namespace HaulBuilder.Tests
             Assert.Empty(Result.OmittedCutCells);
             Assert.Empty(Result.OmittedFillCells);
         }
+
+        /// <summary>
+        /// Verifies removes eligible edge component and matching fill demand.
+        /// </summary>
 
         [Fact]
         public void RemovesEligibleEdgeComponentAndMatchingFillDemand
@@ -77,6 +93,10 @@ namespace HaulBuilder.Tests
             AssertClose(Result.OmittedCutBcy, Result.OmittedFillBcy);
         }
 
+        /// <summary>
+        /// Verifies drops pass when its only cut is an eligible edge patch.
+        /// </summary>
+
         [Fact]
         public void DropsPassWhenItsOnlyCutIsAnEligibleEdgePatch
             (
@@ -115,6 +135,10 @@ namespace HaulBuilder.Tests
             AssertClose(Result.OmittedCutBcy, Result.OmittedFillBcy);
         }
 
+        /// <summary>
+        /// Verifies retains patch above per patch volume limit.
+        /// </summary>
+
         [Fact]
         public void RetainsPatchAbovePerPatchVolumeLimit
             (
@@ -135,6 +159,10 @@ namespace HaulBuilder.Tests
             Assert.Empty(Result.OmittedCutCells);
         }
 
+        /// <summary>
+        /// Verifies respects project wide percentage cap.
+        /// </summary>
+
         [Fact]
         public void RespectsProjectWidePercentageCap
             (
@@ -154,6 +182,13 @@ namespace HaulBuilder.Tests
             Assert.Same(Source, Result.PassResult);
             Assert.Empty(Result.OmittedCutCells);
         }
+
+        /// <summary>
+        /// Builds mixed pass result.
+        /// </summary>
+        /// <param name="Grid">Field grid used by the operation.</param>
+        /// <param name="EdgeDepthM">The edge depth m used by the operation.</param>
+        /// <returns>The resulting mixed pass result.</returns>
 
         private static PassResult MakeMixedPassResult
             (
@@ -184,6 +219,11 @@ namespace HaulBuilder.Tests
             return new PassResult(new List<Pass> { Pass }, 1, 0.0, 0.0);
         }
 
+        /// <summary>
+        /// Verifies enabled options.
+        /// </summary>
+        /// <returns>The resulting enabled options.</returns>
+
         private static EdgePatchOmission.Settings EnabledOptions
             (
             ) => new EdgePatchOmission.Settings
@@ -195,12 +235,26 @@ namespace HaulBuilder.Tests
                 MaximumProjectPercent = 100.0,
             };
 
+        /// <summary>
+        /// Verifies cut bcy.
+        /// </summary>
+        /// <param name="Pass">The pass used by the operation.</param>
+        /// <param name="Grid">Field grid used by the operation.</param>
+        /// <returns>The resulting cut bcy.</returns>
+
         private static Double CutBcy
             (
             Pass Pass,
             Grid Grid
             ) => Pass.CutCells.Sum(Entry =>
                 Entry.DepthM * Grid.AreaM2 * Constants.M3_TO_CY);
+
+        /// <summary>
+        /// Verifies fill bcy.
+        /// </summary>
+        /// <param name="Pass">The pass used by the operation.</param>
+        /// <param name="Grid">Field grid used by the operation.</param>
+        /// <returns>The resulting fill bcy.</returns>
 
         private static Double FillBcy
             (
@@ -209,11 +263,22 @@ namespace HaulBuilder.Tests
             ) => Pass.FillCells.Sum(Entry =>
                 Entry.DepthM * Grid.AreaM2 * Constants.M3_TO_CY * Grid.Compaction);
 
+        /// <summary>
+        /// Verifies assert close.
+        /// </summary>
+        /// <param name="Expected">The expected used by the operation.</param>
+        /// <param name="Actual">The actual used by the operation.</param>
+
         private static void AssertClose
             (
             Double Expected,
             Double Actual
             ) => Assert.InRange(Actual, Expected - 1e-8, Expected + 1e-8);
+
+        /// <summary>
+        /// Builds inset grid.
+        /// </summary>
+        /// <returns>The resulting inset grid.</returns>
 
         private static Grid MakeInsetGrid
             (

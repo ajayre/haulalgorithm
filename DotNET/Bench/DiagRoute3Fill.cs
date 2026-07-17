@@ -13,9 +13,9 @@ internal static class DiagRoute3Fill
     /// <summary>
     /// Prints HAUL/FILL grade deltas for routes that look like fill-in-cut on PNGs.
     /// </summary>
-    /// <param name="args">Unused.</param>
+    /// <param name="Args">Unused.</param>
     /// <returns>Process exit code.</returns>
-    public static Int32 Run(String[] args)
+    static public Int32 Run(String[] Args)
     {
         String RepoRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", ".."));
         String AgdPath = Path.Combine(RepoRoot, "DotNET", "TheShop2_2ft.agd");
@@ -26,7 +26,7 @@ internal static class DiagRoute3Fill
         FlowField Flow = FlowFieldSolver.Compute(Grid, "poisson");
         List<Strip> StripList = Strips.TraceStrips(Grid, Flow, 400);
         PassResult PassResult = Passes.GeneratePasses(
-            Grid, StripList, Constants.DEFAULT_TOLERANCE_MM, ScraperBcy, 0, null, 0.5, 50.0,
+            Grid, StripList, Constants.DEFAULT_TOLERANCE_MM, ScraperBcy, 0, null, Constants.HALF_SCALE, 50.0,
             Constants.DEFAULT_MAX_DROP_HOP_FT * Constants.FEET_TO_METERS, Flow, true, 0.8, Obstacles.EMPTY_OBSTACLES);
         Route FullRoute = Routing.SequencePasses(
             PassResult.Passes, 1500, true, true,
@@ -46,7 +46,8 @@ internal static class DiagRoute3Fill
             GuidancePoint? FirstHaul = Pts.FirstOrDefault(P => P.Action == "HAUL");
             GuidancePoint? FirstFill = Pts.FirstOrDefault(P => P.Action == "FILL");
             Int32 FillAbove = 0;
-            foreach (var Item in Pass.FillCells)
+            foreach (((Int32 Bx, Int32 By) Cell, Double DepthM) Item
+                in Pass.FillCells)
             {
                 if ((Grid.Existing[Item.Cell.By, Item.Cell.Bx] - Grid.Target[Item.Cell.By, Item.Cell.Bx]) > 0.01)
                 {
@@ -71,12 +72,12 @@ internal static class DiagRoute3Fill
     /// <summary>
     /// Existing-minus-target at the grid cell containing a guidance point.
     /// </summary>
-    private static Double DeltaMm(Grid grid, GuidancePoint point)
+    private static Double DeltaMm(Grid Grid, GuidancePoint Point)
     {
-        Int32 Bx = (Int32)Math.Floor((point.X - grid.MinX) / grid.GridSizeM);
-        Int32 By = (Int32)Math.Floor((point.Y - grid.MinY) / grid.GridSizeM);
-        Bx = Math.Max(0, Math.Min(grid.Width - 1, Bx));
-        By = Math.Max(0, Math.Min(grid.Height - 1, By));
-        return (grid.Existing[By, Bx] - grid.Target[By, Bx]) * 1000.0;
+        Int32 Bx = (Int32)Math.Floor((Point.X - Grid.MinX) / Grid.GridSizeM);
+        Int32 By = (Int32)Math.Floor((Point.Y - Grid.MinY) / Grid.GridSizeM);
+        Bx = Math.Max(0, Math.Min(Grid.Width - 1, Bx));
+        By = Math.Max(0, Math.Min(Grid.Height - 1, By));
+        return (Grid.Existing[By, Bx] - Grid.Target[By, Bx]) * Constants.MILLIMETERS_PER_METER;
     }
 }

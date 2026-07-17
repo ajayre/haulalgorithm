@@ -8,56 +8,66 @@ namespace HaulBuilder
     /// </summary>
     internal static class PassProfiler
     {
-        public static Boolean Enabled { get; } = String.Equals(
+        static public Boolean Enabled { get; } = String.Equals(
             Environment.GetEnvironmentVariable("HAUL_PROFILE"),
             "1",
             StringComparison.Ordinal);
 
-        public static Int64 PassIterations;
+        static public Int64 PassIterations;
 
-        public static Int64 KdBuilds;
+        static public Int64 KdBuilds;
 
-        public static Int64 KdBuildTicks;
+        static public Int64 KdBuildTicks;
 
-        public static Int64 AnchorBatchQueries;
+        static public Int64 AnchorBatchQueries;
 
-        public static Int64 NearestRemainingCalls;
+        static public Int64 NearestRemainingCalls;
 
-        public static Int64 NearestRemainingTicks;
+        static public Int64 NearestRemainingTicks;
 
-        public static Int64 FlowTubeCalls;
+        static public Int64 FlowTubeCalls;
 
-        public static Int64 FlowTubeSteps;
+        static public Int64 FlowTubeSteps;
 
-        public static Int64 FlowConsumes;
+        static public Int64 FlowConsumes;
 
-        public static Int64 PruneCalls;
+        static public Int64 PruneCalls;
 
-        public static Int64 PruneTicks;
+        static public Int64 PruneTicks;
 
-        public static Int64 BuildPassCalls;
+        static public Int64 BuildPassCalls;
 
-        public static Int64 BuildPassTicks;
+        static public Int64 BuildPassTicks;
 
-        public static Int64 ChooseFillSeedCalls;
+        static public Int64 ChooseFillSeedCalls;
 
-        public static Int64 CutCellsListed;
+        static public Int64 CutCellsListed;
 
-        public static Int64 FillCellsListed;
+        static public Int64 FillCellsListed;
 
-        public static void AddTicks
+        /// <summary>
+        /// Adds ticks.
+        /// </summary>
+        /// <param name="Accumulator">The accumulator used by the operation.</param>
+        /// <param name="StartTimestamp">The start timestamp used by the operation.</param>
+
+        static public void AddTicks
             (
-            ref Int64 accumulator,
-            Int64 startTimestamp
+            ref Int64 Accumulator,
+            Int64 StartTimestamp
             )
         {
             if (Enabled)
             {
-                accumulator += (Stopwatch.GetTimestamp() - startTimestamp);
+                Accumulator += (Stopwatch.GetTimestamp() - StartTimestamp);
             }
         }
 
-        public static void Dump
+        /// <summary>
+        /// Executes the dump operation.
+        /// </summary>
+
+        static public void Dump
             (
             )
         {
@@ -66,7 +76,7 @@ namespace HaulBuilder
                 return;
             }
 
-            Double TickToMs = 1000.0 / Stopwatch.Frequency;
+            Double TickToMs = Constants.MILLIMETERS_PER_METER / Stopwatch.Frequency;
             Console.WriteLine("--- pass profiler (C#) ---");
             Console.WriteLine(String.Format("pass_iterations={0}", PassIterations));
             Console.WriteLine(String.Format("cut_cells_listed={0} fill_cells_listed={1}", CutCellsListed, FillCellsListed));

@@ -129,13 +129,13 @@ namespace HaulBuilder.Tests
         [Fact]
         public void PlanPivot_PrioritizesClearGuidanceOverMoveCost()
         {
-            const Int32 Size = 101;
-            Double[,] Existing = new Double[Size, Size];
-            Double[,] Target = new Double[Size, Size];
-            Boolean[,] Valid = new Boolean[Size, Size];
-            for (Int32 By = 0; By < Size; By += 1)
+            const Int32 GRID_SIZE = 101;
+            Double[,] Existing = new Double[GRID_SIZE, GRID_SIZE];
+            Double[,] Target = new Double[GRID_SIZE, GRID_SIZE];
+            Boolean[,] Valid = new Boolean[GRID_SIZE, GRID_SIZE];
+            for (Int32 By = 0; By < GRID_SIZE; By += 1)
             {
-                for (Int32 Bx = 0; Bx < Size; Bx += 1) Valid[By, Bx] = true;
+                for (Int32 Bx = 0; Bx < GRID_SIZE; Bx += 1) Valid[By, Bx] = true;
             }
             Pivot.Grid Grid = new Pivot.Grid(
                 1.0, 0.0, 0.0, 12, true, Existing, Target, Valid);
@@ -151,13 +151,19 @@ namespace HaulBuilder.Tests
             Assert.True(Plan.MoveCount >= 1);
         }
 
+        /// <summary>
+        /// Builds angular pass.
+        /// </summary>
+        /// <param name="OpenBearingDeg">Direction in degrees.</param>
+        /// <returns>The resulting angular pass.</returns>
+
         private static Pivot.Pass MakeAngularPass(Double OpenBearingDeg)
         {
             List<Pivot.PassCell> Cells = new List<Pivot.PassCell>();
             for (Int32 Bearing = 0; Bearing < 360; Bearing += 30)
             {
-                if (Math.Abs(Bearing - OpenBearingDeg) < 1e-9) continue;
-                Double Radians = Bearing * Math.PI / 180.0;
+                if (Math.Abs(Bearing - OpenBearingDeg) < Constants.NUMERIC_COMPARISON_TOLERANCE) continue;
+                Double Radians = Bearing * Math.PI / Constants.DEGREES_PER_HALF_TURN;
                 Double X = 50.5 + (20.0 * Math.Sin(Radians));
                 Double Y = 50.5 + (20.0 * Math.Cos(Radians));
                 Cells.Add(new Pivot.PassCell(
@@ -169,6 +175,13 @@ namespace HaulBuilder.Tests
                 (50.5, 70.5),
                 (50.5, 70.5));
         }
+
+        /// <summary>
+        /// Builds lifecycle.
+        /// </summary>
+        /// <param name="Start">The start used by the operation.</param>
+        /// <param name="End">The end used by the operation.</param>
+        /// <returns>The resulting lifecycle.</returns>
 
         private static LifecyclePlanner.Result MakeLifecycle(
             (Double X, Double Y) Start,
@@ -187,6 +200,13 @@ namespace HaulBuilder.Tests
                 String.Empty);
         }
 
+        /// <summary>
+        /// Builds grid.
+        /// </summary>
+        /// <param name="Width">The width used by the operation.</param>
+        /// <param name="Height">The height used by the operation.</param>
+        /// <returns>The resulting grid.</returns>
+
         private static Grid MakeGrid(Int32 Width, Int32 Height)
         {
             Double[,] Existing = new Double[Height, Width];
@@ -202,6 +222,13 @@ namespace HaulBuilder.Tests
                 1.3, 1.2, 61.0,
                 new List<List<(Double X, Double Y)>>());
         }
+
+        /// <summary>
+        /// Verifies distance.
+        /// </summary>
+        /// <param name="A">The a used by the operation.</param>
+        /// <param name="B">The b used by the operation.</param>
+        /// <returns>The resulting distance.</returns>
 
         private static Double Distance(
             (Double X, Double Y) A,

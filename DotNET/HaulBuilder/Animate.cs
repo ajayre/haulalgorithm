@@ -9,7 +9,7 @@ namespace HaulBuilder
     /// <summary>
     /// Frame-by-frame leveling animation utilities ported from <c>landlevel.animate</c>.
     /// </summary>
-    public static class Animate
+    static public class Animate
     {
         /// <summary>
         /// One in-memory animation payload.
@@ -41,44 +41,44 @@ namespace HaulBuilder
         /// <summary>
         /// Animates the field as ordered passes are applied.
         /// </summary>
-        /// <param name="grid">Grid model.</param>
-        /// <param name="orderedPasses">Passes in route order.</param>
-        /// <param name="stride">One rendered frame per N passes.</param>
-        /// <param name="pixelsPerBin">Pixels per area edge for frames.</param>
-        /// <param name="gifMs">Default GIF frame delay in milliseconds.</param>
-        /// <param name="mode">Render mode <c>cutfill</c> or <c>topology</c>.</param>
+        /// <param name="Grid">Grid model.</param>
+        /// <param name="OrderedPasses">Passes in route order.</param>
+        /// <param name="Stride">One rendered frame per N passes.</param>
+        /// <param name="PixelsPerBin">Pixels per area edge for frames.</param>
+        /// <param name="GifMs">Default GIF frame delay in milliseconds.</param>
+        /// <param name="Mode">Render mode <c>cutfill</c> or <c>topology</c>.</param>
         /// <returns>In-memory frame PNGs and optional GIF bytes.</returns>
         static public AnimationPayload AnimateLeveling
             (
-            Grid grid,
-            IReadOnlyList<Pass> orderedPasses,
-            Int32 stride = 10,
-            Int32 pixelsPerBin = 8,
-            Int32 gifMs = 80,
-            String mode = "cutfill"
+            Grid Grid,
+            IReadOnlyList<Pass> OrderedPasses,
+            Int32 Stride = 10,
+            Int32 PixelsPerBin = 8,
+            Int32 GifMs = 80,
+            String Mode = "cutfill"
             )
         {
             // Existing is cloned so animation never mutates caller-owned state.
             AnimationPayload Payload = new AnimationPayload();
-            Double[,] Existing = Clone(grid.Existing);
-            Double[,] Target = grid.Target;
-            Boolean[,] Valid = grid.Valid;
-            Int32 Ppb = Math.Max(1, pixelsPerBin);
-            Int32 Stride = Math.Max(1, stride);
-            (Double VMin, Double VMax) = ComputeRange(Existing, Target, Valid, mode);
+            Double[,] Existing = Clone(Grid.Existing);
+            Double[,] Target = Grid.Target;
+            Boolean[,] Valid = Grid.Valid;
+            Int32 Ppb = Math.Max(1, PixelsPerBin);
+            Int32 EffectiveStride = Math.Max(1, Stride);
+            (Double VMin, Double VMax) = ComputeRange(Existing, Target, Valid, Mode);
 
             Action Emit = () =>
             {
                 // Frame rendering keeps topology color scale fixed to initial bounds.
-                using Image<Rgba32> Frame = BuildFrame(Existing, Target, Valid, Ppb, mode, VMin, VMax);
+                using Image<Rgba32> Frame = BuildFrame(Existing, Target, Valid, Ppb, Mode, VMin, VMax);
                 Payload.FramePngBytes.Add(ToPng(Frame));
             };
 
             Emit();
-            Int32 Count = orderedPasses.Count;
+            Int32 Count = OrderedPasses.Count;
             for (Int32 PassNo = 1; PassNo <= Count; PassNo += 1)
             {
-                dynamic Pass = orderedPasses[PassNo - 1];
+                dynamic Pass = OrderedPasses[PassNo - 1];
                 foreach (dynamic Cell in Pass.CutCells)
                 {
                     Existing[(Int32)Cell.Cell.By, (Int32)Cell.Cell.Bx] -= (Double)Cell.DepthM;
@@ -89,7 +89,7 @@ namespace HaulBuilder
                     Existing[(Int32)Cell.Cell.By, (Int32)Cell.Cell.Bx] += (Double)Cell.DepthM;
                 }
 
-                if (((PassNo % Stride) == 0) || (PassNo == Count))
+                if (((PassNo % EffectiveStride) == 0) || (PassNo == Count))
                 {
                     Emit();
                 }
@@ -97,7 +97,7 @@ namespace HaulBuilder
 
             if (Payload.FramePngBytes.Count > 0)
             {
-                Payload.GifBytes = BuildGif(Payload.FramePngBytes, gifMs);
+                Payload.GifBytes = BuildGif(Payload.FramePngBytes, GifMs);
             }
 
             return Payload;
@@ -148,29 +148,29 @@ namespace HaulBuilder
         /// <summary>
         /// Animates leveling with cut/fill on the left and topology on the right.
         /// </summary>
-        /// <param name="grid">Grid model.</param>
-        /// <param name="orderedPasses">Passes in route order.</param>
-        /// <param name="options">Optional render cadence and layout settings.</param>
+        /// <param name="Grid">Grid model.</param>
+        /// <param name="OrderedPasses">Passes in route order.</param>
+        /// <param name="Options">Optional render cadence and layout settings.</param>
         /// <returns>Composite frame PNGs and assembled GIF bytes.</returns>
         static public AnimationPayload AnimateLevelingSplitView
             (
-            Grid grid,
-            IReadOnlyList<Pass> orderedPasses,
-            SplitLevelingOptions? options = null
+            Grid Grid,
+            IReadOnlyList<Pass> OrderedPasses,
+            SplitLevelingOptions? Options = null
             )
         {
-            SplitLevelingOptions Opt = options ?? new SplitLevelingOptions();
+            SplitLevelingOptions Opt = Options ?? new SplitLevelingOptions();
             AnimationPayload Payload = new AnimationPayload();
-            Double[,] Existing = Clone(grid.Existing);
-            Double[,] Target = grid.Target;
-            Boolean[,] Valid = grid.Valid;
+            Double[,] Existing = Clone(Grid.Existing);
+            Double[,] Target = Grid.Target;
+            Boolean[,] Valid = Grid.Valid;
             Int32 Ppb = Math.Max(1, Opt.PixelsPerBin);
-            Int32 PassCount = orderedPasses.Count;
+            Int32 PassCount = OrderedPasses.Count;
             (Double VMin, Double VMax) = ComputeRange(Existing, Target, Valid, "topology");
-            Double TotalCutBcy = ComputeTotalCutBcy(grid);
+            Double TotalCutBcy = ComputeTotalCutBcy(Grid);
             HashSet<Int32> EmitAt = ComputeEmitPasses(PassCount, Opt.TargetFrames, Opt.EarlyPerPass);
-            Int32 PanelW = grid.Width * Ppb;
-            Int32 PanelH = grid.Height * Ppb;
+            Int32 PanelW = Grid.Width * Ppb;
+            Int32 PanelH = Grid.Height * Ppb;
             Int32 CanvasW = (PanelW * 2) + (Opt.Gap * 3);
             Int32 CanvasH = Opt.HeaderHeight + PanelH + Opt.Gap;
             Double MovedBcy = 0.0;
@@ -213,8 +213,8 @@ namespace HaulBuilder
             Emit(0);
             for (Int32 PassNo = 1; PassNo <= PassCount; PassNo += 1)
             {
-                Pass Pass = orderedPasses[PassNo - 1];
-                ApplyPass(Existing, Pass, grid.AreaM2, ref MovedBcy);
+                Pass Pass = OrderedPasses[PassNo - 1];
+                ApplyPass(Existing, Pass, Grid.AreaM2, ref MovedBcy);
                 if (EmitAt.Contains(PassNo))
                 {
                     Emit(PassNo);
@@ -237,21 +237,21 @@ namespace HaulBuilder
         /// <summary>
         /// Pivot-animation hook that forwards to the dedicated pivot module.
         /// </summary>
-        /// <param name="grid">Grid model.</param>
-        /// <param name="orderedPasses">Passes in route order.</param>
-        /// <param name="plan">Pivot plan.</param>
-        /// <param name="stride">Render stride in passes.</param>
-        /// <param name="pixelsPerBin">Pixels per grid cell.</param>
-        /// <param name="mode">Render mode <c>cutfill</c> or <c>topology</c>.</param>
+        /// <param name="Grid">Grid model.</param>
+        /// <param name="OrderedPasses">Passes in route order.</param>
+        /// <param name="Plan">Pivot plan.</param>
+        /// <param name="Stride">Render stride in passes.</param>
+        /// <param name="PixelsPerBin">Pixels per grid cell.</param>
+        /// <param name="Mode">Render mode <c>cutfill</c> or <c>topology</c>.</param>
         /// <returns>In-memory frames and GIF bytes.</returns>
         static public AnimationPayload AnimatePivotLeveling
             (
-            Grid grid,
-            IReadOnlyList<Pass> orderedPasses,
-            Pivot.PivotPlan plan,
-            Int32 stride = 15,
-            Int32 pixelsPerBin = 6,
-            String mode = "cutfill"
+            Grid Grid,
+            IReadOnlyList<Pass> OrderedPasses,
+            Pivot.PivotPlan Plan,
+            Int32 Stride = 15,
+            Int32 PixelsPerBin = 6,
+            String Mode = "cutfill"
             )
         {
             // Pivot module already owns move-timing semantics, so this wrapper only marshals temporary files to bytes.
@@ -259,19 +259,19 @@ namespace HaulBuilder
             String FramesDir = Path.Combine(Root, "frames");
             String GifPath = Path.Combine(Root, "pivot.gif");
             Directory.CreateDirectory(FramesDir);
-            Pivot.Grid PivotGrid = ToPivotGrid(grid);
-            List<Pivot.Pass> PivotPasses = ToPivotPasses(orderedPasses);
+            Pivot.Grid PivotGrid = ToPivotGrid(Grid);
+            List<Pivot.Pass> PivotPasses = ToPivotPasses(OrderedPasses);
 
             Int32 FrameCount = Pivot.AnimatePivotLeveling
                 (
                 PivotGrid,
                 PivotPasses,
-                plan,
+                Plan,
                 GifPath,
                 FramesDir,
-                stride,
-                pixelsPerBin,
-                mode,
+                Stride,
+                PixelsPerBin,
+                Mode,
                 90
                 );
 
@@ -307,41 +307,55 @@ namespace HaulBuilder
         }
 
 
+        /// <summary>
+        /// Calculates emit passes.
+        /// </summary>
+        /// <param name="PassCount">Count limit applied by the operation.</param>
+        /// <param name="TargetFrames">The target frames used by the operation.</param>
+        /// <param name="EarlyPerPass">The early per pass used by the operation.</param>
+        /// <returns>The resulting emit passes.</returns>
+
         private static HashSet<Int32> ComputeEmitPasses
             (
-            Int32 passCount,
-            Int32 targetFrames,
-            Int32 earlyPerPass
+            Int32 PassCount,
+            Int32 TargetFrames,
+            Int32 EarlyPerPass
             )
         {
             HashSet<Int32> EmitAt = new HashSet<Int32>();
-            if (passCount <= 0)
+            if (PassCount <= 0)
             {
                 return EmitAt;
             }
 
-            Int32 Early = Math.Min(earlyPerPass, passCount);
+            Int32 Early = Math.Min(EarlyPerPass, PassCount);
             for (Int32 PassNo = 1; PassNo <= Early; PassNo += 1)
             {
                 EmitAt.Add(PassNo);
             }
 
-            Int32 Rest = Math.Max(1, (Int32)Math.Round(((Double)(passCount - Early) / Math.Max(1, targetFrames - Early)), MidpointRounding.AwayFromZero));
-            for (Int32 PassNo = Early; PassNo <= passCount; PassNo += Rest)
+            Int32 Rest = Math.Max(1, (Int32)Math.Round(((Double)(PassCount - Early) / Math.Max(1, TargetFrames - Early)), MidpointRounding.AwayFromZero));
+            for (Int32 PassNo = Early; PassNo <= PassCount; PassNo += Rest)
             {
                 EmitAt.Add(PassNo);
             }
 
-            EmitAt.Add(passCount);
+            EmitAt.Add(PassCount);
             return EmitAt;
         }
 
+        /// <summary>
+        /// Calculates total cut bcy.
+        /// </summary>
+        /// <param name="Grid">Field grid used by the operation.</param>
+        /// <returns>The resulting total cut bcy.</returns>
+
         private static Double ComputeTotalCutBcy
             (
-            Grid grid
+            Grid Grid
             )
         {
-            Double[,] Delta = grid.Delta();
+            Double[,] Delta = Grid.Delta();
             Double Total = 0.0;
             Int32 Height = Delta.GetLength(0);
             Int32 Width = Delta.GetLength(1);
@@ -349,7 +363,7 @@ namespace HaulBuilder
             {
                 for (Int32 Bx = 0; Bx < Width; Bx += 1)
                 {
-                    if (!grid.Valid[By, Bx]) continue;
+                    if (!Grid.Valid[By, Bx]) continue;
                     Double Value = Delta[By, Bx];
                     if (Value > 0.0)
                     {
@@ -358,48 +372,65 @@ namespace HaulBuilder
                 }
             }
 
-            return Total * grid.AreaM2 * Constants.M3_TO_CY;
+            return Total * Grid.AreaM2 * Constants.M3_TO_CY;
         }
+
+        /// <summary>
+        /// Executes the apply pass operation.
+        /// </summary>
+        /// <param name="Existing">The existing used by the operation.</param>
+        /// <param name="Pass">The pass used by the operation.</param>
+        /// <param name="AreaM2">The area m2 used by the operation.</param>
+        /// <param name="MovedBcy">The moved bcy used by the operation.</param>
 
         private static void ApplyPass
             (
-            Double[,] existing,
-            Pass pass,
-            Double areaM2,
-            ref Double movedBcy
+            Double[,] Existing,
+            Pass Pass,
+            Double AreaM2,
+            ref Double MovedBcy
             )
         {
-            foreach (((Int32 Bx, Int32 By) Cell, Double DepthM) Entry in pass.CutCells)
+            foreach (((Int32 Bx, Int32 By) Cell, Double DepthM) Entry in Pass.CutCells)
             {
-                existing[Entry.Cell.By, Entry.Cell.Bx] -= Entry.DepthM;
-                movedBcy += Entry.DepthM * areaM2 * Constants.M3_TO_CY;
+                Existing[Entry.Cell.By, Entry.Cell.Bx] -= Entry.DepthM;
+                MovedBcy += Entry.DepthM * AreaM2 * Constants.M3_TO_CY;
             }
 
-            foreach (((Int32 Bx, Int32 By) Cell, Double DepthM) Entry in pass.FillCells)
+            foreach (((Int32 Bx, Int32 By) Cell, Double DepthM) Entry in Pass.FillCells)
             {
-                existing[Entry.Cell.By, Entry.Cell.Bx] += Entry.DepthM;
+                Existing[Entry.Cell.By, Entry.Cell.Bx] += Entry.DepthM;
             }
         }
 
+        /// <summary>
+        /// Calculates on grade fraction.
+        /// </summary>
+        /// <param name="Existing">The existing used by the operation.</param>
+        /// <param name="Target">The target used by the operation.</param>
+        /// <param name="Valid">The valid used by the operation.</param>
+        /// <param name="ToleranceM">The tolerance m used by the operation.</param>
+        /// <returns>The resulting on grade fraction.</returns>
+
         private static Double ComputeOnGradeFraction
             (
-            Double[,] existing,
-            Double[,] target,
-            Boolean[,] valid,
-            Double toleranceM
+            Double[,] Existing,
+            Double[,] Target,
+            Boolean[,] Valid,
+            Double ToleranceM
             )
         {
             Int32 OnGrade = 0;
             Int32 Count = 0;
-            Int32 Height = existing.GetLength(0);
-            Int32 Width = existing.GetLength(1);
+            Int32 Height = Existing.GetLength(0);
+            Int32 Width = Existing.GetLength(1);
             for (Int32 By = 0; By < Height; By += 1)
             {
                 for (Int32 Bx = 0; Bx < Width; Bx += 1)
                 {
-                    if (!valid[By, Bx]) continue;
+                    if (!Valid[By, Bx]) continue;
                     Count += 1;
-                    if (Math.Abs(existing[By, Bx] - target[By, Bx]) <= toleranceM)
+                    if (Math.Abs(Existing[By, Bx] - Target[By, Bx]) <= ToleranceM)
                     {
                         OnGrade += 1;
                     }
@@ -409,103 +440,150 @@ namespace HaulBuilder
             return Count > 0 ? ((Double)OnGrade / Count) : 0.0;
         }
 
+        /// <summary>
+        /// Builds split frame.
+        /// </summary>
+        /// <param name="Existing">The existing used by the operation.</param>
+        /// <param name="Target">The target used by the operation.</param>
+        /// <param name="Valid">The valid used by the operation.</param>
+        /// <param name="Ppb">The ppb used by the operation.</param>
+        /// <param name="Vmin">The vmin used by the operation.</param>
+        /// <param name="Vmax">The vmax used by the operation.</param>
+        /// <param name="Opt">The opt used by the operation.</param>
+        /// <param name="PanelW">The panel w used by the operation.</param>
+        /// <param name="PanelH">The panel h used by the operation.</param>
+        /// <param name="CanvasW">The canvas w used by the operation.</param>
+        /// <param name="CanvasH">The canvas h used by the operation.</param>
+        /// <param name="PassDone">The pass done used by the operation.</param>
+        /// <param name="PassCount">Count limit applied by the operation.</param>
+        /// <param name="MovedBcy">The moved bcy used by the operation.</param>
+        /// <param name="TotalCutBcy">The total cut bcy used by the operation.</param>
+        /// <param name="ToleranceM">The tolerance m used by the operation.</param>
+        /// <returns>The resulting split frame.</returns>
+
         private static Image<Rgba32> BuildSplitFrame
             (
-            Double[,] existing,
-            Double[,] target,
-            Boolean[,] valid,
-            Int32 ppb,
-            Double vmin,
-            Double vmax,
-            SplitLevelingOptions opt,
-            Int32 panelW,
-            Int32 panelH,
-            Int32 canvasW,
-            Int32 canvasH,
-            Int32 passDone,
-            Int32 passCount,
-            Double movedBcy,
-            Double totalCutBcy,
-            Double toleranceM
+            Double[,] Existing,
+            Double[,] Target,
+            Boolean[,] Valid,
+            Int32 Ppb,
+            Double Vmin,
+            Double Vmax,
+            SplitLevelingOptions Opt,
+            Int32 PanelW,
+            Int32 PanelH,
+            Int32 CanvasW,
+            Int32 CanvasH,
+            Int32 PassDone,
+            Int32 PassCount,
+            Double MovedBcy,
+            Double TotalCutBcy,
+            Double ToleranceM
             )
         {
-            Int32 Height = existing.GetLength(0);
-            Int32 Width = existing.GetLength(1);
+            Int32 Height = Existing.GetLength(0);
+            Int32 Width = Existing.GetLength(1);
             Double[,] Diff = new Double[Height, Width];
             for (Int32 By = 0; By < Height; By += 1)
             {
                 for (Int32 Bx = 0; Bx < Width; Bx += 1)
                 {
-                    Diff[By, Bx] = existing[By, Bx] - target[By, Bx];
+                    Diff[By, Bx] = Existing[By, Bx] - Target[By, Bx];
                 }
             }
 
-            using Image<Rgba32> CutFill = Render.DiffToImageDigitize(Diff, valid, ppb);
-            using Image<Rgba32> Topo = Render.ElevationToImage(existing, valid, ppb, vmin, vmax);
-            Image<Rgba32> Canvas = new Image<Rgba32>(canvasW, canvasH);
-            Canvas.Mutate(Context => Context.BackgroundColor(new Rgba32(255, 255, 255, 255)));
-            Canvas.Mutate(Context => Context.DrawImage(CutFill, new Point(opt.Gap, opt.HeaderHeight), 1.0f));
-            Canvas.Mutate(Context => Context.DrawImage(Topo, new Point((opt.Gap * 2) + panelW, opt.HeaderHeight), 1.0f));
+            using Image<Rgba32> CutFill = Render.DiffToImageDigitize(Diff, Valid, Ppb);
+            using Image<Rgba32> Topo = Render.ElevationToImage(Existing, Valid, Ppb, Vmin, Vmax);
+            Image<Rgba32> Canvas = new Image<Rgba32>(CanvasW, CanvasH);
+            Canvas.Mutate(Context => Context.BackgroundColor(new Rgba32(Constants.MAX_COLOR_CHANNEL, Constants.MAX_COLOR_CHANNEL, Constants.MAX_COLOR_CHANNEL, Constants.MAX_COLOR_CHANNEL)));
+            Canvas.Mutate(Context => Context.DrawImage(CutFill, new Point(Opt.Gap, Opt.HeaderHeight), 1.0f));
+            Canvas.Mutate(Context => Context.DrawImage(Topo, new Point((Opt.Gap * 2) + PanelW, Opt.HeaderHeight), 1.0f));
 
-            Double Progress = passCount > 0 ? ((Double)passDone / passCount) : 1.0;
-            Int32 BarY = opt.HeaderHeight - 16;
-            Int32 BarMaxW = canvasW - (opt.Gap * 2);
+            Double Progress = PassCount > 0 ? ((Double)PassDone / PassCount) : 1.0;
+            Int32 BarY = Opt.HeaderHeight - 16;
+            Int32 BarMaxW = CanvasW - (Opt.Gap * 2);
             Int32 BarW = Math.Max(0, (Int32)Math.Round(BarMaxW * Progress, MidpointRounding.AwayFromZero));
-            FillRect(Canvas, opt.Gap, BarY, BarMaxW, 8, new Rgba32(230, 230, 230, 255));
-            FillRect(Canvas, opt.Gap, BarY, BarW, 8, new Rgba32(40, 120, 40, 255));
+            FillRect(Canvas, Opt.Gap, BarY, BarMaxW, 8, new Rgba32(230, 230, 230, Constants.MAX_COLOR_CHANNEL));
+            FillRect(Canvas, Opt.Gap, BarY, BarW, 8, new Rgba32(40, 120, 40, Constants.MAX_COLOR_CHANNEL));
 
-            DrawCaptionBar(Canvas, opt.Gap, opt.HeaderHeight + 2, panelW, "CUT / FILL");
-            DrawCaptionBar(Canvas, (opt.Gap * 2) + panelW, opt.HeaderHeight + 2, panelW, "TOPOLOGY");
+            DrawCaptionBar(Canvas, Opt.Gap, Opt.HeaderHeight + 2, PanelW, "CUT / FILL");
+            DrawCaptionBar(Canvas, (Opt.Gap * 2) + PanelW, Opt.HeaderHeight + 2, PanelW, "TOPOLOGY");
 
-            Double OnGradePct = ComputeOnGradeFraction(existing, target, valid, toleranceM) * 100.0;
+            Double OnGradePct = ComputeOnGradeFraction(Existing, Target, Valid, ToleranceM) * 100.0;
             String Stats = String.Format(
                 CultureInfo.InvariantCulture,
                 "pass {0}/{1}  on-grade {2:F1}%  moved {3:F0}/{4:F0} BCY",
-                passDone,
-                passCount,
+                PassDone,
+                PassCount,
                 OnGradePct,
-                movedBcy,
-                totalCutBcy);
-            DrawStatsLine(Canvas, opt.Gap, 8, Stats);
+                MovedBcy,
+                TotalCutBcy);
+            DrawStatsLine(Canvas, Opt.Gap, 8, Stats);
 
             return Canvas;
         }
 
+        /// <summary>
+        /// Renders caption bar.
+        /// </summary>
+        /// <param name="Image">The image used by the operation.</param>
+        /// <param name="X">Horizontal coordinate in field units.</param>
+        /// <param name="Y">Vertical coordinate in field units.</param>
+        /// <param name="Width">The width used by the operation.</param>
+        /// <param name="Label">The label used by the operation.</param>
+
         private static void DrawCaptionBar
             (
-            Image<Rgba32> image,
-            Int32 x,
-            Int32 y,
-            Int32 width,
-            String label
+            Image<Rgba32> Image,
+            Int32 X,
+            Int32 Y,
+            Int32 Width,
+            String Label
             )
         {
-            FillRect(image, x, y, width, 18, new Rgba32(20, 20, 20, 170));
-            DrawSimpleText(image, x + 6, y + 6, label, new Rgba32(255, 255, 255, 255));
+            FillRect(Image, X, Y, Width, 18, new Rgba32(20, 20, 20, 170));
+            DrawSimpleText(Image, X + 6, Y + 6, Label, new Rgba32(Constants.MAX_COLOR_CHANNEL, Constants.MAX_COLOR_CHANNEL, Constants.MAX_COLOR_CHANNEL, Constants.MAX_COLOR_CHANNEL));
         }
+
+        /// <summary>
+        /// Renders stats line.
+        /// </summary>
+        /// <param name="Image">The image used by the operation.</param>
+        /// <param name="X">Horizontal coordinate in field units.</param>
+        /// <param name="Y">Vertical coordinate in field units.</param>
+        /// <param name="Text">The text used by the operation.</param>
 
         private static void DrawStatsLine
             (
-            Image<Rgba32> image,
-            Int32 x,
-            Int32 y,
-            String text
+            Image<Rgba32> Image,
+            Int32 X,
+            Int32 Y,
+            String Text
             )
         {
-            DrawSimpleText(image, x, y, text, new Rgba32(20, 20, 20, 255));
+            DrawSimpleText(Image, X, Y, Text, new Rgba32(20, 20, 20, Constants.MAX_COLOR_CHANNEL));
         }
+
+        /// <summary>
+        /// Renders simple text.
+        /// </summary>
+        /// <param name="Image">The image used by the operation.</param>
+        /// <param name="X">Horizontal coordinate in field units.</param>
+        /// <param name="Y">Vertical coordinate in field units.</param>
+        /// <param name="Text">The text used by the operation.</param>
+        /// <param name="Color">The color used by the operation.</param>
 
         private static void DrawSimpleText
             (
-            Image<Rgba32> image,
-            Int32 x,
-            Int32 y,
-            String text,
-            Rgba32 color
+            Image<Rgba32> Image,
+            Int32 X,
+            Int32 Y,
+            String Text,
+            Rgba32 Color
             )
         {
-            Int32 CursorX = x;
-            foreach (Char Ch in text)
+            Int32 CursorX = X;
+            foreach (Char Ch in Text)
             {
                 if (Ch == ' ')
                 {
@@ -513,21 +591,30 @@ namespace HaulBuilder
                     continue;
                 }
 
-                DrawMiniGlyph(image, Ch, CursorX, y, color);
+                DrawMiniGlyph(Image, Ch, CursorX, Y, Color);
                 CursorX += 6;
             }
         }
 
+        /// <summary>
+        /// Renders mini glyph.
+        /// </summary>
+        /// <param name="Image">The image used by the operation.</param>
+        /// <param name="Ch">The ch used by the operation.</param>
+        /// <param name="X">Horizontal coordinate in field units.</param>
+        /// <param name="Y">Vertical coordinate in field units.</param>
+        /// <param name="Color">The color used by the operation.</param>
+
         private static void DrawMiniGlyph
             (
-            Image<Rgba32> image,
-            Char ch,
-            Int32 x,
-            Int32 y,
-            Rgba32 color
+            Image<Rgba32> Image,
+            Char Ch,
+            Int32 X,
+            Int32 Y,
+            Rgba32 Color
             )
         {
-            String Pattern = ch switch
+            String Pattern = Ch switch
             {
                 'A' => "010,111,101,101,101",
                 'B' => "110,101,110,101,110",
@@ -578,109 +665,148 @@ namespace HaulBuilder
                 for (Int32 Col = 0; Col < Line.Length; Col += 1)
                 {
                     if (Line[Col] != '1') continue;
-                    PlotPixel(image, x + Col, y + Row, color);
+                    PlotPixel(Image, X + Col, Y + Row, Color);
                 }
             }
         }
+
+        /// <summary>
+        /// Executes the fill rect operation.
+        /// </summary>
+        /// <param name="Image">The image used by the operation.</param>
+        /// <param name="X">Horizontal coordinate in field units.</param>
+        /// <param name="Y">Vertical coordinate in field units.</param>
+        /// <param name="Width">The width used by the operation.</param>
+        /// <param name="Height">The height used by the operation.</param>
+        /// <param name="Color">The color used by the operation.</param>
 
         private static void FillRect
             (
-            Image<Rgba32> image,
-            Int32 x,
-            Int32 y,
-            Int32 width,
-            Int32 height,
-            Rgba32 color
+            Image<Rgba32> Image,
+            Int32 X,
+            Int32 Y,
+            Int32 Width,
+            Int32 Height,
+            Rgba32 Color
             )
         {
-            Int32 X1 = Math.Min(image.Width, x + width);
-            Int32 Y1 = Math.Min(image.Height, y + height);
-            for (Int32 Py = Math.Max(0, y); Py < Y1; Py += 1)
+            Int32 X1 = Math.Min(Image.Width, X + Width);
+            Int32 Y1 = Math.Min(Image.Height, Y + Height);
+            for (Int32 Py = Math.Max(0, Y); Py < Y1; Py += 1)
             {
-                for (Int32 Px = Math.Max(0, x); Px < X1; Px += 1)
+                for (Int32 Px = Math.Max(0, X); Px < X1; Px += 1)
                 {
-                    image[Px, Py] = color;
+                    Image[Px, Py] = Color;
                 }
             }
         }
 
+        /// <summary>
+        /// Renders pixel.
+        /// </summary>
+        /// <param name="Image">The image used by the operation.</param>
+        /// <param name="X">Horizontal coordinate in field units.</param>
+        /// <param name="Y">Vertical coordinate in field units.</param>
+        /// <param name="Color">The color used by the operation.</param>
+
         private static void PlotPixel
             (
-            Image<Rgba32> image,
-            Int32 x,
-            Int32 y,
-            Rgba32 color
+            Image<Rgba32> Image,
+            Int32 X,
+            Int32 Y,
+            Rgba32 Color
             )
         {
-            if ((x < 0) || (y < 0) || (x >= image.Width) || (y >= image.Height))
+            if ((X < 0) || (Y < 0) || (X >= Image.Width) || (Y >= Image.Height))
             {
                 return;
             }
 
-            image[x, y] = color;
+            Image[X, Y] = Color;
         }
+
+        /// <summary>
+        /// Executes the to pivot grid operation.
+        /// </summary>
+        /// <param name="Grid">Field grid used by the operation.</param>
+        /// <returns>The resulting to pivot grid.</returns>
 
         private static Pivot.Grid ToPivotGrid
             (
-            Grid grid
+            Grid Grid
             )
         {
             // Adapt top-level grid model for Pivot module APIs.
-            return new Pivot.Grid(grid.GridSizeM, grid.MinX, grid.MinY, grid.Zone, grid.IsNorthern, grid.Existing, grid.Target, grid.Valid);
+            return new Pivot.Grid(Grid.GridSizeM, Grid.MinX, Grid.MinY, Grid.Zone, Grid.IsNorthern, Grid.Existing, Grid.Target, Grid.Valid);
         }
+
+        /// <summary>
+        /// Executes the to pivot passes operation.
+        /// </summary>
+        /// <param name="Passes">The passes used by the operation.</param>
+        /// <returns>The resulting to pivot passes.</returns>
 
         private static List<Pivot.Pass> ToPivotPasses
             (
-            IReadOnlyList<Pass> passes
+            IReadOnlyList<Pass> Passes
             )
         {
             // Convert pass tuple payloads into Pivot pass DTOs.
             List<Pivot.Pass> Out = new List<Pivot.Pass>();
-            for (Int32 Iter = 0; Iter < passes.Count; Iter += 1)
+            for (Int32 Iter = 0; Iter < Passes.Count; Iter += 1)
             {
                 List<Pivot.PassCell> Cut = new List<Pivot.PassCell>();
-                foreach (((Int32 Bx, Int32 By) Cell, Double DepthM) Cell in passes[Iter].CutCells)
+                foreach (((Int32 Bx, Int32 By) Cell, Double DepthM) Cell in Passes[Iter].CutCells)
                 {
                     Cut.Add(new Pivot.PassCell(Cell.Cell.Bx, Cell.Cell.By, Cell.DepthM));
                 }
 
                 List<Pivot.PassCell> Fill = new List<Pivot.PassCell>();
-                foreach (((Int32 Bx, Int32 By) Cell, Double DepthM) Cell in passes[Iter].FillCells)
+                foreach (((Int32 Bx, Int32 By) Cell, Double DepthM) Cell in Passes[Iter].FillCells)
                 {
                     Fill.Add(new Pivot.PassCell(Cell.Cell.Bx, Cell.Cell.By, Cell.DepthM));
                 }
 
-                Out.Add(new Pivot.Pass(Cut, Fill, passes[Iter].CutEndXy, passes[Iter].FillStartXy));
+                Out.Add(new Pivot.Pass(Cut, Fill, Passes[Iter].CutEndXy, Passes[Iter].FillStartXy));
             }
 
             return Out;
         }
 
+        /// <summary>
+        /// Calculates range.
+        /// </summary>
+        /// <param name="Existing">The existing used by the operation.</param>
+        /// <param name="Target">The target used by the operation.</param>
+        /// <param name="Valid">The valid used by the operation.</param>
+        /// <param name="Mode">The mode used by the operation.</param>
+        /// <returns>The resulting range.</returns>
+
         private static (Double VMin, Double VMax) ComputeRange
             (
-            Double[,] existing,
-            Double[,] target,
-            Boolean[,] valid,
-            String mode
+            Double[,] Existing,
+            Double[,] Target,
+            Boolean[,] Valid,
+            String Mode
             )
         {
             // Topology mode needs a fixed range across all frames; cutfill mode ignores this range.
-            if (!String.Equals(mode, "topology", StringComparison.OrdinalIgnoreCase))
+            if (!String.Equals(Mode, "topology", StringComparison.OrdinalIgnoreCase))
             {
                 return (0.0, 0.0);
             }
 
             Double Min = Double.PositiveInfinity;
             Double Max = Double.NegativeInfinity;
-            Int32 Height = existing.GetLength(0);
-            Int32 Width = existing.GetLength(1);
+            Int32 Height = Existing.GetLength(0);
+            Int32 Width = Existing.GetLength(1);
             for (Int32 By = 0; By < Height; By += 1)
             {
                 for (Int32 Bx = 0; Bx < Width; Bx += 1)
                 {
-                    if (!valid[By, Bx]) continue;
-                    Min = Math.Min(Min, Math.Min(existing[By, Bx], target[By, Bx]));
-                    Max = Math.Max(Max, Math.Max(existing[By, Bx], target[By, Bx]));
+                    if (!Valid[By, Bx]) continue;
+                    Min = Math.Min(Min, Math.Min(Existing[By, Bx], Target[By, Bx]));
+                    Max = Math.Max(Max, Math.Max(Existing[By, Bx], Target[By, Bx]));
                 }
             }
 
@@ -692,87 +818,120 @@ namespace HaulBuilder
             return (Min, Max);
         }
 
+        /// <summary>
+        /// Builds frame.
+        /// </summary>
+        /// <param name="Existing">The existing used by the operation.</param>
+        /// <param name="Target">The target used by the operation.</param>
+        /// <param name="Valid">The valid used by the operation.</param>
+        /// <param name="Ppb">The ppb used by the operation.</param>
+        /// <param name="Mode">The mode used by the operation.</param>
+        /// <param name="Vmin">The vmin used by the operation.</param>
+        /// <param name="Vmax">The vmax used by the operation.</param>
+        /// <returns>The resulting frame.</returns>
+
         private static Image<Rgba32> BuildFrame
             (
-            Double[,] existing,
-            Double[,] target,
-            Boolean[,] valid,
-            Int32 ppb,
-            String mode,
-            Double vmin,
-            Double vmax
+            Double[,] Existing,
+            Double[,] Target,
+            Boolean[,] Valid,
+            Int32 Ppb,
+            String Mode,
+            Double Vmin,
+            Double Vmax
             )
         {
             // Render module owns the exact palette and coordinate conventions.
-            if (String.Equals(mode, "topology", StringComparison.OrdinalIgnoreCase))
+            if (String.Equals(Mode, "topology", StringComparison.OrdinalIgnoreCase))
             {
-                return Render.ElevationToImage(existing, valid, ppb, vmin, vmax);
+                return Render.ElevationToImage(Existing, Valid, Ppb, Vmin, Vmax);
             }
 
-            Int32 Height = existing.GetLength(0);
-            Int32 Width = existing.GetLength(1);
+            Int32 Height = Existing.GetLength(0);
+            Int32 Width = Existing.GetLength(1);
             Double[,] Diff = new Double[Height, Width];
             for (Int32 By = 0; By < Height; By += 1)
             {
                 for (Int32 Bx = 0; Bx < Width; Bx += 1)
                 {
-                    Diff[By, Bx] = (existing[By, Bx] - target[By, Bx]);
+                    Diff[By, Bx] = (Existing[By, Bx] - Target[By, Bx]);
                 }
             }
 
-            return Render.DiffToImage(Diff, valid, ppb);
+            return Render.DiffToImage(Diff, Valid, Ppb);
         }
+
+        /// <summary>
+        /// Executes the clone operation.
+        /// </summary>
+        /// <param name="Src">The src used by the operation.</param>
+        /// <returns>The resulting clone.</returns>
 
         private static Double[,] Clone
             (
-            Double[,] src
+            Double[,] Src
             )
         {
             // Explicit deep copy prevents accidental aliasing between pipeline stages.
-            Int32 Height = src.GetLength(0);
-            Int32 Width = src.GetLength(1);
+            Int32 Height = Src.GetLength(0);
+            Int32 Width = Src.GetLength(1);
             Double[,] Dst = new Double[Height, Width];
             for (Int32 By = 0; By < Height; By += 1)
             {
                 for (Int32 Bx = 0; Bx < Width; Bx += 1)
                 {
-                    Dst[By, Bx] = src[By, Bx];
+                    Dst[By, Bx] = Src[By, Bx];
                 }
             }
 
             return Dst;
         }
 
+        /// <summary>
+        /// Executes the to png operation.
+        /// </summary>
+        /// <param name="Image">The image used by the operation.</param>
+        /// <returns>The resulting to png.</returns>
+
         private static Byte[] ToPng
             (
-            Image<Rgba32> image
+            Image<Rgba32> Image
             )
         {
             // Memory-stream PNG encoding keeps animation consumers file-agnostic.
             using MemoryStream Stream = new MemoryStream();
-            image.SaveAsPng(Stream);
+            Image.SaveAsPng(Stream);
             return Stream.ToArray();
         }
 
+        /// <summary>
+        /// Builds gif.
+        /// </summary>
+        /// <param name="Frames">The frames used by the operation.</param>
+        /// <param name="GifMs">The gif ms used by the operation.</param>
+        /// <param name="ProgressDurationMs">The progress duration ms used by the operation.</param>
+        /// <param name="FinalHoldMs">The final hold ms used by the operation.</param>
+        /// <returns>The resulting gif.</returns>
+
         private static Byte[] BuildGif
             (
-            IReadOnlyList<Byte[]> frames,
-            Int32 gifMs,
-            Int32? progressDurationMs = null,
-            Int32 finalHoldMs = 4000
+            IReadOnlyList<Byte[]> Frames,
+            Int32 GifMs,
+            Int32? ProgressDurationMs = null,
+            Int32 FinalHoldMs = 4000
             )
         {
             // Last-frame hold mirrors Python UX so the completed grade remains visible.
             IReadOnlyList<Int32> DelaysCs = ComputeGifFrameDelaysCs(
-                frames.Count,
-                gifMs,
-                progressDurationMs,
-                finalHoldMs);
-            using Image<Rgba32> First = Image.Load<Rgba32>(frames[0]);
+                Frames.Count,
+                GifMs,
+                ProgressDurationMs,
+                FinalHoldMs);
+            using Image<Rgba32> First = Image.Load<Rgba32>(Frames[0]);
             SetGifDelayCentiseconds(First.Frames.RootFrame, DelaysCs[0]);
-            for (Int32 Iter = 1; Iter < frames.Count; Iter += 1)
+            for (Int32 Iter = 1; Iter < Frames.Count; Iter += 1)
             {
-                using Image<Rgba32> Next = Image.Load<Rgba32>(frames[Iter]);
+                using Image<Rgba32> Next = Image.Load<Rgba32>(Frames[Iter]);
                 ImageFrame<Rgba32> Added = First.Frames.AddFrame(Next.Frames.RootFrame);
                 SetGifDelayCentiseconds(Added, DelaysCs[Iter]);
             }
@@ -787,27 +946,27 @@ namespace HaulBuilder
         /// <summary>Computes GIF frame delays in centiseconds.</summary>
         internal static IReadOnlyList<Int32> ComputeGifFrameDelaysCs
             (
-            Int32 frameCount,
-            Int32 gifMs,
-            Int32? progressDurationMs,
-            Int32 finalHoldMs
+            Int32 FrameCount,
+            Int32 GifMs,
+            Int32? ProgressDurationMs,
+            Int32 FinalHoldMs
             )
         {
-            if (frameCount <= 0)
+            if (FrameCount <= 0)
             {
                 return Array.Empty<Int32>();
             }
 
-            Int32[] DelaysCs = new Int32[frameCount];
-            Int32 ProgressFrameCount = frameCount - 1;
+            Int32[] DelaysCs = new Int32[FrameCount];
+            Int32 ProgressFrameCount = FrameCount - 1;
             if (ProgressFrameCount > 0)
             {
-                if (progressDurationMs.HasValue)
+                if (ProgressDurationMs.HasValue)
                 {
                     Int32 TotalProgressCs = Math.Max(
                         ProgressFrameCount,
                         (Int32)Math.Round(
-                            progressDurationMs.Value / 10.0,
+                            ProgressDurationMs.Value / 10.0,
                             MidpointRounding.AwayFromZero));
                     for (Int32 Iter = 0; Iter < ProgressFrameCount; Iter += 1)
                     {
@@ -825,7 +984,7 @@ namespace HaulBuilder
                     Int32 UniformDelayCs = Math.Max(
                         1,
                         (Int32)Math.Round(
-                            gifMs / 10.0,
+                            GifMs / 10.0,
                             MidpointRounding.AwayFromZero));
                     Array.Fill(
                         DelaysCs,
@@ -835,21 +994,27 @@ namespace HaulBuilder
                 }
             }
 
-            DelaysCs[frameCount - 1] = Math.Max(
+            DelaysCs[FrameCount - 1] = Math.Max(
                 1,
                 (Int32)Math.Round(
-                    finalHoldMs / 10.0,
+                    FinalHoldMs / 10.0,
                     MidpointRounding.AwayFromZero));
             return DelaysCs;
         }
 
+        /// <summary>
+        /// Executes the set gif delay centiseconds operation.
+        /// </summary>
+        /// <param name="Frame">The frame used by the operation.</param>
+        /// <param name="DelayCs">The delay cs used by the operation.</param>
+
         private static void SetGifDelayCentiseconds
             (
-            ImageFrame<Rgba32> frame,
-            Int32 delayCs
+            ImageFrame<Rgba32> Frame,
+            Int32 DelayCs
             )
         {
-            frame.Metadata.GetGifMetadata().FrameDelay = Math.Max(1, delayCs);
+            Frame.Metadata.GetGifMetadata().FrameDelay = Math.Max(1, DelayCs);
         }
     }
 }

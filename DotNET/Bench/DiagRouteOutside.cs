@@ -13,15 +13,15 @@ internal static class DiagRouteOutside
     /// <summary>
     /// Plans TheShop2 defaults and reports outside-field samples for one route.
     /// </summary>
-    /// <param name="args">Optional: 0-based pass index (default 6 = route 7).</param>
+    /// <param name="Args">Optional: 0-based pass index (default 6 = route 7).</param>
     /// <returns>Exit code (0 when no outside points).</returns>
-    public static Int32 Run
+    static public Int32 Run
         (
-        String[] args
+        String[] Args
         )
     {
         Int32 PassIndex = 6;
-        if ((args.Length > 0) && !Int32.TryParse(args[0], NumberStyles.Integer, CultureInfo.InvariantCulture, out PassIndex))
+        if ((Args.Length > 0) && !Int32.TryParse(Args[0], NumberStyles.Integer, CultureInfo.InvariantCulture, out PassIndex))
         {
             Console.Error.WriteLine("usage: --diag-route-outside [passIndex0]");
             return 2;
@@ -42,7 +42,7 @@ internal static class DiagRouteOutside
             ScraperBcy,
             0,
             null,
-            0.5,
+            Constants.HALF_SCALE,
             50.0,
             Constants.DEFAULT_MAX_DROP_HOP_FT * Constants.FEET_TO_METERS,
             Flow,

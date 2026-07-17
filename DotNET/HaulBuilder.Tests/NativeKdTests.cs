@@ -54,7 +54,7 @@ namespace HaulBuilder.Tests
                     }
 
                     Assert.Equal(Best, BatchIndices[Query]);
-                    Assert.Equal(BestDist, BatchDist[Query], 1e-9);
+                    Assert.Equal(BestDist, BatchDist[Query], Constants.NUMERIC_COMPARISON_TOLERANCE);
                 }
             }
             finally

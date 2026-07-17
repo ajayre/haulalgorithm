@@ -10,7 +10,7 @@ namespace HaulBuilder
     /// Applies static and per-route obstacle clearance to an already connected
     /// forward-only lifecycle without changing any blade-down work geometry.
     /// </summary>
-    public static class GuidanceObstacleRouter
+    static public class GuidanceObstacleRouter
     {
         /// <summary>Obstacle-routing outcome and audit counters.</summary>
         public sealed class Result
@@ -50,7 +50,7 @@ namespace HaulBuilder
         /// Reroutes blocked blade-up segments. A forward-only, radius-valid path
         /// remains automatic; an unverified visibility fallback is marked manual.
         /// </summary>
-        public static Result Apply(
+        static public Result Apply(
             LifecyclePlanner.Result Source,
             Grid Grid,
             Double MinimumRadiusM,
@@ -110,7 +110,7 @@ namespace HaulBuilder
                     Start,
                     End,
                     MinimumRadiusM,
-                    Math.Min(0.5, Grid.GridSizeM),
+                    Math.Min(Constants.HALF_SCALE, Grid.GridSizeM),
                     Masked,
                     AllowManualAssist: true,
                     EdgeAllowanceM: Grid.GridSizeM,
@@ -164,9 +164,23 @@ namespace HaulBuilder
                 DistanceM - Source.DistanceM);
         }
 
+        /// <summary>
+        /// Executes the clone operation.
+        /// </summary>
+        /// <param name="Source">The source used by the operation.</param>
+        /// <returns>The resulting clone.</returns>
+
         private static LifecyclePlanner.Segment Clone(
             LifecyclePlanner.Segment Source) => CreateSegment(
                 Source, Source.Phase, new List<(Double X, Double Y)>(Source.Points));
+
+        /// <summary>
+        /// Builds segment.
+        /// </summary>
+        /// <param name="Source">The source used by the operation.</param>
+        /// <param name="Phase">The phase used by the operation.</param>
+        /// <param name="Points">The points used by the operation.</param>
+        /// <returns>The resulting segment.</returns>
 
         private static LifecyclePlanner.Segment CreateSegment(
             LifecyclePlanner.Segment Source,
@@ -185,6 +199,13 @@ namespace HaulBuilder
             return Result;
         }
 
+        /// <summary>
+        /// Executes the endpoint pose operation.
+        /// </summary>
+        /// <param name="Points">The points used by the operation.</param>
+        /// <param name="AtStart">The at start used by the operation.</param>
+        /// <returns>The resulting endpoint pose.</returns>
+
         private static ConnectorPlanner.Pose EndpointPose(
             IReadOnlyList<(Double X, Double Y)> Points,
             Boolean AtStart)
@@ -196,6 +217,13 @@ namespace HaulBuilder
                 AtStart ? Points[0].Y : Points[Points.Count - 1].Y,
                 BearingDeg(Points[A], Points[B]));
         }
+
+        /// <summary>
+        /// Builds visibility path.
+        /// </summary>
+        /// <param name="Source">The source used by the operation.</param>
+        /// <param name="Field">The field used by the operation.</param>
+        /// <returns>The resulting visibility path.</returns>
 
         private static List<(Double X, Double Y)> BuildVisibilityPath(
             IReadOnlyList<(Double X, Double Y)> Source,
@@ -211,7 +239,7 @@ namespace HaulBuilder
                     PointIndex < Leg.Count;
                     PointIndex += 1)
                 {
-                    if (Distance(Output[Output.Count - 1], Leg[PointIndex]) > 1e-9)
+                    if (Distance(Output[Output.Count - 1], Leg[PointIndex]) > Constants.NUMERIC_COMPARISON_TOLERANCE)
                     {
                         Output.Add(Leg[PointIndex]);
                     }
@@ -219,6 +247,13 @@ namespace HaulBuilder
             }
             return Output;
         }
+
+        /// <summary>
+        /// Executes the polyline blocked operation.
+        /// </summary>
+        /// <param name="Points">The points used by the operation.</param>
+        /// <param name="Field">The field used by the operation.</param>
+        /// <returns>The resulting polyline blocked.</returns>
 
         private static Boolean PolylineBlocked(
             IReadOnlyList<(Double X, Double Y)> Points,
@@ -231,10 +266,24 @@ namespace HaulBuilder
             return false;
         }
 
+        /// <summary>
+        /// Executes the polyline clear operation.
+        /// </summary>
+        /// <param name="Points">The points used by the operation.</param>
+        /// <param name="Field">The field used by the operation.</param>
+        /// <returns>The resulting polyline clear.</returns>
+
         private static Boolean PolylineClear(
             IReadOnlyList<(Double X, Double Y)> Points,
             ObstacleField Field) => (Points.Count >= 2)
                 && !PolylineBlocked(Points, Field);
+
+        /// <summary>
+        /// Builds masked grid.
+        /// </summary>
+        /// <param name="Source">The source used by the operation.</param>
+        /// <param name="Field">The field used by the operation.</param>
+        /// <returns>The resulting masked grid.</returns>
 
         private static Grid BuildMaskedGrid(Grid Source, ObstacleField Field)
         {
@@ -278,6 +327,16 @@ namespace HaulBuilder
                     new List<(Double X, Double Y)>(Ring)).ToList());
         }
 
+        /// <summary>
+        /// Executes the cell intersects zone operation.
+        /// </summary>
+        /// <param name="MinX">Horizontal coordinate in field units.</param>
+        /// <param name="MinY">Vertical coordinate in field units.</param>
+        /// <param name="MaxX">Horizontal coordinate in field units.</param>
+        /// <param name="MaxY">Vertical coordinate in field units.</param>
+        /// <param name="Zone">The zone used by the operation.</param>
+        /// <returns>The resulting cell intersects zone.</returns>
+
         private static Boolean CellIntersectsZone(
             Double MinX,
             Double MinY,
@@ -298,8 +357,8 @@ namespace HaulBuilder
             if (Corners.Any(Point => Obstacles.PointInRing(
                     Point.X, Point.Y, Zone.BufferRing))
                 || Obstacles.PointInRing(
-                    0.5 * (MinX + MaxX),
-                    0.5 * (MinY + MaxY),
+                    Constants.HALF_SCALE * (MinX + MaxX),
+                    Constants.HALF_SCALE * (MinY + MaxY),
                     Zone.BufferRing))
             {
                 return true;
@@ -320,9 +379,21 @@ namespace HaulBuilder
             return false;
         }
 
+        /// <summary>
+        /// Executes the total distance operation.
+        /// </summary>
+        /// <param name="Segments">The segments used by the operation.</param>
+        /// <returns>The resulting total distance.</returns>
+
         private static Double TotalDistance(
             IEnumerable<LifecyclePlanner.Segment> Segments) => Segments.Sum(
                 Segment => PolylineDistance(Segment.Points));
+
+        /// <summary>
+        /// Executes the polyline distance operation.
+        /// </summary>
+        /// <param name="Points">The points used by the operation.</param>
+        /// <returns>The resulting polyline distance.</returns>
 
         private static Double PolylineDistance(
             IReadOnlyList<(Double X, Double Y)> Points)
@@ -335,11 +406,25 @@ namespace HaulBuilder
             return TotalM;
         }
 
+        /// <summary>
+        /// Executes the bearing deg operation.
+        /// </summary>
+        /// <param name="A">The a used by the operation.</param>
+        /// <param name="B">The b used by the operation.</param>
+        /// <returns>The resulting bearing deg.</returns>
+
         private static Double BearingDeg(
             (Double X, Double Y) A,
             (Double X, Double Y) B) =>
-            ((Math.Atan2(B.X - A.X, B.Y - A.Y) * 180.0 / Math.PI)
-                + 360.0) % 360.0;
+            ((Math.Atan2(B.X - A.X, B.Y - A.Y) * Constants.DEGREES_PER_HALF_TURN / Math.PI)
+                + Constants.DEGREES_PER_TURN) % Constants.DEGREES_PER_TURN;
+
+        /// <summary>
+        /// Executes the distance operation.
+        /// </summary>
+        /// <param name="A">The a used by the operation.</param>
+        /// <param name="B">The b used by the operation.</param>
+        /// <returns>The resulting distance.</returns>
 
         private static Double Distance(
             (Double X, Double Y) A,

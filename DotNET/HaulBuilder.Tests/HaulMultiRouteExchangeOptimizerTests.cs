@@ -4,8 +4,16 @@ using System.Linq;
 
 namespace HaulBuilder.Tests
 {
+    /// <summary>
+    /// Contains automated checks for haul multi route exchange optimizer.
+    /// </summary>
+
     public sealed class HaulMultiRouteExchangeOptimizerTests
     {
+        /// <summary>
+        /// Verifies three route pool moves remote fill to route already working there.
+        /// </summary>
+
         [Fact]
         public void ThreeRoutePoolMovesRemoteFillToRouteAlreadyWorkingThere
             (
@@ -56,11 +64,15 @@ namespace HaulBuilder.Tests
                         .GroupBy(Entry => Entry.Cell),
                     Group => Group.Count() > 1);
                 Assert.All(Result.Passes[Index].CutCells, Entry =>
-                    Assert.True(Entry.DepthM <= 0.2 + 1e-9));
+                    Assert.True(Entry.DepthM <= 0.2 + Constants.NUMERIC_COMPARISON_TOLERANCE));
                 Assert.All(Result.Passes[Index].FillCells, Entry =>
-                    Assert.True(Entry.DepthM <= 0.2 + 1e-9));
+                    Assert.True(Entry.DepthM <= 0.2 + Constants.NUMERIC_COMPARISON_TOLERANCE));
             }
         }
+
+        /// <summary>
+        /// Verifies exchange is deterministic.
+        /// </summary>
 
         [Fact]
         public void ExchangeIsDeterministic
@@ -80,6 +92,10 @@ namespace HaulBuilder.Tests
                 Signature(First.Passes),
                 Signature(Second.Passes));
         }
+
+        /// <summary>
+        /// Verifies unprofitable transaction leaves every route unchanged.
+        /// </summary>
 
         [Fact]
         public void UnprofitableTransactionLeavesEveryRouteUnchanged
@@ -105,6 +121,13 @@ namespace HaulBuilder.Tests
             Assert.Equal(Signature(Source), Signature(Result.Passes));
         }
 
+        /// <summary>
+        /// Verifies optimize.
+        /// </summary>
+        /// <param name="Source">The source used by the operation.</param>
+        /// <param name="Grid">Field grid used by the operation.</param>
+        /// <returns>The resulting optimize.</returns>
+
         private static HaulMultiRouteExchangeOptimizer.Result Optimize
             (
             IReadOnlyList<Pass> Source,
@@ -118,6 +141,12 @@ namespace HaulBuilder.Tests
                 MaximumAcceptedGroups: 4,
                 MinimumOutlierDistanceM: 3.0,
                 MinimumImprovementM: 0.1);
+
+        /// <summary>
+        /// Builds three route cycle.
+        /// </summary>
+        /// <param name="Grid">Field grid used by the operation.</param>
+        /// <returns>The resulting three route cycle.</returns>
 
         private static List<Pass> MakeThreeRouteCycle
             (
@@ -138,6 +167,14 @@ namespace HaulBuilder.Tests
                     new[] { ((2, 0), 0.05), ((2, 1), 0.05) }),
             };
 
+        /// <summary>
+        /// Builds pass.
+        /// </summary>
+        /// <param name="Grid">Field grid used by the operation.</param>
+        /// <param name="Cut">The cut used by the operation.</param>
+        /// <param name="Fill">The fill used by the operation.</param>
+        /// <returns>The resulting pass.</returns>
+
         private static Pass MakePass
             (
             Grid Grid,
@@ -155,6 +192,13 @@ namespace HaulBuilder.Tests
                 Obstacles.EMPTY_OBSTACLES,
                 Ordered: false);
         }
+
+        /// <summary>
+        /// Verifies assert exact work.
+        /// </summary>
+        /// <param name="First">The first used by the operation.</param>
+        /// <param name="Second">The second used by the operation.</param>
+        /// <param name="FillKind">The fill kind used by the operation.</param>
 
         private static void AssertExactWork
             (
@@ -183,6 +227,12 @@ namespace HaulBuilder.Tests
             }
         }
 
+        /// <summary>
+        /// Verifies signature.
+        /// </summary>
+        /// <param name="Passes">The passes used by the operation.</param>
+        /// <returns>The resulting signature.</returns>
+
         private static String Signature
             (
             IEnumerable<Pass> Passes
@@ -203,31 +253,36 @@ namespace HaulBuilder.Tests
                         Entry.Cell.By,
                         Entry.DepthM))))));
 
+        /// <summary>
+        /// Builds grid.
+        /// </summary>
+        /// <returns>The resulting grid.</returns>
+
         private static Grid MakeGrid
             (
             )
         {
-            const Int32 Size = 12;
-            Boolean[,] Valid = new Boolean[Size, Size];
-            for (Int32 By = 0; By < Size; By += 1)
+            const Int32 GRID_SIZE = 12;
+            Boolean[,] Valid = new Boolean[GRID_SIZE, GRID_SIZE];
+            for (Int32 By = 0; By < GRID_SIZE; By += 1)
             {
-                for (Int32 Bx = 0; Bx < Size; Bx += 1)
+                for (Int32 Bx = 0; Bx < GRID_SIZE; Bx += 1)
                 {
                     Valid[By, Bx] = true;
                 }
             }
             return new Grid(
                 1.0,
-                Size,
-                Size,
+                GRID_SIZE,
+                GRID_SIZE,
                 0.0,
                 0.0,
                 12,
                 true,
                 0.0,
                 0.0,
-                new Double[Size, Size],
-                new Double[Size, Size],
+                new Double[GRID_SIZE, GRID_SIZE],
+                new Double[GRID_SIZE, GRID_SIZE],
                 Valid,
                 1.0,
                 1.0,

@@ -12,9 +12,9 @@ namespace HaulBuilder
     /// small gap therefore proves a plateau, while a large gap only identifies
     /// opportunity for a stronger exact-constrained optimizer.
     /// </summary>
-    public static class HaulFieldWideAudit
+    static public class HaulFieldWideAudit
     {
-        private const Double LOAD_GROUP_PRECISION_BCY = 1e-6;
+        private const Double LOAD_GROUP_PRECISION_BCY = Constants.GEOMETRY_COMPARISON_TOLERANCE;
 
         /// <summary>Field-wide opportunity diagnostics.</summary>
         public sealed class Result
@@ -180,9 +180,22 @@ namespace HaulBuilder
                 JointLowerBoundM);
         }
 
+        /// <summary>
+        /// Reads key.
+        /// </summary>
+        /// <param name="LoadBcy">The load bcy used by the operation.</param>
+        /// <returns>The resulting key.</returns>
+
         private static Int64 LoadKey(Double LoadBcy) =>
             checked((Int64)Math.Round(
                 LoadBcy / LOAD_GROUP_PRECISION_BCY));
+
+        /// <summary>
+        /// Executes the centroid operation.
+        /// </summary>
+        /// <param name="Cells">The cells used by the operation.</param>
+        /// <param name="Grid">Field grid used by the operation.</param>
+        /// <returns>The resulting centroid.</returns>
 
         private static (Double X, Double Y) Centroid(
             IReadOnlyList<((Int32 Bx, Int32 By) Cell, Double DepthM)> Cells,
@@ -201,6 +214,13 @@ namespace HaulBuilder
             }
             return (X / Weight, Y / Weight);
         }
+
+        /// <summary>
+        /// Executes the distance operation.
+        /// </summary>
+        /// <param name="First">The first used by the operation.</param>
+        /// <param name="Second">The second used by the operation.</param>
+        /// <returns>The resulting distance.</returns>
 
         private static Double Distance(
             (Double X, Double Y) First,

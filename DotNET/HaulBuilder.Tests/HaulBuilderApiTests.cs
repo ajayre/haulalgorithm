@@ -5,8 +5,16 @@ using System.Reflection;
 
 namespace HaulBuilder.Tests
 {
+    /// <summary>
+    /// Contains automated checks for haul builder api.
+    /// </summary>
+
     public sealed class HaulBuilderApiTests
     {
+        /// <summary>
+        /// Verifies production options expose only supported inputs.
+        /// </summary>
+
         [Fact]
         public void ProductionOptionsExposeOnlySupportedInputs
             (
@@ -69,6 +77,10 @@ namespace HaulBuilder.Tests
                 PublicProperties(typeof(HaulBuilderOptions)));
         }
 
+        /// <summary>
+        /// Verifies optimizer options expose only measured production tuning.
+        /// </summary>
+
         [Fact]
         public void OptimizerOptionsExposeOnlyMeasuredProductionTuning
             (
@@ -100,6 +112,10 @@ namespace HaulBuilder.Tests
                 PublicProperties(typeof(HaulOptimizationOptions)));
         }
 
+        /// <summary>
+        /// Verifies engine does not expose legacy lowercase run alias.
+        /// </summary>
+
         [Fact]
         public void EngineDoesNotExposeLegacyLowercaseRunAlias
             (
@@ -117,6 +133,10 @@ namespace HaulBuilder.Tests
                 PublicMethods,
                 Method => Method.Name == "run");
         }
+
+        /// <summary>
+        /// Verifies public api does not expose python style method aliases.
+        /// </summary>
 
         [Fact]
         public void PublicApiDoesNotExposePythonStyleMethodAliases
@@ -137,6 +157,10 @@ namespace HaulBuilder.Tests
                     '_', StringComparison.Ordinal)));
         }
 
+        /// <summary>
+        /// Verifies retired diagnostics and result aliases are not public api.
+        /// </summary>
+
         [Fact]
         public void RetiredDiagnosticsAndResultAliasesAreNotPublicApi
             (
@@ -155,6 +179,10 @@ namespace HaulBuilder.Tests
             Assert.DoesNotContain("TotalHours", MetricProperties);
             Assert.DoesNotContain("MoveRateBcyPerHour", MetricProperties);
         }
+
+        /// <summary>
+        /// Verifies engine rejects invalid production inputs before planning.
+        /// </summary>
 
         [Fact]
         public void EngineRejectsInvalidProductionInputsBeforePlanning
@@ -192,6 +220,12 @@ namespace HaulBuilder.Tests
                     AnimationMode = "invalid",
                 }));
         }
+
+        /// <summary>
+        /// Verifies public properties.
+        /// </summary>
+        /// <param name="Type">The type used by the operation.</param>
+        /// <returns>The resulting public properties.</returns>
 
         private static IEnumerable<String> PublicProperties
             (

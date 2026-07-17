@@ -4,20 +4,29 @@ using System.Globalization;
 using System.IO;
 using HaulBuilder;
 
+/// <summary>
+/// Provides make leveling animation behavior.
+/// </summary>
 internal static class MakeLevelingAnimation
 {
+    /// <summary>
+    /// Runs the requested workflow.
+    /// </summary>
+    /// <param name="Args">The args used by the operation.</param>
+    /// <returns>The resulting run.</returns>
+
     internal static Int32 Run
         (
-        String[] args
+        String[] Args
         )
     {
-        String Fixture = args.Length > 0
-            ? Path.GetFullPath(args[0])
+        String Fixture = Args.Length > 0
+            ? Path.GetFullPath(Args[0])
             : Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "TheShop2_2ft.agd"));
-        Double GridFt = args.Length > 1 ? Double.Parse(args[1], CultureInfo.InvariantCulture) : 7.5;
-        Int32 Ppb = args.Length > 2 ? Int32.Parse(args[2], CultureInfo.InvariantCulture) : 4;
-        String OutRoot = args.Length > 3
-            ? Path.GetFullPath(args[3])
+        Double GridFt = Args.Length > 1 ? Double.Parse(Args[1], CultureInfo.InvariantCulture) : 7.5;
+        Int32 Ppb = Args.Length > 2 ? Int32.Parse(Args[2], CultureInfo.InvariantCulture) : 4;
+        String OutRoot = Args.Length > 3
+            ? Path.GetFullPath(Args[3])
             : Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "out"));
         String OutGif = Path.Combine(OutRoot, "TheShop2_leveling.gif");
         String OutFrames = Path.Combine(OutRoot, "TheShop2_leveling_frames");
@@ -36,7 +45,7 @@ internal static class MakeLevelingAnimation
         HaulBuilderEngine Engine = new HaulBuilderEngine();
         HaulBuilderOptions Options = new HaulBuilderOptions
         {
-            AgdPath = Fixture,
+            this.AgdPath = Fixture,
             GridSizeFt = GridFt,
             ZoneCount = 0,
             PixelsPerCell = Ppb,

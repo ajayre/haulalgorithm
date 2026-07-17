@@ -7,11 +7,11 @@ namespace HaulBuilder
     /// <summary>
     /// Orders straight work runs using in-field lineups and strict connectors.
     /// </summary>
-    public static class RunSequencer
+    static public class RunSequencer
     {
-        private const Double COST_TOLERANCE = 1e-9;
+        private const Double COST_TOLERANCE = Constants.NUMERIC_COMPARISON_TOLERANCE;
         private const Double LINEUP_SHORTFALL_WEIGHT = 4.0;
-        private const Double TURN_CLEARANCE_ANGLE_RAD = 0.5 * Math.PI;
+        private const Double TURN_CLEARANCE_ANGLE_RAD = Constants.HALF_SCALE * Math.PI;
         private const Double MANUAL_ASSIST_COST_M = 100000.0;
         private const Double LOADED_RUN_OVERLAP_COST_M = 100000.0;
         private const Double LOADED_RUN_ALIGNMENT_TOLERANCE_DEG = 20.0;
@@ -482,6 +482,8 @@ namespace HaulBuilder
             )
         {
             List<SequencedRun> Selected = new List<SequencedRun>();
+            // Adds a run option once to the selected set.
+
             void Add(SequencedRun Option)
             {
                 if (!Selected.Contains(Option)) Selected.Add(Option);
@@ -831,6 +833,8 @@ namespace HaulBuilder
             Dictionary<(Int32 FromRun, Int32 FromOption,
                 Int32 ToRun, Int32 ToOption), Double> TransitionCosts =
                     new Dictionary<(Int32, Int32, Int32, Int32), Double>();
+            // Measures the deadhead distance between two oriented run options.
+
             Double TransitionCost(
                 Int32 FromRun,
                 Int32 FromOption,
@@ -1243,11 +1247,11 @@ namespace HaulBuilder
                         BitConverter.DoubleToInt64Bits(From.ExitPose.X),
                         BitConverter.DoubleToInt64Bits(From.ExitPose.Y),
                         BitConverter.DoubleToInt64Bits(
-                            From.ExitPose.HeadingDeg % 360.0),
+                            From.ExitPose.HeadingDeg % Constants.DEGREES_PER_TURN),
                         BitConverter.DoubleToInt64Bits(To.EntryPose.X),
                         BitConverter.DoubleToInt64Bits(To.EntryPose.Y),
                         BitConverter.DoubleToInt64Bits(
-                            To.EntryPose.HeadingDeg % 360.0));
+                            To.EntryPose.HeadingDeg % Constants.DEGREES_PER_TURN));
                     if (!SeenGeometry.Add(Geometry)) continue;
                     if (RunAttempts
                         >= TARGETED_DETOUR_ATTEMPT_LIMIT_PER_RUN)
@@ -1380,13 +1384,13 @@ namespace HaulBuilder
             )
         {
             Double MinimumWorkM = Math.Min(
-                0.5 * Field.GridSizeM,
+                Constants.HALF_SCALE * Field.GridSizeM,
                 0.1 * Base.Run.LengthM);
             Double MaximumTotalRetreatM = Math.Max(
                 0.0, Base.Run.LengthM - MinimumWorkM);
             List<Double> Levels = RetreatLevels(
                 MaximumTotalRetreatM, MinimumRadiusM, Field.GridSizeM);
-            Double HeadingRad = Base.Run.HeadingDeg * Math.PI / 180.0;
+            Double HeadingRad = Base.Run.HeadingDeg * Math.PI / Constants.DEGREES_PER_HALF_TURN;
             Double UnitX = Math.Sin(HeadingRad);
             Double UnitY = Math.Cos(HeadingRad);
             Output.Add(Base);
@@ -1500,7 +1504,7 @@ namespace HaulBuilder
             List<Double> Candidates = new List<Double>
             {
                 0.0,
-                0.5 * GridSizeM,
+                Constants.HALF_SCALE * GridSizeM,
                 GridSizeM,
                 2.0 * GridSizeM,
                 MinimumRadiusM,
@@ -1738,7 +1742,7 @@ namespace HaulBuilder
                 ? RetreatForTurnClearance(
                     Run, PreferredLineupM, MinimumRadiusM, SampleSpacingM, Field)
                 : Run;
-            Double HeadingRad = DriveRun.HeadingDeg * Math.PI / 180.0;
+            Double HeadingRad = DriveRun.HeadingDeg * Math.PI / Constants.DEGREES_PER_HALF_TURN;
             Double UnitX = Math.Sin(HeadingRad);
             Double UnitY = Math.Cos(HeadingRad);
             Double EntryM = AvailableStraight(
@@ -1773,15 +1777,15 @@ namespace HaulBuilder
             Grid Field
             )
         {
-            Double HeadingRad = Run.HeadingDeg * Math.PI / 180.0;
+            Double HeadingRad = Run.HeadingDeg * Math.PI / Constants.DEGREES_PER_HALF_TURN;
             Double UnitX = Math.Sin(HeadingRad);
             Double UnitY = Math.Cos(HeadingRad);
-            Double StepM = Math.Min(SampleSpacingM, Field.GridSizeM * 0.5);
+            Double StepM = Math.Min(SampleSpacingM, Field.GridSizeM * Constants.HALF_SCALE);
             // A one-cell edge fragment may need to begin turning almost
             // immediately. Preserve a small driven core and record the rest as
             // coverage shortfall rather than disabling retreat for short runs.
             Double MinimumWorkM = Math.Min(
-                Math.Max(Field.GridSizeM * 0.5, StepM),
+                Math.Max(Field.GridSizeM * Constants.HALF_SCALE, StepM),
                 0.1 * Run.LengthM);
             Double MaximumTotalRetreatM = Math.Max(0.0, Run.LengthM - MinimumWorkM);
 
@@ -1839,7 +1843,7 @@ namespace HaulBuilder
             Grid Field
             )
         {
-            Double StepM = Math.Min(SampleSpacingM, Field.GridSizeM * 0.5);
+            Double StepM = Math.Min(SampleSpacingM, Field.GridSizeM * Constants.HALF_SCALE);
             for (Double RetreatM = 0.0;
                 RetreatM <= MaximumRetreatM + COST_TOLERANCE;
                 RetreatM += StepM)
@@ -1848,7 +1852,7 @@ namespace HaulBuilder
                 (Double X, Double Y) WorkPoint = (
                     Original.X + (InwardUnitX * CandidateM),
                     Original.Y + (InwardUnitY * CandidateM));
-                Double HeadingRad = HeadingDeg * Math.PI / 180.0;
+                Double HeadingRad = HeadingDeg * Math.PI / Constants.DEGREES_PER_HALF_TURN;
                 Double UnitX = Math.Sin(HeadingRad);
                 Double UnitY = Math.Cos(HeadingRad);
                 Double LineupM = Entry
@@ -1862,7 +1866,7 @@ namespace HaulBuilder
                     ? new ConnectorPlanner.Pose(
                         WorkPoint.X - (UnitX * LineupM),
                         WorkPoint.Y - (UnitY * LineupM),
-                        HeadingDeg + 180.0)
+                        HeadingDeg + Constants.DEGREES_PER_HALF_TURN)
                     : new ConnectorPlanner.Pose(
                         WorkPoint.X + (UnitX * LineupM),
                         WorkPoint.Y + (UnitY * LineupM),
@@ -1886,7 +1890,7 @@ namespace HaulBuilder
             Grid Field
             )
         {
-            Double HeadingRad = Pose.HeadingDeg * Math.PI / 180.0;
+            Double HeadingRad = Pose.HeadingDeg * Math.PI / Constants.DEGREES_PER_HALF_TURN;
             Double UnitX = Math.Sin(HeadingRad);
             Double UnitY = Math.Cos(HeadingRad);
             Double LeftX = -UnitY;
@@ -2099,7 +2103,7 @@ namespace HaulBuilder
             )
         {
             if ((PreferredM <= 0.0) || !Field.ContainsWorldXy(Origin.X, Origin.Y)) return 0.0;
-            Double StepM = Math.Min(SampleSpacingM, Field.GridSizeM * 0.5);
+            Double StepM = Math.Min(SampleSpacingM, Field.GridSizeM * Constants.HALF_SCALE);
             Double GoodM = 0.0;
             while (GoodM + COST_TOLERANCE < PreferredM)
             {
@@ -2153,7 +2157,7 @@ namespace HaulBuilder
                     UnfilledOptions,
                     CompletedMask,
                     Field.GridSizeM);
-                if (OverlapM >= 0.5 * Field.GridSizeM)
+                if (OverlapM >= Constants.HALF_SCALE * Field.GridSizeM)
                 {
                     CostM += LOADED_RUN_OVERLAP_COST_M + OverlapM;
                 }
@@ -2221,14 +2225,14 @@ namespace HaulBuilder
             {
                 return false;
             }
-            Double HeadingRad = Inbound.HeadingDeg * Math.PI / 180.0;
+            Double HeadingRad = Inbound.HeadingDeg * Math.PI / Constants.DEGREES_PER_HALF_TURN;
             Double UnitX = Math.Sin(HeadingRad);
             Double UnitY = Math.Cos(HeadingRad);
             Double Dx = Run.Run.StartXy.X - Inbound.X;
             Double Dy = Run.Run.StartXy.Y - Inbound.Y;
             Double ForwardM = (Dx * UnitX) + (Dy * UnitY);
             Double LateralM = Math.Abs((-Dx * UnitY) + (Dy * UnitX));
-            return (ForwardM >= -0.25 * CorridorWidthM)
+            return (ForwardM >= -Constants.QUARTER_SCALE * CorridorWidthM)
                 && (ForwardM <= PreferredLineupM + CorridorWidthM)
                 && (LateralM <= CorridorWidthM);
         }
@@ -2274,8 +2278,8 @@ namespace HaulBuilder
                 if (SegmentLengthM <= COST_TOLERANCE) continue;
                 Double SegmentHeadingDeg = BearingDeg(Start, End);
                 (Double X, Double Y) Midpoint = (
-                    0.5 * (Start.X + End.X),
-                    0.5 * (Start.Y + End.Y));
+                    Constants.HALF_SCALE * (Start.X + End.X),
+                    Constants.HALF_SCALE * (Start.Y + End.Y));
                 for (Int32 RunIndex = 0;
                     RunIndex < Options.GetLength(0);
                     RunIndex += 1)
@@ -2284,7 +2288,7 @@ namespace HaulBuilder
                     CoveragePlanner.Run Run = Options[RunIndex, 0].Run;
                     Double AlignmentDeg = HeadingDifferenceDeg(
                         SegmentHeadingDeg, Run.HeadingDeg);
-                    AlignmentDeg = Math.Min(AlignmentDeg, 180.0 - AlignmentDeg);
+                    AlignmentDeg = Math.Min(AlignmentDeg, Constants.DEGREES_PER_HALF_TURN - AlignmentDeg);
                     if (AlignmentDeg > LOADED_RUN_ALIGNMENT_TOLERANCE_DEG) continue;
                     if (PointToSegmentDistanceM(
                             Midpoint,
@@ -2311,7 +2315,7 @@ namespace HaulBuilder
             Double Dx = End.X - Start.X;
             Double Dy = End.Y - Start.Y;
             Double LengthSquaredM = (Dx * Dx) + (Dy * Dy);
-            if (LengthSquaredM <= 1e-12) return Distance(Point, Start);
+            if (LengthSquaredM <= Constants.STRICT_NUMERIC_COMPARISON_TOLERANCE) return Distance(Point, Start);
             Double Fraction = ((Point.X - Start.X) * Dx
                 + (Point.Y - Start.Y) * Dy) / LengthSquaredM;
             Fraction = Math.Max(0.0, Math.Min(1.0, Fraction));
@@ -2329,8 +2333,8 @@ namespace HaulBuilder
         {
             Double Bearing = Math.Atan2(
                 End.X - Start.X,
-                End.Y - Start.Y) * 180.0 / Math.PI;
-            return (Bearing + 360.0) % 360.0;
+                End.Y - Start.Y) * Constants.DEGREES_PER_HALF_TURN / Math.PI;
+            return (Bearing + Constants.DEGREES_PER_TURN) % Constants.DEGREES_PER_TURN;
         }
 
         /// <summary>Returns the unsigned shortest heading difference.</summary>
@@ -2338,7 +2342,7 @@ namespace HaulBuilder
             (
             Double First,
             Double Second
-            ) => Math.Abs(((First - Second + 540.0) % 360.0) - 180.0);
+            ) => Math.Abs(((First - Second + Constants.ANGLE_NORMALIZATION_OFFSET_DEGREES) % Constants.DEGREES_PER_TURN) - Constants.DEGREES_PER_HALF_TURN);
 
         /// <summary>Computes planar distance between two work points.</summary>
         private static Double Distance
@@ -2380,7 +2384,7 @@ namespace HaulBuilder
                 Cells,
                 Input.EndXy,
                 Input.StartXy,
-                (Input.HeadingDeg + 180.0) % 360.0,
+                (Input.HeadingDeg + Constants.DEGREES_PER_HALF_TURN) % Constants.DEGREES_PER_TURN,
                 Input.MaximumLateralErrorM);
         }
 

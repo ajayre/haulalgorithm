@@ -13,7 +13,7 @@ namespace HaulBuilder.Tests
     {
         private const Double LINEUP_M = 3.0;
         private const Double RADIUS_M = 4.0;
-        private const Double SAMPLE_M = 0.5;
+        private const Double SAMPLE_M = Constants.HALF_SCALE;
 
         /// <summary>
         /// Verifies fill completion routes to the next cut and never emits grade phases.
@@ -304,7 +304,7 @@ namespace HaulBuilder.Tests
             const Double HAUL_GRID_M = 8.5 * Constants.FEET_TO_METERS;
             const Double EQUIPMENT_M = Constants.DEFAULT_EQUIPMENT_LENGTH_FT
                 * Constants.FEET_TO_METERS;
-            const Double TURN_RADIUS_M = 0.5 * Constants.DEFAULT_TURNING_CIRCLE_FT
+            const Double TURN_RADIUS_M = Constants.HALF_SCALE * Constants.DEFAULT_TURNING_CIRCLE_FT
                 * Constants.FEET_TO_METERS;
             Grid Grid = MakeGrid(HAUL_GRID_M);
             RunSequencer.SequencedRun Main =
@@ -376,7 +376,7 @@ namespace HaulBuilder.Tests
             List<LifecyclePlanner.Segment> Turnaround = Result.Segments
                 .Skip(LastFillIndex + 1)
                 .Take(FirstGradeIndex - LastFillIndex - 1)
-                .Where(Segment => SegmentLength(Segment) > 1e-9)
+                .Where(Segment => SegmentLength(Segment) > Constants.NUMERIC_COMPARISON_TOLERANCE)
                 .ToList();
             Assert.Single(Turnaround);
             Assert.Equal(
@@ -510,7 +510,7 @@ namespace HaulBuilder.Tests
         {
             Grid Grid = MakeGrid();
             CoveragePlanner.Run EdgeFill =
-                MakeRun(20.0, 0.5, 12.0, 270.0);
+                MakeRun(20.0, Constants.HALF_SCALE, 12.0, 270.0);
             RunSequencer.SequencedRun Prepared =
                 RunSequencer.Prepare(
                     EdgeFill,
@@ -673,7 +673,7 @@ namespace HaulBuilder.Tests
             const Double HAUL_GRID_M = 8.5 * Constants.FEET_TO_METERS;
             const Double EQUIPMENT_M = Constants.DEFAULT_EQUIPMENT_LENGTH_FT
                 * Constants.FEET_TO_METERS;
-            const Double TURN_RADIUS_M = 0.5 * Constants.DEFAULT_TURNING_CIRCLE_FT
+            const Double TURN_RADIUS_M = Constants.HALF_SCALE * Constants.DEFAULT_TURNING_CIRCLE_FT
                 * Constants.FEET_TO_METERS;
             Grid Grid = MakeGrid(HAUL_GRID_M);
             RunSequencer.SequencedRun First =
@@ -874,7 +874,7 @@ namespace HaulBuilder.Tests
                 FieldEdgePolicy.AxialHeadingDifferenceDeg(
                     Continuous.Runs[0].Run.HeadingDeg, 45.0),
                 0.0,
-                0.25);
+                Constants.QUARTER_SCALE);
             Assert.True(CoveragePlanner.ConservesAllocation(
                 Fragments.SelectMany(Run => Run.Cells).ToList(),
                 Continuous.Runs.SelectMany(Run => Run.Run.Cells).ToList()));
@@ -924,7 +924,7 @@ namespace HaulBuilder.Tests
                 FieldEdgePolicy.AxialHeadingDifferenceDeg(
                     Cluster.HeadingDeg, 0.0),
                 0.0,
-                0.25);
+                Constants.QUARTER_SCALE);
             Assert.True(CoveragePlanner.ConservesAllocation(
                 Fragments.SelectMany(Run => Run.Cells).ToList(),
                 Continuous.Runs.SelectMany(Run => Run.Run.Cells).ToList()));
@@ -1125,12 +1125,12 @@ namespace HaulBuilder.Tests
                 Double OutY = After.Y - Point.Y;
                 Double Denominator = Math.Sqrt((InX * InX) + (InY * InY))
                     * Math.Sqrt((OutX * OutX) + (OutY * OutY));
-                if (Denominator <= 1e-12) continue;
+                if (Denominator <= Constants.STRICT_NUMERIC_COMPARISON_TOLERANCE) continue;
                 Double Cos = Math.Clamp(
                     ((InX * OutX) + (InY * OutY)) / Denominator,
                     -1.0,
                     1.0);
-                MaximumDeg = Math.Max(MaximumDeg, Math.Acos(Cos) * 180.0 / Math.PI);
+                MaximumDeg = Math.Max(MaximumDeg, Math.Acos(Cos) * Constants.DEGREES_PER_HALF_TURN / Math.PI);
             }
             return MaximumDeg;
         }
@@ -1211,7 +1211,7 @@ namespace HaulBuilder.Tests
             )
         {
             (Double X, Double Y) Center = Grid.CellCenterXy(Bx, By);
-            Double HeadingRad = HeadingDeg * Math.PI / 180.0;
+            Double HeadingRad = HeadingDeg * Math.PI / Constants.DEGREES_PER_HALF_TURN;
             Double HalfM = 0.49 * Grid.GridSizeM;
             Double Dx = Math.Sin(HeadingRad) * HalfM;
             Double Dy = Math.Cos(HeadingRad) * HalfM;
@@ -1284,8 +1284,8 @@ namespace HaulBuilder.Tests
                 for (Int32 Bx = 0; Bx < WIDTH; Bx += 1)
                 {
                     Valid[By, Bx] = true;
-                    CenterX[By, Bx] = Bx + 0.5;
-                    CenterY[By, Bx] = By + 0.5;
+                    CenterX[By, Bx] = Bx + Constants.HALF_SCALE;
+                    CenterY[By, Bx] = By + Constants.HALF_SCALE;
                 }
             }
             return new Grid(

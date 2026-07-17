@@ -7,7 +7,7 @@ namespace HaulBuilder
     /// <summary>
     /// Builds deterministic blade-width work lanes before cut/fill ownership is paired.
     /// </summary>
-    public static class HaulLaneBuilder
+    static public class HaulLaneBuilder
     {
         /// <summary>Supported first implementation lane axes.</summary>
         public enum LaneAxis
@@ -185,9 +185,9 @@ namespace HaulBuilder
                 }
                 Double NormalizedHeadingDeg = NormalizeAxisHeadingDeg(
                     HeadingAxisDeg.Value);
-                LaneAxis? CardinalAxis = Math.Abs(NormalizedHeadingDeg) <= 1e-9
+                LaneAxis? CardinalAxis = Math.Abs(NormalizedHeadingDeg) <= Constants.NUMERIC_COMPARISON_TOLERANCE
                     ? LaneAxis.NorthSouth
-                    : Math.Abs(NormalizedHeadingDeg - 90.0) <= 1e-9
+                    : Math.Abs(NormalizedHeadingDeg - 90.0) <= Constants.NUMERIC_COMPARISON_TOLERANCE
                         ? LaneAxis.EastWest
                         : null;
                 List<Lane> HeadingCut = CardinalAxis.HasValue
@@ -270,6 +270,19 @@ namespace HaulBuilder
             return new Inventory(Axis, Cut, Fill);
         }
 
+        /// <summary>
+        /// Builds contiguous work lanes for one cut or fill inventory.
+        /// </summary>
+        /// <param name="Ledger">Ledger containing the remaining field work.</param>
+        /// <param name="Kind">Cut or fill work kind to include.</param>
+        /// <param name="Axis">Axis along which lane cells are grouped.</param>
+        /// <param name="RequiredDepthM">Required work depth for each grid cell.</param>
+        /// <param name="EdgePolicy">Policy identifying restricted edge cells.</param>
+        /// <param name="ExcludeEdgeWorkCells">Whether restricted edge work is omitted.</param>
+        /// <param name="BcyPerDepthM">Volume conversion for one metre of cell depth.</param>
+        /// <param name="StartingId">First identifier available to the generated lanes.</param>
+        /// <param name="Eligible">Optional predicate restricting eligible cells.</param>
+        /// <returns>The contiguous lanes covering all eligible work.</returns>
         private static List<Lane> BuildKind
             (
             HaulWorkLedger Ledger,
@@ -284,7 +297,7 @@ namespace HaulBuilder
             )
         {
             Grid Grid = Ledger.Grid;
-            Double MaximumDepthM = Grid.MaxDepthMm / 1000.0;
+            Double MaximumDepthM = Grid.MaxDepthMm / Constants.MILLIMETERS_PER_METER;
             Int32 MaximumLayers = 0;
             for (Int32 By = 0; By < Grid.Height; By += 1)
             {
@@ -319,7 +332,7 @@ namespace HaulBuilder
                             || (ExcludeEdgeWorkCells
                                 && EdgePolicy.IsEdgeWorkCell((Bx, By)))
                             || ((Eligible != null) && !Eligible(Bx, By))
-                            || (DepthM <= 1e-12))
+                            || (DepthM <= Constants.STRICT_NUMERIC_COMPARISON_TOLERANCE))
                         {
                             FlushLane();
                             continue;
@@ -331,6 +344,7 @@ namespace HaulBuilder
                     }
                     FlushLane();
 
+                    // Commits the current heading-aligned entries as one lane.
                     void FlushLane()
                     {
                         if (Current.Count == 0) return;
@@ -356,8 +370,10 @@ namespace HaulBuilder
             {
                 throw new ArgumentOutOfRangeException(nameof(HeadingDeg));
             }
-            Double Normalized = HeadingDeg % 180.0;
-            return Normalized < 0.0 ? Normalized + 180.0 : Normalized;
+            Double Normalized = HeadingDeg % Constants.DEGREES_PER_HALF_TURN;
+            return Normalized < 0.0
+                ? Normalized + Constants.DEGREES_PER_HALF_TURN
+                : Normalized;
         }
 
         /// <summary>Builds an exact layer cover along one arbitrary axis.</summary>
@@ -374,7 +390,7 @@ namespace HaulBuilder
             )
         {
             Grid Grid = Ledger.Grid;
-            Double MaximumDepthM = Grid.MaxDepthMm / 1000.0;
+            Double MaximumDepthM = Grid.MaxDepthMm / Constants.MILLIMETERS_PER_METER;
             Int32 MaximumLayers = 0;
             for (Int32 By = 0; By < Grid.Height; By += 1)
             {
@@ -387,7 +403,8 @@ namespace HaulBuilder
                 }
             }
 
-            Double HeadingRad = HeadingAxisDeg * Math.PI / 180.0;
+            Double HeadingRad = HeadingAxisDeg * Math.PI
+                / Constants.DEGREES_PER_HALF_TURN;
             Double AlongX = Math.Sin(HeadingRad);
             Double AlongY = Math.Cos(HeadingRad);
             Double CrossX = Math.Cos(HeadingRad);
@@ -411,7 +428,7 @@ namespace HaulBuilder
                         if (!Grid.Valid[By, Bx]
                             || (ExcludeEdgeWorkCells
                                 && EdgePolicy.IsEdgeWorkCell((Bx, By)))
-                            || (DepthM <= 1e-12))
+                            || (DepthM <= Constants.STRICT_NUMERIC_COMPARISON_TOLERANCE))
                         {
                             continue;
                         }
@@ -460,6 +477,7 @@ namespace HaulBuilder
                     }
                     FlushLane();
 
+                    // Commits the current contiguous entries as one lane.
                     void FlushLane()
                     {
                         if (Current.Count == 0) return;
@@ -480,6 +498,18 @@ namespace HaulBuilder
             return Output;
         }
 
+        /// <summary>
+        /// Builds work lanes whose local axes follow the dominant flow direction.
+        /// </summary>
+        /// <param name="Ledger">Ledger containing the remaining field work.</param>
+        /// <param name="Kind">Cut or fill work kind to include.</param>
+        /// <param name="RequiredDepthM">Required work depth for each grid cell.</param>
+        /// <param name="EdgePolicy">Policy identifying restricted edge cells.</param>
+        /// <param name="ExcludeEdgeWorkCells">Whether restricted edge work is omitted.</param>
+        /// <param name="BcyPerDepthM">Volume conversion for one metre of cell depth.</param>
+        /// <param name="StartingId">First identifier available to the generated lanes.</param>
+        /// <param name="Flow">Flow field used to choose each cell's preferred axis.</param>
+        /// <returns>The flow-aligned lanes covering all eligible work.</returns>
         private static List<Lane> BuildAdaptiveKind
             (
             HaulWorkLedger Ledger,
@@ -492,6 +522,8 @@ namespace HaulBuilder
             FlowField Flow
             )
         {
+            // Selects the cardinal lane axis closest to the local flow vector
+            // at the requested grid cell.
             LaneAxis PreferredAxis
                 (
                 Int32 Bx,

@@ -11,37 +11,55 @@ namespace HaulBuilder
     /// <summary>
     /// PNG render helpers ported from <c>landlevel.render</c> using ImageSharp.
     /// </summary>
-    public static class Render
+    static public class Render
     {
-        private static readonly Rgba32 VIOLET = new Rgba32(0x80, 0x00, 0x80, 0xFF);
-        private static readonly Rgba32 INDIGO = new Rgba32(0x9A, 0x31, 0xFF, 0xFF);
-        private static readonly Rgba32 BLUE = new Rgba32(0x00, 0x66, 0xFF, 0xFF);
-        private static readonly Rgba32 CYAN = new Rgba32(0x36, 0xF5, 0xF5, 0xFF);
-        private static readonly Rgba32 GREEN = new Rgba32(0x00, 0xCD, 0x00, 0xFF);
-        private static readonly Rgba32 YELLOW = new Rgba32(0xFF, 0xFF, 0x00, 0xFF);
-        private static readonly Rgba32 ORANGE = new Rgba32(0xFF, 0x80, 0x00, 0xFF);
-        private static readonly Rgba32 RED = new Rgba32(0xFF, 0x00, 0x00, 0xFF);
-        private static readonly Rgba32 DARKRED = new Rgba32(0xB4, 0x00, 0x00, 0xFF);
+        private const Byte EMPTY_COLOR_CHANNEL = 0x00;
+        private const Byte VIOLET_CHANNEL = 0x80;
+        private const Byte INDIGO_RED_CHANNEL = 0x9A;
+        private const Byte INDIGO_GREEN_CHANNEL = 0x31;
+        private const Byte BLUE_GREEN_CHANNEL = 0x66;
+        private const Byte CYAN_RED_CHANNEL = 0x36;
+        private const Byte CYAN_GREEN_BLUE_CHANNEL = 0xF5;
+        private const Byte GREEN_CHANNEL = 0xCD;
+        private const Byte ORANGE_GREEN_CHANNEL = 0x80;
+        private const Byte DARK_RED_CHANNEL = 0xB4;
+        private const Double EXTREME_CUT_THRESHOLD_M = -0.80;
+        private const Double LARGE_CUT_THRESHOLD_M = -Constants.HALF_SCALE;
+        private const Double MEDIUM_CUT_THRESHOLD_M = -0.05;
+        private const Double SMALL_CUT_THRESHOLD_M = -0.01;
+        private const Double ON_GRADE_THRESHOLD_M = 0.01;
+        private const Double SMALL_FILL_THRESHOLD_M = 0.05;
+        private const Double MEDIUM_FILL_THRESHOLD_M = Constants.HALF_SCALE;
+        private const Double LARGE_FILL_THRESHOLD_M = 0.80;
+        private static readonly Rgba32 VIOLET = new Rgba32(VIOLET_CHANNEL, EMPTY_COLOR_CHANNEL, VIOLET_CHANNEL, Constants.BYTE_MASK);
+        private static readonly Rgba32 INDIGO = new Rgba32(INDIGO_RED_CHANNEL, INDIGO_GREEN_CHANNEL, Constants.BYTE_MASK, Constants.BYTE_MASK);
+        private static readonly Rgba32 BLUE = new Rgba32(EMPTY_COLOR_CHANNEL, BLUE_GREEN_CHANNEL, Constants.BYTE_MASK, Constants.BYTE_MASK);
+        private static readonly Rgba32 CYAN = new Rgba32(CYAN_RED_CHANNEL, CYAN_GREEN_BLUE_CHANNEL, CYAN_GREEN_BLUE_CHANNEL, Constants.BYTE_MASK);
+        private static readonly Rgba32 GREEN = new Rgba32(EMPTY_COLOR_CHANNEL, GREEN_CHANNEL, EMPTY_COLOR_CHANNEL, Constants.BYTE_MASK);
+        private static readonly Rgba32 YELLOW = new Rgba32(Constants.BYTE_MASK, Constants.BYTE_MASK, EMPTY_COLOR_CHANNEL, Constants.BYTE_MASK);
+        private static readonly Rgba32 ORANGE = new Rgba32(Constants.BYTE_MASK, ORANGE_GREEN_CHANNEL, EMPTY_COLOR_CHANNEL, Constants.BYTE_MASK);
+        private static readonly Rgba32 RED = new Rgba32(Constants.BYTE_MASK, EMPTY_COLOR_CHANNEL, EMPTY_COLOR_CHANNEL, Constants.BYTE_MASK);
+        private static readonly Rgba32 DARKRED = new Rgba32(DARK_RED_CHANNEL, EMPTY_COLOR_CHANNEL, EMPTY_COLOR_CHANNEL, Constants.BYTE_MASK);
 
         /// <summary>
         /// Maps <c>existing-target</c> delta to the nine-band cut/fill palette.
         /// </summary>
-        /// <param name="diff">Delta in metres.</param>
+        /// <param name="Diff">Delta in metres.</param>
         /// <returns>Palette colour.</returns>
         static public Rgba32 CutFillColor
             (
-            Double diff
+            Double Diff
             )
         {
             // Thresholds are copied exactly from Python so visualization is parity-safe.
-            if (diff < -0.80) return VIOLET;
-            if (diff < -0.50) return INDIGO;
-            if (diff < -0.05) return BLUE;
-            if (diff < -0.01) return CYAN;
-            if (diff <= 0.01) return GREEN;
-            if (diff <= 0.05) return YELLOW;
-            if (diff <= 0.50) return ORANGE;
-            if (diff <= 0.80) return RED;
+            if (Diff < EXTREME_CUT_THRESHOLD_M) return VIOLET;
+            if (Diff < LARGE_CUT_THRESHOLD_M) return INDIGO;
+            if (Diff < MEDIUM_CUT_THRESHOLD_M) return BLUE;
+            if (Diff < SMALL_CUT_THRESHOLD_M) return CYAN;
+            if (Diff <= ON_GRADE_THRESHOLD_M) return GREEN;
+            if (Diff <= SMALL_FILL_THRESHOLD_M) return YELLOW;
+            if (Diff <= MEDIUM_FILL_THRESHOLD_M) return ORANGE;
+            if (Diff <= LARGE_FILL_THRESHOLD_M) return RED;
             return DARKRED;
         }
 
@@ -54,20 +72,20 @@ namespace HaulBuilder
         /// <summary>
         /// Vectorized cut/fill image render from a diff grid.
         /// </summary>
-        /// <param name="diff">Diff grid (<c>existing-target</c>).</param>
-        /// <param name="valid">Validity mask.</param>
-        /// <param name="pixelsPerBin">Pixels per cell edge.</param>
+        /// <param name="Diff">Diff grid (<c>existing-target</c>).</param>
+        /// <param name="Valid">Validity mask.</param>
+        /// <param name="PixelsPerBin">Pixels per cell edge.</param>
         /// <returns>Rendered image with Y flipped to image space.</returns>
         static public Image<Rgba32> DiffToImage
             (
-            Double[,] diff,
-            Boolean[,] valid,
-            Int32 pixelsPerBin
+            Double[,] Diff,
+            Boolean[,] Valid,
+            Int32 PixelsPerBin
             )
         {
             // Rendering the base at one pixel per cell keeps the raster logic simple, then upscale nearest-neighbor.
-            Int32 Height = diff.GetLength(0);
-            Int32 Width = diff.GetLength(1);
+            Int32 Height = Diff.GetLength(0);
+            Int32 Width = Diff.GetLength(1);
             Image<Rgba32> Image = new Image<Rgba32>(Width, Height);
 
             for (Int32 By = 0; By < Height; By += 1)
@@ -75,19 +93,19 @@ namespace HaulBuilder
                 for (Int32 Bx = 0; Bx < Width; Bx += 1)
                 {
                     Int32 Y = (Height - 1 - By);
-                    if (!valid[By, Bx] || Double.IsNaN(diff[By, Bx]) || Double.IsInfinity(diff[By, Bx]))
+                    if (!Valid[By, Bx] || Double.IsNaN(Diff[By, Bx]) || Double.IsInfinity(Diff[By, Bx]))
                     {
                         Image[Bx, Y] = new Rgba32(0, 0, 0, 0);
                         continue;
                     }
 
-                    Image[Bx, Y] = CutFillColor(diff[By, Bx]);
+                    Image[Bx, Y] = CutFillColor(Diff[By, Bx]);
                 }
             }
 
-            if (pixelsPerBin > 1)
+            if (PixelsPerBin > 1)
             {
-                Image.Mutate(Action => Action.Resize(Width * pixelsPerBin, Height * pixelsPerBin, KnownResamplers.NearestNeighbor));
+                Image.Mutate(Action => Action.Resize(Width * PixelsPerBin, Height * PixelsPerBin, KnownResamplers.NearestNeighbor));
             }
 
             return Image;
@@ -98,13 +116,13 @@ namespace HaulBuilder
         /// </summary>
         static public Image<Rgba32> DiffToImageDigitize
             (
-            Double[,] diff,
-            Boolean[,] valid,
-            Int32 pixelsPerBin
+            Double[,] Diff,
+            Boolean[,] Valid,
+            Int32 PixelsPerBin
             )
         {
-            Int32 Height = diff.GetLength(0);
-            Int32 Width = diff.GetLength(1);
+            Int32 Height = Diff.GetLength(0);
+            Int32 Width = Diff.GetLength(1);
             Image<Rgba32> Image = new Image<Rgba32>(Width, Height);
 
             for (Int32 By = 0; By < Height; By += 1)
@@ -112,39 +130,45 @@ namespace HaulBuilder
                 for (Int32 Bx = 0; Bx < Width; Bx += 1)
                 {
                     Int32 Y = (Height - 1 - By);
-                    Double Value = valid[By, Bx] && !Double.IsNaN(diff[By, Bx]) && !Double.IsInfinity(diff[By, Bx])
-                        ? diff[By, Bx]
+                    Double Value = Valid[By, Bx] && !Double.IsNaN(Diff[By, Bx]) && !Double.IsInfinity(Diff[By, Bx])
+                        ? Diff[By, Bx]
                         : 1e9;
                     Rgba32 Color = CutFillPalette[DigitizeBand(Value)];
-                    Byte Alpha = (valid[By, Bx] && !Double.IsNaN(diff[By, Bx]) && !Double.IsInfinity(diff[By, Bx]))
-                        ? (Byte)255
+                    Byte Alpha = (Valid[By, Bx] && !Double.IsNaN(Diff[By, Bx]) && !Double.IsInfinity(Diff[By, Bx]))
+                        ? (Byte)Constants.MAX_COLOR_CHANNEL
                         : (Byte)0;
                     Image[Bx, Y] = new Rgba32(Color.R, Color.G, Color.B, Alpha);
                 }
             }
 
-            if (pixelsPerBin > 1)
+            if (PixelsPerBin > 1)
             {
-                Image.Mutate(Action => Action.Resize(Width * pixelsPerBin, Height * pixelsPerBin, KnownResamplers.NearestNeighbor));
+                Image.Mutate(Action => Action.Resize(Width * PixelsPerBin, Height * PixelsPerBin, KnownResamplers.NearestNeighbor));
             }
 
             return Image;
         }
 
+        /// <summary>
+        /// Executes the digitize band operation.
+        /// </summary>
+        /// <param name="Diff">The diff used by the operation.</param>
+        /// <returns>The resulting digitize band.</returns>
+
         private static Int32 DigitizeBand
             (
-            Double diff
+            Double Diff
             )
         {
             // Matches np.digitize(..., _BAND_EDGES) with default right=True.
-            if (diff <= -0.80) return 0;
-            if (diff <= -0.50) return 1;
-            if (diff <= -0.05) return 2;
-            if (diff <= -0.01) return 3;
-            if (diff <= 0.01) return 4;
-            if (diff <= 0.05) return 5;
-            if (diff <= 0.50) return 6;
-            if (diff <= 0.80) return 7;
+            if (Diff <= -0.80) return 0;
+            if (Diff <= -Constants.HALF_SCALE) return 1;
+            if (Diff <= -0.05) return 2;
+            if (Diff <= -0.01) return 3;
+            if (Diff <= 0.01) return 4;
+            if (Diff <= 0.05) return 5;
+            if (Diff <= Constants.HALF_SCALE) return 6;
+            if (Diff <= 0.80) return 7;
             return 8;
         }
 
@@ -152,25 +176,25 @@ namespace HaulBuilder
         /// <summary>
         /// Terrain-ramp elevation render for topology animations.
         /// </summary>
-        /// <param name="elev">Elevation grid in metres.</param>
-        /// <param name="valid">Validity mask.</param>
-        /// <param name="pixelsPerBin">Pixels per cell edge.</param>
-        /// <param name="vmin">Fixed scale low value.</param>
-        /// <param name="vmax">Fixed scale high value.</param>
+        /// <param name="Elev">Elevation grid in metres.</param>
+        /// <param name="Valid">Validity mask.</param>
+        /// <param name="PixelsPerBin">Pixels per cell edge.</param>
+        /// <param name="Vmin">Fixed scale low value.</param>
+        /// <param name="Vmax">Fixed scale high value.</param>
         /// <returns>Rendered terrain image with Y flipped to image space.</returns>
         static public Image<Rgba32> ElevationToImage
             (
-            Double[,] elev,
-            Boolean[,] valid,
-            Int32 pixelsPerBin,
-            Double vmin,
-            Double vmax
+            Double[,] Elev,
+            Boolean[,] Valid,
+            Int32 PixelsPerBin,
+            Double Vmin,
+            Double Vmax
             )
         {
             // A fixed range across frames shows flattening over time instead of re-normalizing each image.
-            Int32 Height = elev.GetLength(0);
-            Int32 Width = elev.GetLength(1);
-            Double Range = Math.Abs(vmax - vmin) > 1e-12 ? (vmax - vmin) : 1.0;
+            Int32 Height = Elev.GetLength(0);
+            Int32 Width = Elev.GetLength(1);
+            Double Range = Math.Abs(Vmax - Vmin) > Constants.STRICT_NUMERIC_COMPARISON_TOLERANCE ? (Vmax - Vmin) : 1.0;
             Image<Rgba32> Image = new Image<Rgba32>(Width, Height);
 
             for (Int32 By = 0; By < Height; By += 1)
@@ -178,27 +202,27 @@ namespace HaulBuilder
                 for (Int32 Bx = 0; Bx < Width; Bx += 1)
                 {
                     Int32 Y = (Height - 1 - By);
-                    if (!valid[By, Bx])
+                    if (!Valid[By, Bx])
                     {
                         Image[Bx, Y] = new Rgba32(0, 0, 0, 0);
                         continue;
                     }
 
-                    Double Elev = elev[By, Bx];
-                    if (Double.IsNaN(Elev) || Double.IsInfinity(Elev))
+                    Double Elevation = Elev[By, Bx];
+                    if (Double.IsNaN(Elevation) || Double.IsInfinity(Elevation))
                     {
-                        Elev = vmin;
+                        Elevation = Vmin;
                     }
 
-                    Double T = Math.Max(0.0, Math.Min(1.0, (Elev - vmin) / Range));
+                    Double T = Math.Max(0.0, Math.Min(1.0, (Elevation - Vmin) / Range));
                     Rgba32 C = TerrainColor(T);
                     Image[Bx, Y] = C;
                 }
             }
 
-            if (pixelsPerBin > 1)
+            if (PixelsPerBin > 1)
             {
-                Image.Mutate(Action => Action.Resize(Width * pixelsPerBin, Height * pixelsPerBin, KnownResamplers.NearestNeighbor));
+                Image.Mutate(Action => Action.Resize(Width * PixelsPerBin, Height * PixelsPerBin, KnownResamplers.NearestNeighbor));
             }
 
             return Image;
@@ -208,27 +232,27 @@ namespace HaulBuilder
         /// <summary>
         /// Renders the cut/fill map with optional flow arrows and returns PNG bytes.
         /// </summary>
-        /// <param name="grid">Grid source model.</param>
-        /// <param name="flow">Optional flow field.</param>
-        /// <param name="pixelsPerBin">Pixels per grid cell edge.</param>
-        /// <param name="arrowStride">Arrow stride in cells.</param>
+        /// <param name="Grid">Grid source model.</param>
+        /// <param name="Flow">Optional flow field.</param>
+        /// <param name="PixelsPerBin">Pixels per grid cell edge.</param>
+        /// <param name="ArrowStride">Arrow stride in cells.</param>
         /// <returns>PNG bytes.</returns>
         static public Byte[] RenderPng
             (
-            Grid grid,
-            FlowField? flow,
-            Int32 pixelsPerBin = 50,
-            Int32 arrowStride = 2
+            Grid Grid,
+            FlowField? Flow,
+            Int32 PixelsPerBin = 50,
+            Int32 ArrowStride = 2
             )
         {
             // Render starts from the same diff source used by Python to keep palette parity.
-            using Image<Rgba32> Image = DiffToImage(grid.Delta(), grid.Valid, Math.Max(1, pixelsPerBin));
-            if ((flow is not null) && (arrowStride > 0))
+            using Image<Rgba32> Image = DiffToImage(Grid.Delta(), Grid.Valid, Math.Max(1, PixelsPerBin));
+            if ((Flow is not null) && (ArrowStride > 0))
             {
-                DrawFlowArrows(Image, grid, flow, Math.Max(1, pixelsPerBin), arrowStride);
+                DrawFlowArrows(Image, Grid, Flow, Math.Max(1, PixelsPerBin), ArrowStride);
             }
 
-            DrawExclusions(Image, grid, Math.Max(1, pixelsPerBin));
+            DrawExclusions(Image, Grid, Math.Max(1, PixelsPerBin));
             return ToPng(Image);
         }
 
@@ -238,16 +262,16 @@ namespace HaulBuilder
         /// </summary>
         static public Byte[] RenderPassPairsPng
             (
-            Grid grid,
-            IReadOnlyList<Pass> passes,
-            Int32 pixelsPerBin = 50,
-            Double baseDim = 0.28
+            Grid Grid,
+            IReadOnlyList<Pass> Passes,
+            Int32 PixelsPerBin = 50,
+            Double BaseDim = 0.28
             )
         {
             // Heat accumulation highlights repeated haul corridors (Python render_pass_pairs_png).
-            Int32 Ppb = Math.Max(1, Math.Min(pixelsPerBin, 16));
-            using Image<Rgba32> Base = DiffToImageDigitize(grid.Delta(), grid.Valid, Ppb);
-            DimTowardsWhite(Base, baseDim);
+            Int32 Ppb = Math.Max(1, Math.Min(PixelsPerBin, 16));
+            using Image<Rgba32> Base = DiffToImageDigitize(Grid.Delta(), Grid.Valid, Ppb);
+            DimTowardsWhite(Base, BaseDim);
             Int32 W = Base.Width;
             Int32 H = Base.Height;
             Single[,] Acc = new Single[H, W];
@@ -265,11 +289,11 @@ namespace HaulBuilder
                 }
             }
 
-            for (Int32 Iter = 0; Iter < passes.Count; Iter += 1)
+            for (Int32 Iter = 0; Iter < Passes.Count; Iter += 1)
             {
-                Pass Pass = passes[Iter];
-                (Double X0, Double Y0) = WorldToPixel(grid, Pass.CutEndXy.X, Pass.CutEndXy.Y, Ppb);
-                (Double X1, Double Y1) = WorldToPixel(grid, Pass.FillStartXy.X, Pass.FillStartXy.Y, Ppb);
+                Pass Pass = Passes[Iter];
+                (Double X0, Double Y0) = WorldToPixel(Grid, Pass.CutEndXy.X, Pass.CutEndXy.Y, Ppb);
+                (Double X1, Double Y1) = WorldToPixel(Grid, Pass.FillStartXy.X, Pass.FillStartXy.Y, Ppb);
                 Double Dist = Math.Sqrt(((X1 - X0) * (X1 - X0)) + ((Y1 - Y0) * (Y1 - Y0)));
                 Int32 Steps = Math.Max(2, (Int32)Math.Floor(Dist) + 1);
                 HashSet<Int32> LinePixels = new HashSet<Int32>();
@@ -328,12 +352,12 @@ namespace HaulBuilder
 
                     Single T = (Single)Math.Sqrt(Math.Max(0.0, Math.Min(1.0, Acc[Y, X] / Scale)));
                     Rgba32 Heat = HeatMapColor(T);
-                    Byte Alpha = TruncByte(Math.Max(0.0, Math.Min(255.0, 150.0 + (T * 105.0))));
+                    Byte Alpha = TruncByte(Math.Max(0.0, Math.Min(Constants.MAX_COLOR_CHANNEL, 150.0 + (T * 105.0))));
                     AlphaCompositePixel(Base, X, Y, Heat, Alpha);
                 }
             }
 
-            DrawExclusions(Base, grid, Ppb);
+            DrawExclusions(Base, Grid, Ppb);
             return ToPng(Base);
         }
 
@@ -343,24 +367,24 @@ namespace HaulBuilder
         /// </summary>
         static public Byte[] RenderGuidancePng
             (
-            Grid grid,
-            IReadOnlyList<GuidancePoint> points,
-            Int32 pixelsPerBin = 50,
-            Double bladeWidthM = 2.271
+            Grid Grid,
+            IReadOnlyList<GuidancePoint> Points,
+            Int32 PixelsPerBin = 50,
+            Double BladeWidthM = 2.271
             )
         {
             // Action-colored guidance confirms cut/fill/haul sequencing at blade scale.
-            Int32 Ppb = Math.Max(1, Math.Min(pixelsPerBin, 16));
-            using Image<Rgba32> Base = DiffToImageDigitize(grid.Delta(), grid.Valid, Ppb);
+            Int32 Ppb = Math.Max(1, Math.Min(PixelsPerBin, 16));
+            using Image<Rgba32> Base = DiffToImageDigitize(Grid.Delta(), Grid.Valid, Ppb);
             DimTowardsWhite(Base, 0.30);
-            Int32 BladePx = Math.Max(1, (Int32)Math.Round((bladeWidthM / grid.GridSizeM) * Ppb, MidpointRounding.AwayFromZero));
+            Int32 BladePx = Math.Max(1, (Int32)Math.Round((BladeWidthM / Grid.GridSizeM) * Ppb, MidpointRounding.AwayFromZero));
 
-            for (Int32 Iter = 1; Iter < points.Count; Iter += 1)
+            for (Int32 Iter = 1; Iter < Points.Count; Iter += 1)
             {
-                GuidancePoint Prev = points[Iter - 1];
-                GuidancePoint Cur = points[Iter];
-                (Double X0, Double Y0) = WorldToPixel(grid, Prev.X, Prev.Y, Ppb);
-                (Double X1, Double Y1) = WorldToPixel(grid, Cur.X, Cur.Y, Ppb);
+                GuidancePoint Prev = Points[Iter - 1];
+                GuidancePoint Cur = Points[Iter];
+                (Double X0, Double Y0) = WorldToPixel(Grid, Prev.X, Prev.Y, Ppb);
+                (Double X1, Double Y1) = WorldToPixel(Grid, Cur.X, Cur.Y, Ppb);
                 String Action = Cur.Action;
                 Rgba32 Color = GuidanceColor(Action);
                 Int32 Width = (Action == "CUT" || Action == "FILL" || Action == "GRADE") ? BladePx : 1;
@@ -374,7 +398,7 @@ namespace HaulBuilder
                     Width);
             }
 
-            DrawExclusions(Base, grid, Ppb);
+            DrawExclusions(Base, Grid, Ppb);
             return ToPng(Base);
         }
 
@@ -385,26 +409,26 @@ namespace HaulBuilder
         /// </summary>
         static public Byte[] RenderSinglePairPng
             (
-            Grid grid,
-            IReadOnlyList<GuidancePoint> points,
-            Double bladeWidthM = 2.271,
-            Int32 pixelsPerBin = 26,
-            Int32 padCells = 4,
-            Boolean showRoute = true
+            Grid Grid,
+            IReadOnlyList<GuidancePoint> Points,
+            Double BladeWidthM = 2.271,
+            Int32 PixelsPerBin = 26,
+            Int32 PadCells = 4,
+            Boolean ShowRoute = true
             )
         {
             // Single-pair render: thick red = blade-down CUT only, thick blue = blade-down FILL only;
             // HAUL/MOVE/START/RETURN stay on the thin GPS route so cut/fill overlays match the grade map.
-            Int32 Ppb = Math.Max(1, pixelsPerBin);
-            using Image<Rgba32> Base = DiffToImageDigitize(grid.Delta(), grid.Valid, Ppb);
+            Int32 Ppb = Math.Max(1, PixelsPerBin);
+            using Image<Rgba32> Base = DiffToImageDigitize(Grid.Delta(), Grid.Valid, Ppb);
             DimTowardsWhite(Base, 0.45);
 
-            Int32 BladePx = Math.Max(3, (Int32)Math.Round((bladeWidthM / grid.GridSizeM) * Ppb, MidpointRounding.AwayFromZero));
+            Int32 BladePx = Math.Max(3, (Int32)Math.Round((BladeWidthM / Grid.GridSizeM) * Ppb, MidpointRounding.AwayFromZero));
             List<GuidancePoint> CutPts = new List<GuidancePoint>();
             List<GuidancePoint> FillPts = new List<GuidancePoint>();
-            for (Int32 Iter = 0; Iter < points.Count; Iter += 1)
+            for (Int32 Iter = 0; Iter < Points.Count; Iter += 1)
             {
-                GuidancePoint Point = points[Iter];
+                GuidancePoint Point = Points[Iter];
                 if (Point.Action == "CUT")
                 {
                     CutPts.Add(Point);
@@ -418,23 +442,23 @@ namespace HaulBuilder
 
             if (CutPts.Count >= 2)
             {
-                DrawPolyline(Base, grid, CutPts, Ppb, new Rgba32(200, 0, 0, 255), BladePx);
+                DrawPolyline(Base, Grid, CutPts, Ppb, new Rgba32(200, 0, 0, Constants.MAX_COLOR_CHANNEL), BladePx);
             }
 
             if (FillPts.Count >= 2)
             {
-                DrawPolyline(Base, grid, FillPts, Ppb, new Rgba32(0, 90, 220, 255), BladePx);
+                DrawPolyline(Base, Grid, FillPts, Ppb, new Rgba32(0, 90, 220, Constants.MAX_COLOR_CHANNEL), BladePx);
             }
 
             if ((CutPts.Count > 0) && (FillPts.Count > 0))
             {
-                (Double Ax, Double Ay) = WorldToPixel(grid, CutPts[^1].X, CutPts[^1].Y, Ppb);
-                (Double Bx, Double By) = WorldToPixel(grid, FillPts[0].X, FillPts[0].Y, Ppb);
+                (Double Ax, Double Ay) = WorldToPixel(Grid, CutPts[^1].X, CutPts[^1].Y, Ppb);
+                (Double Bx, Double By) = WorldToPixel(Grid, FillPts[0].X, FillPts[0].Y, Ppb);
                 Int32 HaulWidth = Math.Max(2, BladePx / 2);
-                DrawLine(Base, Ax, Ay, Bx, By, new Rgba32(0, 0, 0, 255), HaulWidth);
+                DrawLine(Base, Ax, Ay, Bx, By, new Rgba32(0, 0, 0, Constants.MAX_COLOR_CHANNEL), HaulWidth);
                 Double Ang = Math.Atan2(By - Ay, Bx - Ax);
                 Double Ah = Math.Max(8.0, BladePx * 1.6);
-                foreach (Double Da in new Double[] { (150.0 * Math.PI / 180.0), (-150.0 * Math.PI / 180.0) })
+                foreach (Double Da in new Double[] { (150.0 * Math.PI / Constants.DEGREES_PER_HALF_TURN), (-150.0 * Math.PI / Constants.DEGREES_PER_HALF_TURN) })
                 {
                     DrawLine(
                         Base,
@@ -442,26 +466,26 @@ namespace HaulBuilder
                         By,
                         (Bx + (Ah * Math.Cos(Ang + Da))),
                         (By + (Ah * Math.Sin(Ang + Da))),
-                        new Rgba32(0, 0, 0, 255),
+                        new Rgba32(0, 0, 0, Constants.MAX_COLOR_CHANNEL),
                         HaulWidth);
                 }
             }
 
-            if (showRoute && points.Count >= 2)
+            if (ShowRoute && Points.Count >= 2)
             {
                 List<(Double X, Double Y)> RouteXy = new List<(Double X, Double Y)>();
-                for (Int32 Iter = 0; Iter < points.Count; Iter += 1)
+                for (Int32 Iter = 0; Iter < Points.Count; Iter += 1)
                 {
-                    RouteXy.Add(WorldToPixel(grid, points[Iter].X, points[Iter].Y, Ppb));
+                    RouteXy.Add(WorldToPixel(Grid, Points[Iter].X, Points[Iter].Y, Ppb));
                 }
 
                 Int32 RouteWidth = Math.Max(1, BladePx / 8);
-                DrawPolylinePixels(Base, RouteXy, new Rgba32(35, 35, 35, 255), RouteWidth);
+                DrawPolylinePixels(Base, RouteXy, new Rgba32(35, 35, 35, Constants.MAX_COLOR_CHANNEL), RouteWidth);
                 Int32 DotRadius = Math.Max(2, BladePx / 6);
                 Double StepPx = Math.Max(1.0, 2.0 * Ppb);
                 Double Acc = StepPx;
                 (Double X, Double Y) Prev = RouteXy[0];
-                DrawCircle(Base, Prev.X, Prev.Y, DotRadius, new Rgba32(255, 235, 0, 255), new Rgba32(35, 35, 35, 255));
+                DrawCircle(Base, Prev.X, Prev.Y, DotRadius, new Rgba32(Constants.MAX_COLOR_CHANNEL, 235, 0, Constants.MAX_COLOR_CHANNEL), new Rgba32(35, 35, 35, Constants.MAX_COLOR_CHANNEL));
                 for (Int32 Iter = 1; Iter < RouteXy.Count; Iter += 1)
                 {
                     (Double CurX, Double CurY) = RouteXy[Iter];
@@ -470,7 +494,7 @@ namespace HaulBuilder
                     if (Acc >= StepPx)
                     {
                         Acc = 0.0;
-                        DrawCircle(Base, CurX, CurY, DotRadius, new Rgba32(255, 235, 0, 255), new Rgba32(35, 35, 35, 255));
+                        DrawCircle(Base, CurX, CurY, DotRadius, new Rgba32(Constants.MAX_COLOR_CHANNEL, 235, 0, Constants.MAX_COLOR_CHANNEL), new Rgba32(35, 35, 35, Constants.MAX_COLOR_CHANNEL));
                     }
 
                     Prev = (CurX, CurY);
@@ -481,27 +505,27 @@ namespace HaulBuilder
             // Green/orange mark true CUT start/end (blade-down only).
             if (CutPts.Count > 0)
             {
-                DotGuidancePoint(Base, grid, CutPts[0], Ppb, new Rgba32(0, 200, 0, 255), MarkerRadius);
-                DotGuidancePoint(Base, grid, CutPts[^1], Ppb, new Rgba32(255, 140, 0, 255), MarkerRadius);
+                DotGuidancePoint(Base, Grid, CutPts[0], Ppb, new Rgba32(0, 200, 0, Constants.MAX_COLOR_CHANNEL), MarkerRadius);
+                DotGuidancePoint(Base, Grid, CutPts[^1], Ppb, new Rgba32(Constants.MAX_COLOR_CHANNEL, 140, 0, Constants.MAX_COLOR_CHANNEL), MarkerRadius);
             }
 
             // Cyan/purple mark true FILL start/end (not HAUL transit).
             if (FillPts.Count > 0)
             {
-                DotGuidancePoint(Base, grid, FillPts[0], Ppb, new Rgba32(0, 220, 255, 255), MarkerRadius);
-                DotGuidancePoint(Base, grid, FillPts[^1], Ppb, new Rgba32(160, 0, 200, 255), MarkerRadius);
+                DotGuidancePoint(Base, Grid, FillPts[0], Ppb, new Rgba32(0, 220, Constants.MAX_COLOR_CHANNEL, Constants.MAX_COLOR_CHANNEL), MarkerRadius);
+                DotGuidancePoint(Base, Grid, FillPts[^1], Ppb, new Rgba32(160, 0, 200, Constants.MAX_COLOR_CHANNEL), MarkerRadius);
             }
 
             List<Double> Xs = new List<Double>();
             List<Double> Ys = new List<Double>();
-            for (Int32 Iter = 0; Iter < points.Count; Iter += 1)
+            for (Int32 Iter = 0; Iter < Points.Count; Iter += 1)
             {
-                (Double Px, Double Py) = WorldToPixel(grid, points[Iter].X, points[Iter].Y, Ppb);
+                (Double Px, Double Py) = WorldToPixel(Grid, Points[Iter].X, Points[Iter].Y, Ppb);
                 Xs.Add(Px);
                 Ys.Add(Py);
             }
 
-            Int32 Pad = padCells * Ppb;
+            Int32 Pad = PadCells * Ppb;
             Int32 X0 = Math.Max(0, TruncTowardZero(Xs.Min() - Pad));
             Int32 Y0 = Math.Max(0, TruncTowardZero(Ys.Min() - Pad));
             Int32 X1 = Math.Min(Base.Width, TruncTowardZero(Xs.Max() + Pad));
@@ -519,45 +543,45 @@ namespace HaulBuilder
         /// <summary>
         /// Renders explicitly separated coverage runs for diagnostic comparison.
         /// </summary>
-        /// <param name="grid">Grid geometry and grade surface.</param>
-        /// <param name="cutRuns">Independent straight cut polylines.</param>
-        /// <param name="fillRuns">Independent straight fill polylines.</param>
-        /// <param name="routePoints">Complete thin diagnostic route.</param>
-        /// <param name="bladeWidthM">Displayed blade width in metres.</param>
-        /// <param name="pixelsPerBin">Pixels per grid bin.</param>
-        /// <param name="padCells">Crop padding in grid cells.</param>
-        /// <param name="manualAssistRuns">Explicit operator-alignment polylines.</param>
-        /// <param name="routeMarkers">Optional numbered route marker locations.</param>
-        /// <param name="drawDirectionArrows">Whether to draw arrowheads along the complete route.</param>
-        /// <param name="directionArrowSpacingM">Distance between route arrowheads in metres.</param>
-        /// <param name="boundsPoints">Optional non-drawn points used to keep animation crops stable.</param>
+        /// <param name="Grid">Grid geometry and grade surface.</param>
+        /// <param name="CutRuns">Independent straight cut polylines.</param>
+        /// <param name="FillRuns">Independent straight fill polylines.</param>
+        /// <param name="RoutePoints">Complete thin diagnostic route.</param>
+        /// <param name="BladeWidthM">Displayed blade width in metres.</param>
+        /// <param name="PixelsPerBin">Pixels per grid bin.</param>
+        /// <param name="PadCells">Crop padding in grid cells.</param>
+        /// <param name="ManualAssistRuns">Explicit operator-alignment polylines.</param>
+        /// <param name="RouteMarkers">Optional numbered route marker locations.</param>
+        /// <param name="DrawDirectionArrows">Whether to draw arrowheads along the complete route.</param>
+        /// <param name="DirectionArrowSpacingM">Distance between route arrowheads in metres.</param>
+        /// <param name="BoundsPoints">Optional non-drawn points used to keep animation crops stable.</param>
         /// <returns>Cropped PNG bytes.</returns>
         static public Byte[] RenderCoverageRunsPng
             (
-            Grid grid,
-            IReadOnlyList<IReadOnlyList<(Double X, Double Y)>> cutRuns,
-            IReadOnlyList<IReadOnlyList<(Double X, Double Y)>> fillRuns,
-            IReadOnlyList<(Double X, Double Y)> routePoints,
-            Double bladeWidthM = 2.271,
-            Int32 pixelsPerBin = 26,
-            Int32 padCells = 4,
-            IReadOnlyList<IReadOnlyList<(Double X, Double Y)>>? manualAssistRuns = null,
-            IReadOnlyList<((Double X, Double Y) Point, String Label)>? routeMarkers = null,
-            Boolean drawDirectionArrows = false,
-            Double directionArrowSpacingM = 0.0,
-            IReadOnlyList<(Double X, Double Y)>? boundsPoints = null
+            Grid Grid,
+            IReadOnlyList<IReadOnlyList<(Double X, Double Y)>> CutRuns,
+            IReadOnlyList<IReadOnlyList<(Double X, Double Y)>> FillRuns,
+            IReadOnlyList<(Double X, Double Y)> RoutePoints,
+            Double BladeWidthM = 2.271,
+            Int32 PixelsPerBin = 26,
+            Int32 PadCells = 4,
+            IReadOnlyList<IReadOnlyList<(Double X, Double Y)>>? ManualAssistRuns = null,
+            IReadOnlyList<((Double X, Double Y) Point, String Label)>? RouteMarkers = null,
+            Boolean DrawDirectionArrows = false,
+            Double DirectionArrowSpacingM = 0.0,
+            IReadOnlyList<(Double X, Double Y)>? BoundsPoints = null
             )
         {
             // Draw each work run independently so blade-up repositioning never becomes a thick work overlay.
-            Int32 Ppb = Math.Max(1, pixelsPerBin);
-            using Image<Rgba32> Base = DiffToImageDigitize(grid.Delta(), grid.Valid, Ppb);
+            Int32 Ppb = Math.Max(1, PixelsPerBin);
+            using Image<Rgba32> Base = DiffToImageDigitize(Grid.Delta(), Grid.Valid, Ppb);
             for (Int32 Y = 0; Y < Base.Height; Y += 1)
             {
                 for (Int32 X = 0; X < Base.Width; X += 1)
                 {
                     if (Base[X, Y].A == 0)
                     {
-                        Base[X, Y] = new Rgba32(238, 238, 238, 255);
+                        Base[X, Y] = new Rgba32(238, 238, 238, Constants.MAX_COLOR_CHANNEL);
                     }
                 }
             }
@@ -565,52 +589,52 @@ namespace HaulBuilder
             Int32 BladePx = Math.Max(
                 3,
                 (Int32)Math.Round(
-                    (bladeWidthM / grid.GridSizeM) * Ppb,
+                    (BladeWidthM / Grid.GridSizeM) * Ppb,
                     MidpointRounding.AwayFromZero));
 
-            foreach (IReadOnlyList<(Double X, Double Y)> Run in cutRuns)
+            foreach (IReadOnlyList<(Double X, Double Y)> Run in CutRuns)
             {
                 DrawWorldPolyline(
-                    Base, grid, Run, Ppb, new Rgba32(200, 0, 0, 255), BladePx);
+                    Base, Grid, Run, Ppb, new Rgba32(200, 0, 0, Constants.MAX_COLOR_CHANNEL), BladePx);
             }
-            foreach (IReadOnlyList<(Double X, Double Y)> Run in fillRuns)
+            foreach (IReadOnlyList<(Double X, Double Y)> Run in FillRuns)
             {
                 DrawWorldPolyline(
-                    Base, grid, Run, Ppb, new Rgba32(0, 90, 220, 255), BladePx);
+                    Base, Grid, Run, Ppb, new Rgba32(0, 90, 220, Constants.MAX_COLOR_CHANNEL), BladePx);
             }
-            if (routePoints.Count >= 2)
+            if (RoutePoints.Count >= 2)
             {
                 Int32 RouteWidth = Math.Max(1, BladePx / 8);
                 DrawWorldPolyline(
-                    Base, grid, routePoints, Ppb, new Rgba32(35, 35, 35, 255), RouteWidth);
+                    Base, Grid, RoutePoints, Ppb, new Rgba32(35, 35, 35, Constants.MAX_COLOR_CHANNEL), RouteWidth);
             }
-            if (manualAssistRuns != null)
+            if (ManualAssistRuns != null)
             {
                 Int32 AssistWidth = Math.Max(2, BladePx / 5);
-                foreach (IReadOnlyList<(Double X, Double Y)> Run in manualAssistRuns)
+                foreach (IReadOnlyList<(Double X, Double Y)> Run in ManualAssistRuns)
                 {
                     DrawWorldPolyline(
-                        Base, grid, Run, Ppb, new Rgba32(255, 140, 0, 255), AssistWidth);
+                        Base, Grid, Run, Ppb, new Rgba32(Constants.MAX_COLOR_CHANNEL, 140, 0, Constants.MAX_COLOR_CHANNEL), AssistWidth);
                 }
             }
-            if (drawDirectionArrows && (routePoints.Count >= 2))
+            if (DrawDirectionArrows && (RoutePoints.Count >= 2))
             {
-                Double SpacingM = directionArrowSpacingM > 0.0
-                    ? directionArrowSpacingM
-                    : 6.0 * grid.GridSizeM;
-                DrawRouteDirectionArrows(Base, grid, routePoints, Ppb, SpacingM);
+                Double SpacingM = DirectionArrowSpacingM > 0.0
+                    ? DirectionArrowSpacingM
+                    : 6.0 * Grid.GridSizeM;
+                DrawRouteDirectionArrows(Base, Grid, RoutePoints, Ppb, SpacingM);
             }
-            if (routeMarkers != null)
+            if (RouteMarkers != null)
             {
                 Int32 MarkerRadius = Math.Max(8, BladePx / 2);
-                foreach (((Double X, Double Y) Point, String Label) Marker in routeMarkers)
+                foreach (((Double X, Double Y) Point, String Label) Marker in RouteMarkers)
                 {
                     (Double Px, Double Py) = WorldToPixel(
-                        grid, Marker.Point.X, Marker.Point.Y, Ppb);
+                        Grid, Marker.Point.X, Marker.Point.Y, Ppb);
                     DrawCircle(
                         Base, Px, Py, MarkerRadius,
-                        new Rgba32(255, 255, 255, 235),
-                        new Rgba32(0, 0, 0, 255));
+                        new Rgba32(Constants.MAX_COLOR_CHANNEL, Constants.MAX_COLOR_CHANNEL, Constants.MAX_COLOR_CHANNEL, 235),
+                        new Rgba32(0, 0, 0, Constants.MAX_COLOR_CHANNEL));
                     DrawTextDigit(
                         Base,
                         (Int32)Math.Round(Px),
@@ -619,35 +643,35 @@ namespace HaulBuilder
                 }
             }
 
-            List<(Double X, Double Y)> Bounds = new List<(Double X, Double Y)>(routePoints);
-            foreach (IReadOnlyList<(Double X, Double Y)> Run in cutRuns)
+            List<(Double X, Double Y)> Bounds = new List<(Double X, Double Y)>(RoutePoints);
+            foreach (IReadOnlyList<(Double X, Double Y)> Run in CutRuns)
             {
                 Bounds.AddRange(Run);
             }
-            foreach (IReadOnlyList<(Double X, Double Y)> Run in fillRuns)
+            foreach (IReadOnlyList<(Double X, Double Y)> Run in FillRuns)
             {
                 Bounds.AddRange(Run);
             }
-            if (manualAssistRuns != null)
+            if (ManualAssistRuns != null)
             {
-                foreach (IReadOnlyList<(Double X, Double Y)> Run in manualAssistRuns)
+                foreach (IReadOnlyList<(Double X, Double Y)> Run in ManualAssistRuns)
                 {
                     Bounds.AddRange(Run);
                 }
             }
-            if (routeMarkers != null)
+            if (RouteMarkers != null)
             {
-                Bounds.AddRange(routeMarkers.Select(Marker => Marker.Point));
+                Bounds.AddRange(RouteMarkers.Select(Marker => Marker.Point));
             }
-            if (boundsPoints != null)
+            if (BoundsPoints != null)
             {
-                Bounds.AddRange(boundsPoints);
+                Bounds.AddRange(BoundsPoints);
             }
             if (Bounds.Count == 0) return ToPng(Base);
 
             List<(Double X, Double Y)> Pixels = Bounds.Select(Point =>
-                WorldToPixel(grid, Point.X, Point.Y, Ppb)).ToList();
-            Int32 Pad = padCells * Ppb;
+                WorldToPixel(Grid, Point.X, Point.Y, Ppb)).ToList();
+            Int32 Pad = PadCells * Ppb;
             Int32 X0 = Math.Max(0, TruncTowardZero(Pixels.Min(Point => Point.X) - Pad));
             Int32 Y0 = Math.Max(0, TruncTowardZero(Pixels.Min(Point => Point.Y) - Pad));
             Int32 X1 = Math.Min(Base.Width, TruncTowardZero(Pixels.Max(Point => Point.X) + Pad));
@@ -662,28 +686,28 @@ namespace HaulBuilder
         /// <summary>
         /// Converts a world polyline to pixels and draws it at a fixed width.
         /// </summary>
-        /// <param name="image">Destination image.</param>
-        /// <param name="grid">Grid projection.</param>
-        /// <param name="points">World polyline.</param>
-        /// <param name="pixelsPerBin">Pixels per grid bin.</param>
-        /// <param name="color">Line color.</param>
-        /// <param name="width">Line width in pixels.</param>
+        /// <param name="Image">Destination image.</param>
+        /// <param name="Grid">Grid projection.</param>
+        /// <param name="Points">World polyline.</param>
+        /// <param name="PixelsPerBin">Pixels per grid bin.</param>
+        /// <param name="Color">Line color.</param>
+        /// <param name="Width">Line width in pixels.</param>
         private static void DrawWorldPolyline
             (
-            Image<Rgba32> image,
-            Grid grid,
-            IReadOnlyList<(Double X, Double Y)> points,
-            Int32 pixelsPerBin,
-            Rgba32 color,
-            Int32 width
+            Image<Rgba32> Image,
+            Grid Grid,
+            IReadOnlyList<(Double X, Double Y)> Points,
+            Int32 PixelsPerBin,
+            Rgba32 Color,
+            Int32 Width
             )
         {
-            if (points.Count < 2) return;
+            if (Points.Count < 2) return;
 
             // Reuse the established raster primitive after one coordinate conversion pass.
-            List<(Double X, Double Y)> Pixels = points.Select(Point =>
-                WorldToPixel(grid, Point.X, Point.Y, pixelsPerBin)).ToList();
-            DrawPolylinePixels(image, Pixels, color, width);
+            List<(Double X, Double Y)> Pixels = Points.Select(Point =>
+                WorldToPixel(Grid, Point.X, Point.Y, PixelsPerBin)).ToList();
+            DrawPolylinePixels(Image, Pixels, Color, Width);
         }
 
         /// <summary>
@@ -691,55 +715,55 @@ namespace HaulBuilder
         /// </summary>
         static public Byte[] RenderPairSequencePng
             (
-            Grid grid,
-            IReadOnlyList<GuidancePoint> points,
-            Double bladeWidthM = 2.271,
-            Int32 pixelsPerBin = 26
+            Grid Grid,
+            IReadOnlyList<GuidancePoint> Points,
+            Double BladeWidthM = 2.271,
+            Int32 PixelsPerBin = 26
             )
         {
             // Multi-pair sequence uses the same action coloring to show transitions across adjacent passes.
-            return RenderGuidancePng(grid, points, pixelsPerBin, bladeWidthM);
+            return RenderGuidancePng(Grid, Points, PixelsPerBin, BladeWidthM);
         }
 
 
         /// <summary>
         /// Overlays numbered zone waypoints onto an existing PNG buffer.
         /// </summary>
-        /// <param name="pngBytes">Base PNG bytes.</param>
-        /// <param name="grid">Grid geometry for world->pixel projection.</param>
-        /// <param name="steps">Ordered zone steps.</param>
-        /// <param name="pixelsPerBin">Pixels per bin for projection math.</param>
+        /// <param name="PngBytes">Base PNG bytes.</param>
+        /// <param name="Grid">Grid geometry for world->pixel projection.</param>
+        /// <param name="Steps">Ordered zone steps.</param>
+        /// <param name="PixelsPerBin">Pixels per bin for projection math.</param>
         /// <returns>Updated PNG bytes.</returns>
         static public Byte[] OverlayZoneWaypoints
             (
-            Byte[] pngBytes,
-            Grid grid,
-            IReadOnlyList<ZoneStep> steps,
-            Int32 pixelsPerBin = 50
+            Byte[] PngBytes,
+            Grid Grid,
+            IReadOnlyList<ZoneStep> Steps,
+            Int32 PixelsPerBin = 50
             )
         {
             // Overlay is done in-place on decoded PNG bytes so engine can stay fully in-memory.
-            using Image<Rgba32> OverlayImage = SixLabors.ImageSharp.Image.Load<Rgba32>(pngBytes);
-            if (steps.Count <= 0)
+            using Image<Rgba32> OverlayImage = SixLabors.ImageSharp.Image.Load<Rgba32>(PngBytes);
+            if (Steps.Count <= 0)
             {
                 return ToPng(OverlayImage);
             }
 
-            Int32 Ppb = Math.Max(1, pixelsPerBin);
-            for (Int32 Iter = 0; Iter < steps.Count; Iter += 1)
+            Int32 Ppb = Math.Max(1, PixelsPerBin);
+            for (Int32 Iter = 0; Iter < Steps.Count; Iter += 1)
             {
-                ZoneStep Step = steps[Iter];
-                (Double Px, Double Py) = WorldToPixel(grid, Step.Easting, Step.Northing, Ppb);
-                DrawCircle(OverlayImage, Px, Py, Math.Max(4, Ppb / 2), new Rgba32(255, 255, 255, 235), new Rgba32(0, 0, 0, 255));
+                ZoneStep Step = Steps[Iter];
+                (Double Px, Double Py) = WorldToPixel(Grid, Step.Easting, Step.Northing, Ppb);
+                DrawCircle(OverlayImage, Px, Py, Math.Max(4, Ppb / 2), new Rgba32(Constants.MAX_COLOR_CHANNEL, Constants.MAX_COLOR_CHANNEL, Constants.MAX_COLOR_CHANNEL, 235), new Rgba32(0, 0, 0, Constants.MAX_COLOR_CHANNEL));
                 DrawTextDigit(OverlayImage, (Int32)Math.Round(Px), (Int32)Math.Round(Py), ((Int32)Step.WorkOrder).ToString(CultureInfo.InvariantCulture));
             }
 
-            for (Int32 Iter = 1; Iter < steps.Count; Iter += 1)
+            for (Int32 Iter = 1; Iter < Steps.Count; Iter += 1)
             {
-                ZoneStep Prev = steps[Iter - 1];
-                ZoneStep Cur = steps[Iter];
-                (Double X0, Double Y0) = WorldToPixel(grid, Prev.Easting, Prev.Northing, Ppb);
-                (Double X1, Double Y1) = WorldToPixel(grid, Cur.Easting, Cur.Northing, Ppb);
+                ZoneStep Prev = Steps[Iter - 1];
+                ZoneStep Cur = Steps[Iter];
+                (Double X0, Double Y0) = WorldToPixel(Grid, Prev.Easting, Prev.Northing, Ppb);
+                (Double X1, Double Y1) = WorldToPixel(Grid, Cur.Easting, Cur.Northing, Ppb);
                 DrawLine(OverlayImage, X0, Y0, X1, Y1, new Rgba32(0, 0, 0, 220), Math.Max(2, Ppb / 4));
             }
 
@@ -747,100 +771,138 @@ namespace HaulBuilder
         }
 
 
+        /// <summary>
+        /// Executes the terrain color operation.
+        /// </summary>
+        /// <param name="T">The t used by the operation.</param>
+        /// <returns>The resulting terrain color.</returns>
+
         private static Rgba32 TerrainColor
             (
-            Double t
+            Double T
             )
         {
             // Piecewise interpolation reproduces Python numpy.interp behavior for elevation ramps.
-            if (t <= 0.25)
+            if (T <= Constants.QUARTER_SCALE)
             {
-                return Lerp(new Rgba32(30, 90, 40, 255), new Rgba32(120, 170, 70, 255), (t / 0.25));
+                return Lerp(new Rgba32(30, 90, 40, Constants.MAX_COLOR_CHANNEL), new Rgba32(120, 170, 70, Constants.MAX_COLOR_CHANNEL), (T / Constants.QUARTER_SCALE));
             }
 
-            if (t <= 0.50)
+            if (T <= Constants.HALF_SCALE)
             {
-                return Lerp(new Rgba32(120, 170, 70, 255), new Rgba32(210, 200, 120, 255), ((t - 0.25) / 0.25));
+                return Lerp(new Rgba32(120, 170, 70, Constants.MAX_COLOR_CHANNEL), new Rgba32(210, 200, 120, Constants.MAX_COLOR_CHANNEL), ((T - Constants.QUARTER_SCALE) / Constants.QUARTER_SCALE));
             }
 
-            if (t <= 0.75)
+            if (T <= 0.75)
             {
-                return Lerp(new Rgba32(210, 200, 120, 255), new Rgba32(150, 110, 70, 255), ((t - 0.50) / 0.25));
+                return Lerp(new Rgba32(210, 200, 120, Constants.MAX_COLOR_CHANNEL), new Rgba32(150, 110, 70, Constants.MAX_COLOR_CHANNEL), ((T - Constants.HALF_SCALE) / Constants.QUARTER_SCALE));
             }
 
-            return Lerp(new Rgba32(150, 110, 70, 255), new Rgba32(245, 245, 245, 255), ((t - 0.75) / 0.25));
+            return Lerp(new Rgba32(150, 110, 70, Constants.MAX_COLOR_CHANNEL), new Rgba32(245, 245, 245, Constants.MAX_COLOR_CHANNEL), ((T - 0.75) / Constants.QUARTER_SCALE));
         }
+
+        /// <summary>
+        /// Executes the lerp operation.
+        /// </summary>
+        /// <param name="A">The a used by the operation.</param>
+        /// <param name="B">The b used by the operation.</param>
+        /// <param name="T">The t used by the operation.</param>
+        /// <returns>The resulting lerp.</returns>
 
         private static Rgba32 Lerp
             (
-            Rgba32 a,
-            Rgba32 b,
-            Double t
+            Rgba32 A,
+            Rgba32 B,
+            Double T
             )
         {
             // Truncate like numpy astype(uint8) after float interpolation.
-            Byte R = TruncByte(a.R + ((b.R - a.R) * t));
-            Byte G = TruncByte(a.G + ((b.G - a.G) * t));
-            Byte B = TruncByte(a.B + ((b.B - a.B) * t));
-            return new Rgba32(R, G, B, 0xFF);
+            Byte R = TruncByte(A.R + ((B.R - A.R) * T));
+            Byte G = TruncByte(A.G + ((B.G - A.G) * T));
+            Byte Blue = TruncByte(A.B + ((B.B - A.B) * T));
+            return new Rgba32(R, G, Blue, Constants.BYTE_MASK);
         }
+
+        /// <summary>
+        /// Executes the trunc byte operation.
+        /// </summary>
+        /// <param name="Value">The value used by the operation.</param>
+        /// <returns>The resulting trunc byte.</returns>
 
         private static Byte TruncByte
             (
-            Double value
+            Double Value
             )
         {
-            if (value <= 0.0)
+            if (Value <= 0.0)
             {
                 return 0;
             }
 
-            if (value >= 255.0)
+            if (Value >= Constants.MAX_COLOR_CHANNEL)
             {
-                return 255;
+                return Constants.MAX_COLOR_CHANNEL;
             }
 
-            return (Byte)value;
+            return (Byte)Value;
         }
+
+        /// <summary>
+        /// Executes the world to pixel operation.
+        /// </summary>
+        /// <param name="Grid">Field grid used by the operation.</param>
+        /// <param name="X">Horizontal coordinate in field units.</param>
+        /// <param name="Y">Vertical coordinate in field units.</param>
+        /// <param name="Ppb">The ppb used by the operation.</param>
+        /// <returns>The resulting world to pixel.</returns>
 
         private static (Double X, Double Y) WorldToPixel
             (
-            Grid grid,
-            Double x,
-            Double y,
-            Int32 ppb
+            Grid Grid,
+            Double X,
+            Double Y,
+            Int32 Ppb
             )
         {
             // Coordinate transform intentionally mirrors Python render._world_to_pixel.
-            Double Px = ((x - grid.MinX) / grid.GridSizeM) * ppb;
-            Double Py = (grid.Height - ((y - grid.MinY) / grid.GridSizeM)) * ppb;
+            Double Px = ((X - Grid.MinX) / Grid.GridSizeM) * Ppb;
+            Double Py = (Grid.Height - ((Y - Grid.MinY) / Grid.GridSizeM)) * Ppb;
             return (Px, Py);
         }
 
+        /// <summary>
+        /// Renders flow arrows.
+        /// </summary>
+        /// <param name="Image">The image used by the operation.</param>
+        /// <param name="Grid">Field grid used by the operation.</param>
+        /// <param name="Flow">The flow used by the operation.</param>
+        /// <param name="Ppb">The ppb used by the operation.</param>
+        /// <param name="ArrowStride">The arrow stride used by the operation.</param>
+
         private static void DrawFlowArrows
             (
-            Image<Rgba32> image,
-            Grid grid,
-            FlowField flow,
-            Int32 ppb,
-            Int32 arrowStride
+            Image<Rgba32> Image,
+            Grid Grid,
+            FlowField Flow,
+            Int32 Ppb,
+            Int32 ArrowStride
             )
         {
             // Arrow glyphs are hollow triangles so the map remains visible beneath direction marks.
-            Double Length = (ppb * 0.45);
-            Double HalfBase = (ppb * 0.16);
-            for (Int32 By = 0; By < grid.Height; By += arrowStride)
+            Double Length = (Ppb * 0.45);
+            Double HalfBase = (Ppb * 0.16);
+            for (Int32 By = 0; By < Grid.Height; By += ArrowStride)
             {
-                for (Int32 Bx = 0; Bx < grid.Width; Bx += arrowStride)
+                for (Int32 Bx = 0; Bx < Grid.Width; Bx += ArrowStride)
                 {
-                    if (!grid.Valid[By, Bx]) continue;
-                    if (!FlowHasArrow(flow, Bx, By)) continue;
-                    Double DirectionDeg = FlowDirectionDeg(flow, Bx, By);
-                    Double Rad = (Math.PI / 180.0) * DirectionDeg;
+                    if (!Grid.Valid[By, Bx]) continue;
+                    if (!FlowHasArrow(Flow, Bx, By)) continue;
+                    Double DirectionDeg = FlowDirectionDeg(Flow, Bx, By);
+                    Double Rad = (Math.PI / Constants.DEGREES_PER_HALF_TURN) * DirectionDeg;
                     Double Dx = Math.Sin(Rad);
                     Double Dy = -Math.Cos(Rad);
-                    Double Px = ((Bx + 0.5) * ppb);
-                    Double Py = ((grid.Height - 0.5 - By) * ppb);
+                    Double Px = ((Bx + Constants.HALF_SCALE) * Ppb);
+                    Double Py = ((Grid.Height - Constants.HALF_SCALE - By) * Ppb);
                     Double EndX = (Px + (Length * Dx));
                     Double EndY = (Py + (Length * Dy));
                     Double BaseX = (Px - (0.35 * Length * Dx));
@@ -854,9 +916,9 @@ namespace HaulBuilder
                     Int32 RightX = (Int32)Math.Round(BaseX - (HalfBase * PerpX), MidpointRounding.AwayFromZero);
                     Int32 RightY = (Int32)Math.Round(BaseY - (HalfBase * PerpY), MidpointRounding.AwayFromZero);
 
-                    DrawThinLineBresenham(image, TipX, TipY, LeftX, LeftY, new Rgba32(0, 0, 0, 255));
-                    DrawThinLineBresenham(image, TipX, TipY, RightX, RightY, new Rgba32(0, 0, 0, 255));
-                    DrawThinLineBresenham(image, LeftX, LeftY, RightX, RightY, new Rgba32(0, 0, 0, 255));
+                    DrawThinLineBresenham(Image, TipX, TipY, LeftX, LeftY, new Rgba32(0, 0, 0, Constants.MAX_COLOR_CHANNEL));
+                    DrawThinLineBresenham(Image, TipX, TipY, RightX, RightY, new Rgba32(0, 0, 0, Constants.MAX_COLOR_CHANNEL));
+                    DrawThinLineBresenham(Image, LeftX, LeftY, RightX, RightY, new Rgba32(0, 0, 0, Constants.MAX_COLOR_CHANNEL));
                 }
             }
         }
@@ -864,36 +926,36 @@ namespace HaulBuilder
         /// <summary>Draws high-contrast arrowheads at regular travelled distances along a route.</summary>
         private static void DrawRouteDirectionArrows
             (
-            Image<Rgba32> image,
-            Grid grid,
-            IReadOnlyList<(Double X, Double Y)> routePoints,
-            Int32 ppb,
-            Double spacingM
+            Image<Rgba32> Image,
+            Grid Grid,
+            IReadOnlyList<(Double X, Double Y)> RoutePoints,
+            Int32 Ppb,
+            Double SpacingM
             )
         {
-            if ((routePoints.Count < 2) || (spacingM <= 0.0)) return;
-            Double UntilArrowM = 0.5 * spacingM;
-            Double ArrowLengthPx = Math.Max(8.0, ppb * 0.42);
-            Double HalfWidthPx = Math.Max(4.0, ppb * 0.18);
-            Int32 OutlineWidth = Math.Max(3, ppb / 8);
+            if ((RoutePoints.Count < 2) || (SpacingM <= 0.0)) return;
+            Double UntilArrowM = Constants.HALF_SCALE * SpacingM;
+            Double ArrowLengthPx = Math.Max(8.0, Ppb * 0.42);
+            Double HalfWidthPx = Math.Max(4.0, Ppb * 0.18);
+            Int32 OutlineWidth = Math.Max(3, Ppb / 8);
             Int32 InnerWidth = Math.Max(1, OutlineWidth / 2);
-            Rgba32 Outline = new Rgba32(0, 0, 0, 255);
-            Rgba32 Inner = new Rgba32(255, 255, 255, 255);
+            Rgba32 Outline = new Rgba32(0, 0, 0, Constants.MAX_COLOR_CHANNEL);
+            Rgba32 Inner = new Rgba32(Constants.MAX_COLOR_CHANNEL, Constants.MAX_COLOR_CHANNEL, Constants.MAX_COLOR_CHANNEL, Constants.MAX_COLOR_CHANNEL);
 
-            for (Int32 Index = 1; Index < routePoints.Count; Index += 1)
+            for (Int32 Index = 1; Index < RoutePoints.Count; Index += 1)
             {
-                (Double X, Double Y) A = routePoints[Index - 1];
-                (Double X, Double Y) B = routePoints[Index];
+                (Double X, Double Y) A = RoutePoints[Index - 1];
+                (Double X, Double Y) B = RoutePoints[Index];
                 Double DxM = B.X - A.X;
                 Double DyM = B.Y - A.Y;
                 Double SegmentM = Math.Sqrt((DxM * DxM) + (DyM * DyM));
-                if (SegmentM <= 1e-9) continue;
-                while (UntilArrowM <= SegmentM + 1e-9)
+                if (SegmentM <= Constants.NUMERIC_COMPARISON_TOLERANCE) continue;
+                while (UntilArrowM <= SegmentM + Constants.NUMERIC_COMPARISON_TOLERANCE)
                 {
                     Double Fraction = Math.Min(1.0, UntilArrowM / SegmentM);
                     Double X = A.X + (Fraction * DxM);
                     Double Y = A.Y + (Fraction * DyM);
-                    (Double TipX, Double TipY) = WorldToPixel(grid, X, Y, ppb);
+                    (Double TipX, Double TipY) = WorldToPixel(Grid, X, Y, Ppb);
                     Double UnitX = DxM / SegmentM;
                     Double UnitY = -DyM / SegmentM;
                     Double BaseX = TipX - (ArrowLengthPx * UnitX);
@@ -904,25 +966,32 @@ namespace HaulBuilder
                     Double LeftY = BaseY + (HalfWidthPx * PerpendicularY);
                     Double RightX = BaseX - (HalfWidthPx * PerpendicularX);
                     Double RightY = BaseY - (HalfWidthPx * PerpendicularY);
-                    DrawLine(image, TipX, TipY, LeftX, LeftY, Outline, OutlineWidth);
-                    DrawLine(image, TipX, TipY, RightX, RightY, Outline, OutlineWidth);
-                    DrawLine(image, TipX, TipY, LeftX, LeftY, Inner, InnerWidth);
-                    DrawLine(image, TipX, TipY, RightX, RightY, Inner, InnerWidth);
-                    UntilArrowM += spacingM;
+                    DrawLine(Image, TipX, TipY, LeftX, LeftY, Outline, OutlineWidth);
+                    DrawLine(Image, TipX, TipY, RightX, RightY, Outline, OutlineWidth);
+                    DrawLine(Image, TipX, TipY, LeftX, LeftY, Inner, InnerWidth);
+                    DrawLine(Image, TipX, TipY, RightX, RightY, Inner, InnerWidth);
+                    UntilArrowM += SpacingM;
                 }
                 UntilArrowM -= SegmentM;
             }
         }
 
+        /// <summary>
+        /// Renders exclusions.
+        /// </summary>
+        /// <param name="Image">The image used by the operation.</param>
+        /// <param name="Grid">Field grid used by the operation.</param>
+        /// <param name="Ppb">The ppb used by the operation.</param>
+
         private static void DrawExclusions
             (
-            Image<Rgba32> image,
-            Grid grid,
-            Int32 ppb
+            Image<Rgba32> Image,
+            Grid Grid,
+            Int32 Ppb
             )
         {
             // Exclusion overlays keep no-go zones visually explicit without hiding the underlying grade map.
-            IReadOnlyList<IReadOnlyList<(Double X, Double Y)>> Rings = GridExclusions(grid);
+            IReadOnlyList<IReadOnlyList<(Double X, Double Y)>> Rings = GridExclusions(Grid);
             if (Rings.Count <= 0)
             {
                 return;
@@ -932,177 +1001,239 @@ namespace HaulBuilder
             {
                 for (Int32 Iter = 1; Iter < Ring.Count; Iter += 1)
                 {
-                    (Double Ax, Double Ay) = WorldToPixel(grid, Ring[Iter - 1].X, Ring[Iter - 1].Y, ppb);
-                    (Double Bx, Double By) = WorldToPixel(grid, Ring[Iter].X, Ring[Iter].Y, ppb);
-                    DrawLine(image, Ax, Ay, Bx, By, new Rgba32(0, 0, 0, 255), Math.Max(2, ppb / 4));
+                    (Double Ax, Double Ay) = WorldToPixel(Grid, Ring[Iter - 1].X, Ring[Iter - 1].Y, Ppb);
+                    (Double Bx, Double By) = WorldToPixel(Grid, Ring[Iter].X, Ring[Iter].Y, Ppb);
+                    DrawLine(Image, Ax, Ay, Bx, By, new Rgba32(0, 0, 0, Constants.MAX_COLOR_CHANNEL), Math.Max(2, Ppb / 4));
                 }
             }
         }
 
+        /// <summary>
+        /// Executes the dim towards white operation.
+        /// </summary>
+        /// <param name="Image">The image used by the operation.</param>
+        /// <param name="BaseDim">The base dim used by the operation.</param>
+
         private static void DimTowardsWhite
             (
-            Image<Rgba32> image,
-            Double baseDim
+            Image<Rgba32> Image,
+            Double BaseDim
             )
         {
             // Fading base color increases contrast for overlays while preserving context.
-            if ((baseDim < 0.0) || (baseDim >= 1.0))
+            if ((BaseDim < 0.0) || (BaseDim >= 1.0))
             {
                 return;
             }
 
-            for (Int32 Y = 0; Y < image.Height; Y += 1)
+            for (Int32 Y = 0; Y < Image.Height; Y += 1)
             {
-                for (Int32 X = 0; X < image.Width; X += 1)
+                for (Int32 X = 0; X < Image.Width; X += 1)
                 {
-                    Rgba32 P = image[X, Y];
+                    Rgba32 P = Image[X, Y];
                     // Pillow dims RGB for every pixel, including alpha=0 cells (render_pass_pairs_png).
-                    P.R = TruncByte((P.R * baseDim) + (255.0 * (1.0 - baseDim)));
-                    P.G = TruncByte((P.G * baseDim) + (255.0 * (1.0 - baseDim)));
-                    P.B = TruncByte((P.B * baseDim) + (255.0 * (1.0 - baseDim)));
-                    image[X, Y] = P;
+                    P.R = TruncByte((P.R * BaseDim) + (Constants.MAX_COLOR_CHANNEL * (1.0 - BaseDim)));
+                    P.G = TruncByte((P.G * BaseDim) + (Constants.MAX_COLOR_CHANNEL * (1.0 - BaseDim)));
+                    P.B = TruncByte((P.B * BaseDim) + (Constants.MAX_COLOR_CHANNEL * (1.0 - BaseDim)));
+                    Image[X, Y] = P;
                 }
             }
         }
 
+        /// <summary>
+        /// Executes the guidance color operation.
+        /// </summary>
+        /// <param name="Action">The action used by the operation.</param>
+        /// <returns>The resulting guidance color.</returns>
+
         private static Rgba32 GuidanceColor
             (
-            String action
+            String Action
             )
         {
             // Action palette mirrors Python guidance rendering semantics.
-            if (action == "CUT") return new Rgba32(200, 0, 0, 255);
-            if (action == "FILL") return new Rgba32(0, 90, 220, 255);
-            if (action == "GRADE") return new Rgba32(40, 160, 40, 200);
-            if (action == "HAUL") return new Rgba32(200, 0, 200, 90);
-            if (action == "MOVE") return new Rgba32(255, 140, 0, 120);
-            if (action == "MANUAL_MOVE") return new Rgba32(255, 80, 0, 220);
+            if (Action == "CUT") return new Rgba32(200, 0, 0, Constants.MAX_COLOR_CHANNEL);
+            if (Action == "FILL") return new Rgba32(0, 90, 220, Constants.MAX_COLOR_CHANNEL);
+            if (Action == "GRADE") return new Rgba32(40, 160, 40, 200);
+            if (Action == "HAUL") return new Rgba32(200, 0, 200, 90);
+            if (Action == "MOVE") return new Rgba32(Constants.MAX_COLOR_CHANNEL, 140, 0, 120);
+            if (Action == "MANUAL_MOVE") return new Rgba32(Constants.MAX_COLOR_CHANNEL, 80, 0, 220);
             return new Rgba32(120, 120, 120, 70);
         }
 
+        /// <summary>
+        /// Renders polyline.
+        /// </summary>
+        /// <param name="Image">The image used by the operation.</param>
+        /// <param name="Grid">Field grid used by the operation.</param>
+        /// <param name="Points">The points used by the operation.</param>
+        /// <param name="Ppb">The ppb used by the operation.</param>
+        /// <param name="Color">The color used by the operation.</param>
+        /// <param name="Width">The width used by the operation.</param>
+
         private static void DrawPolyline
             (
-            Image<Rgba32> image,
-            Grid grid,
-            IReadOnlyList<GuidancePoint> points,
-            Int32 ppb,
-            Rgba32 color,
-            Int32 width
+            Image<Rgba32> Image,
+            Grid Grid,
+            IReadOnlyList<GuidancePoint> Points,
+            Int32 Ppb,
+            Rgba32 Color,
+            Int32 Width
             )
         {
             // Guidance polylines are drawn segment-by-segment in world space.
-            for (Int32 Iter = 1; Iter < points.Count; Iter += 1)
+            for (Int32 Iter = 1; Iter < Points.Count; Iter += 1)
             {
-                (Double X0, Double Y0) = WorldToPixel(grid, points[Iter - 1].X, points[Iter - 1].Y, ppb);
-                (Double X1, Double Y1) = WorldToPixel(grid, points[Iter].X, points[Iter].Y, ppb);
+                (Double X0, Double Y0) = WorldToPixel(Grid, Points[Iter - 1].X, Points[Iter - 1].Y, Ppb);
+                (Double X1, Double Y1) = WorldToPixel(Grid, Points[Iter].X, Points[Iter].Y, Ppb);
                 DrawLine(
-                    image,
+                    Image,
                     X0,
                     Y0,
                     X1,
                     Y1,
-                    color,
-                    width);
+                    Color,
+                    Width);
             }
         }
+
+        /// <summary>
+        /// Renders polyline pixels.
+        /// </summary>
+        /// <param name="Image">The image used by the operation.</param>
+        /// <param name="Points">The points used by the operation.</param>
+        /// <param name="Color">The color used by the operation.</param>
+        /// <param name="Width">The width used by the operation.</param>
 
         private static void DrawPolylinePixels
             (
-            Image<Rgba32> image,
-            IReadOnlyList<(Double X, Double Y)> points,
-            Rgba32 color,
-            Int32 width
+            Image<Rgba32> Image,
+            IReadOnlyList<(Double X, Double Y)> Points,
+            Rgba32 Color,
+            Int32 Width
             )
         {
             // Pixel-space polylines are used for route overlays already projected to image coordinates.
-            for (Int32 Iter = 1; Iter < points.Count; Iter += 1)
+            for (Int32 Iter = 1; Iter < Points.Count; Iter += 1)
             {
-                (Double X0, Double Y0) = points[Iter - 1];
-                (Double X1, Double Y1) = points[Iter];
-                DrawLine(image, X0, Y0, X1, Y1, color, width);
+                (Double X0, Double Y0) = Points[Iter - 1];
+                (Double X1, Double Y1) = Points[Iter];
+                DrawLine(Image, X0, Y0, X1, Y1, Color, Width);
             }
         }
+
+        /// <summary>
+        /// Executes the dot guidance point operation.
+        /// </summary>
+        /// <param name="Image">The image used by the operation.</param>
+        /// <param name="Grid">Field grid used by the operation.</param>
+        /// <param name="Point">The point used by the operation.</param>
+        /// <param name="Ppb">The ppb used by the operation.</param>
+        /// <param name="Color">The color used by the operation.</param>
+        /// <param name="Radius">The radius used by the operation.</param>
 
         private static void DotGuidancePoint
             (
-            Image<Rgba32> image,
-            Grid grid,
-            GuidancePoint point,
-            Int32 ppb,
-            Rgba32 color,
-            Int32 radius
+            Image<Rgba32> Image,
+            Grid Grid,
+            GuidancePoint Point,
+            Int32 Ppb,
+            Rgba32 Color,
+            Int32 Radius
             )
         {
-            (Double Px, Double Py) = WorldToPixel(grid, point.X, point.Y, ppb);
+            (Double Px, Double Py) = WorldToPixel(Grid, Point.X, Point.Y, Ppb);
             DrawEllipsePil(
-                image,
+                Image,
                 Px,
                 Py,
-                radius,
-                color,
-                new Rgba32(0, 0, 0, 255),
+                Radius,
+                Color,
+                new Rgba32(0, 0, 0, Constants.MAX_COLOR_CHANNEL),
                 2);
         }
 
+        /// <summary>
+        /// Renders ellipse pil.
+        /// </summary>
+        /// <param name="Image">The image used by the operation.</param>
+        /// <param name="Cx">The cx used by the operation.</param>
+        /// <param name="Cy">The cy used by the operation.</param>
+        /// <param name="Radius">The radius used by the operation.</param>
+        /// <param name="Fill">The fill used by the operation.</param>
+        /// <param name="Outline">The outline used by the operation.</param>
+        /// <param name="OutlineWidth">The outline width used by the operation.</param>
+
         private static void DrawEllipsePil
             (
-            Image<Rgba32> image,
-            Double cx,
-            Double cy,
-            Int32 radius,
-            Rgba32 fill,
-            Rgba32 outline,
-            Int32 outlineWidth
+            Image<Rgba32> Image,
+            Double Cx,
+            Double Cy,
+            Int32 Radius,
+            Rgba32 Fill,
+            Rgba32 Outline,
+            Int32 OutlineWidth
             )
         {
             // Matches Pillow ImageDraw.ellipse((x-r,y-r,x+r,y+r), fill=..., outline=..., width=...).
-            Int32 X0 = TruncTowardZero(cx - radius);
-            Int32 Y0 = TruncTowardZero(cy - radius);
-            Int32 X1 = TruncTowardZero(cx + radius);
-            Int32 Y1 = TruncTowardZero(cy + radius);
-            if (outlineWidth > 0)
+            Int32 X0 = TruncTowardZero(Cx - Radius);
+            Int32 Y0 = TruncTowardZero(Cy - Radius);
+            Int32 X1 = TruncTowardZero(Cx + Radius);
+            Int32 Y1 = TruncTowardZero(Cy + Radius);
+            if (OutlineWidth > 0)
             {
-                DrawFilledEllipse(image, X0, Y0, X1, Y1, fill);
-                DrawEllipseOutlineRing(image, X0, Y0, X1, Y1, outline, outlineWidth);
+                DrawFilledEllipse(Image, X0, Y0, X1, Y1, Fill);
+                DrawEllipseOutlineRing(Image, X0, Y0, X1, Y1, Outline, OutlineWidth);
                 return;
             }
 
-            DrawFilledEllipse(image, X0, Y0, X1, Y1, fill);
+            DrawFilledEllipse(Image, X0, Y0, X1, Y1, Fill);
         }
+
+        /// <summary>
+        /// Renders ellipse outline ring.
+        /// </summary>
+        /// <param name="Image">The image used by the operation.</param>
+        /// <param name="X0">The x0 used by the operation.</param>
+        /// <param name="Y0">The y0 used by the operation.</param>
+        /// <param name="X1">The x1 used by the operation.</param>
+        /// <param name="Y1">The y1 used by the operation.</param>
+        /// <param name="Color">The color used by the operation.</param>
+        /// <param name="Width">The width used by the operation.</param>
 
         private static void DrawEllipseOutlineRing
             (
-            Image<Rgba32> image,
-            Int32 x0,
-            Int32 y0,
-            Int32 x1,
-            Int32 y1,
-            Rgba32 color,
-            Int32 width
+            Image<Rgba32> Image,
+            Int32 X0,
+            Int32 Y0,
+            Int32 X1,
+            Int32 Y1,
+            Rgba32 Color,
+            Int32 Width
             )
         {
-            Int32 InnerPad = width / 2;
-            Int32 OuterPad = width - InnerPad;
-            Int32 Ox0 = x0 - OuterPad;
-            Int32 Oy0 = y0 - OuterPad;
-            Int32 Ox1 = x1 + OuterPad;
-            Int32 Oy1 = y1 + OuterPad;
-            Int32 Ix0 = x0 + InnerPad;
-            Int32 Iy0 = y0 + InnerPad;
-            Int32 Ix1 = x1 - InnerPad;
-            Int32 Iy1 = y1 - InnerPad;
+            Int32 InnerPad = Width / 2;
+            Int32 OuterPad = Width - InnerPad;
+            Int32 Ox0 = X0 - OuterPad;
+            Int32 Oy0 = Y0 - OuterPad;
+            Int32 Ox1 = X1 + OuterPad;
+            Int32 Oy1 = Y1 + OuterPad;
+            Int32 Ix0 = X0 + InnerPad;
+            Int32 Iy0 = Y0 + InnerPad;
+            Int32 Ix1 = X1 - InnerPad;
+            Int32 Iy1 = Y1 - InnerPad;
             Double Ocx = (Ox0 + Ox1) / 2.0;
             Double Ocy = (Oy0 + Oy1) / 2.0;
-            Double Orx = Math.Max(0.5, (Ox1 - Ox0) / 2.0);
-            Double Ory = Math.Max(0.5, (Oy1 - Oy0) / 2.0);
+            Double Orx = Math.Max(Constants.HALF_SCALE, (Ox1 - Ox0) / 2.0);
+            Double Ory = Math.Max(Constants.HALF_SCALE, (Oy1 - Oy0) / 2.0);
             Double Icx = (Ix0 + Ix1) / 2.0;
             Double Icy = (Iy0 + Iy1) / 2.0;
-            Double Irx = Math.Max(0.5, (Ix1 - Ix0) / 2.0);
-            Double Iry = Math.Max(0.5, (Iy1 - Iy0) / 2.0);
+            Double Irx = Math.Max(Constants.HALF_SCALE, (Ix1 - Ix0) / 2.0);
+            Double Iry = Math.Max(Constants.HALF_SCALE, (Iy1 - Iy0) / 2.0);
             Int32 MinX = Math.Max(0, Ox0);
-            Int32 MaxX = Math.Min(image.Width - 1, Ox1);
+            Int32 MaxX = Math.Min(Image.Width - 1, Ox1);
             Int32 MinY = Math.Max(0, Oy0);
-            Int32 MaxY = Math.Min(image.Height - 1, Oy1);
+            Int32 MaxY = Math.Min(Image.Height - 1, Oy1);
             for (Int32 Y = MinY; Y <= MaxY; Y += 1)
             {
                 for (Int32 X = MinX; X <= MaxX; X += 1)
@@ -1121,37 +1252,53 @@ namespace HaulBuilder
                         continue;
                     }
 
-                    Plot(image, X, Y, color);
+                    Plot(Image, X, Y, Color);
                 }
             }
         }
 
+        /// <summary>
+        /// Executes the trunc toward zero operation.
+        /// </summary>
+        /// <param name="Value">The value used by the operation.</param>
+        /// <returns>The resulting trunc toward zero.</returns>
+
         private static Int32 TruncTowardZero
             (
-            Double value
+            Double Value
             )
         {
-            return value >= 0.0 ? (Int32)Math.Floor(value) : (Int32)Math.Ceiling(value);
+            return Value >= 0.0 ? (Int32)Math.Floor(Value) : (Int32)Math.Ceiling(Value);
         }
+
+        /// <summary>
+        /// Renders filled ellipse.
+        /// </summary>
+        /// <param name="Image">The image used by the operation.</param>
+        /// <param name="X0">The x0 used by the operation.</param>
+        /// <param name="Y0">The y0 used by the operation.</param>
+        /// <param name="X1">The x1 used by the operation.</param>
+        /// <param name="Y1">The y1 used by the operation.</param>
+        /// <param name="Color">The color used by the operation.</param>
 
         private static void DrawFilledEllipse
             (
-            Image<Rgba32> image,
-            Int32 x0,
-            Int32 y0,
-            Int32 x1,
-            Int32 y1,
-            Rgba32 color
+            Image<Rgba32> Image,
+            Int32 X0,
+            Int32 Y0,
+            Int32 X1,
+            Int32 Y1,
+            Rgba32 Color
             )
         {
-            Double Cx = (x0 + x1) / 2.0;
-            Double Cy = (y0 + y1) / 2.0;
-            Double Rx = Math.Max(0.5, (x1 - x0) / 2.0);
-            Double Ry = Math.Max(0.5, (y1 - y0) / 2.0);
-            Int32 MinX = Math.Max(0, x0);
-            Int32 MaxX = Math.Min(image.Width - 1, x1);
-            Int32 MinY = Math.Max(0, y0);
-            Int32 MaxY = Math.Min(image.Height - 1, y1);
+            Double Cx = (X0 + X1) / 2.0;
+            Double Cy = (Y0 + Y1) / 2.0;
+            Double Rx = Math.Max(Constants.HALF_SCALE, (X1 - X0) / 2.0);
+            Double Ry = Math.Max(Constants.HALF_SCALE, (Y1 - Y0) / 2.0);
+            Int32 MinX = Math.Max(0, X0);
+            Int32 MaxX = Math.Min(Image.Width - 1, X1);
+            Int32 MinY = Math.Max(0, Y0);
+            Int32 MaxY = Math.Min(Image.Height - 1, Y1);
             for (Int32 Y = MinY; Y <= MaxY; Y += 1)
             {
                 for (Int32 X = MinX; X <= MaxX; X += 1)
@@ -1160,114 +1307,156 @@ namespace HaulBuilder
                     Double Ny = (Y - Cy) / Ry;
                     if (((Nx * Nx) + (Ny * Ny)) <= 1.0)
                     {
-                        Plot(image, X, Y, color);
+                        Plot(Image, X, Y, Color);
                     }
                 }
             }
         }
 
+        /// <summary>
+        /// Renders line.
+        /// </summary>
+        /// <param name="Image">The image used by the operation.</param>
+        /// <param name="X0">The x0 used by the operation.</param>
+        /// <param name="Y0">The y0 used by the operation.</param>
+        /// <param name="X1">The x1 used by the operation.</param>
+        /// <param name="Y1">The y1 used by the operation.</param>
+        /// <param name="Color">The color used by the operation.</param>
+        /// <param name="Width">The width used by the operation.</param>
+
         private static void DrawLine
             (
-            Image<Rgba32> image,
-            Double x0,
-            Double y0,
-            Double x1,
-            Double y1,
-            Rgba32 color,
-            Int32 width
+            Image<Rgba32> Image,
+            Double X0,
+            Double Y0,
+            Double X1,
+            Double Y1,
+            Rgba32 Color,
+            Int32 Width
             )
         {
             // Pillow rounds endpoints and strokes width via parallel 1-px lines.
-            Int32 X0 = (Int32)Math.Round(x0, MidpointRounding.AwayFromZero);
-            Int32 Y0 = (Int32)Math.Round(y0, MidpointRounding.AwayFromZero);
-            Int32 X1 = (Int32)Math.Round(x1, MidpointRounding.AwayFromZero);
-            Int32 Y1 = (Int32)Math.Round(y1, MidpointRounding.AwayFromZero);
-            if (width <= 1)
+            Int32 PixelX0 = (Int32)Math.Round(X0, MidpointRounding.AwayFromZero);
+            Int32 PixelY0 = (Int32)Math.Round(Y0, MidpointRounding.AwayFromZero);
+            Int32 PixelX1 = (Int32)Math.Round(X1, MidpointRounding.AwayFromZero);
+            Int32 PixelY1 = (Int32)Math.Round(Y1, MidpointRounding.AwayFromZero);
+            if (Width <= 1)
             {
-                DrawThinLineBresenham(image, X0, Y0, X1, Y1, color);
+                DrawThinLineBresenham(Image, PixelX0, PixelY0, PixelX1, PixelY1, Color);
                 return;
             }
 
-            DrawWideLinePillow(image, X0, Y0, X1, Y1, color, width);
+            DrawWideLinePillow(Image, PixelX0, PixelY0, PixelX1, PixelY1, Color, Width);
         }
+
+        /// <summary>
+        /// Renders wide line pillow.
+        /// </summary>
+        /// <param name="Image">The image used by the operation.</param>
+        /// <param name="X0">The x0 used by the operation.</param>
+        /// <param name="Y0">The y0 used by the operation.</param>
+        /// <param name="X1">The x1 used by the operation.</param>
+        /// <param name="Y1">The y1 used by the operation.</param>
+        /// <param name="Color">The color used by the operation.</param>
+        /// <param name="Width">The width used by the operation.</param>
 
         private static void DrawWideLinePillow
             (
-            Image<Rgba32> image,
-            Int32 x0,
-            Int32 y0,
-            Int32 x1,
-            Int32 y1,
-            Rgba32 color,
-            Int32 width
+            Image<Rgba32> Image,
+            Int32 X0,
+            Int32 Y0,
+            Int32 X1,
+            Int32 Y1,
+            Rgba32 Color,
+            Int32 Width
             )
         {
             // Port of Pillow ImagingDrawWideLine (src/libImaging/Draw.c).
-            Int32 Dx = (x1 - x0);
-            Int32 Dy = (y1 - y0);
+            Int32 Dx = (X1 - X0);
+            Int32 Dy = (Y1 - Y0);
             if ((Dx == 0) && (Dy == 0))
             {
-                Plot(image, x0, y0, color);
+                Plot(Image, X0, Y0, Color);
                 return;
             }
 
             Double BigHyp = Math.Sqrt((Dx * Dx) + (Dy * Dy));
-            Double SmallHyp = (width - 1) / 2.0;
+            Double SmallHyp = (Width - 1) / 2.0;
             Double RatioMax = RoundUp(SmallHyp) / BigHyp;
             Double RatioMin = RoundDown(SmallHyp) / BigHyp;
             Int32 DxMin = RoundDown(RatioMin * Dy);
             Int32 DxMax = RoundDown(RatioMax * Dy);
             Int32 DyMin = RoundDown(RatioMin * Dx);
             Int32 DyMax = RoundDown(RatioMax * Dx);
-            Int32[] Xs = { x0 - DxMin, x1 - DxMin, x1 + DxMax, x0 + DxMax };
-            Int32[] Ys = { y0 + DyMax, y1 + DyMax, y1 - DyMin, y0 - DyMin };
-            FillPolygonScanline(image, Xs, Ys, color);
+            Int32[] Xs = { X0 - DxMin, X1 - DxMin, X1 + DxMax, X0 + DxMax };
+            Int32[] Ys = { Y0 + DyMax, Y1 + DyMax, Y1 - DyMin, Y0 - DyMin };
+            FillPolygonScanline(Image, Xs, Ys, Color);
             for (Int32 Iter = 0; Iter < Xs.Length; Iter += 1)
             {
-                Plot(image, Xs[Iter], Ys[Iter], color);
+                Plot(Image, Xs[Iter], Ys[Iter], Color);
             }
         }
 
+        /// <summary>
+        /// Executes the round up operation.
+        /// </summary>
+        /// <param name="Value">The value used by the operation.</param>
+        /// <returns>The resulting round up.</returns>
+
         private static Int32 RoundUp
             (
-            Double value
+            Double Value
             )
         {
-            return value >= 0.0
-                ? (Int32)Math.Floor(value + 0.5)
-                : -(Int32)Math.Floor(Math.Abs(value) + 0.5);
+            return Value >= 0.0
+                ? (Int32)Math.Floor(Value + Constants.HALF_SCALE)
+                : -(Int32)Math.Floor(Math.Abs(Value) + Constants.HALF_SCALE);
         }
+
+        /// <summary>
+        /// Executes the round down operation.
+        /// </summary>
+        /// <param name="Value">The value used by the operation.</param>
+        /// <returns>The resulting round down.</returns>
 
         private static Int32 RoundDown
             (
-            Double value
+            Double Value
             )
         {
-            return value >= 0.0
-                ? (Int32)Math.Ceiling(value - 0.5)
-                : -(Int32)Math.Ceiling(Math.Abs(value) - 0.5);
+            return Value >= 0.0
+                ? (Int32)Math.Ceiling(Value - Constants.HALF_SCALE)
+                : -(Int32)Math.Ceiling(Math.Abs(Value) - Constants.HALF_SCALE);
         }
+
+        /// <summary>
+        /// Executes the fill polygon scanline operation.
+        /// </summary>
+        /// <param name="Image">The image used by the operation.</param>
+        /// <param name="Xs">The xs used by the operation.</param>
+        /// <param name="Ys">The ys used by the operation.</param>
+        /// <param name="Color">The color used by the operation.</param>
 
         private static void FillPolygonScanline
             (
-            Image<Rgba32> image,
-            Int32[] xs,
-            Int32[] ys,
-            Rgba32 color
+            Image<Rgba32> Image,
+            Int32[] Xs,
+            Int32[] Ys,
+            Rgba32 Color
             )
         {
-            Int32 Count = xs.Length;
-            Int32 MinY = ys.Min();
-            Int32 MaxY = ys.Max();
+            Int32 Count = Xs.Length;
+            Int32 MinY = Ys.Min();
+            Int32 MaxY = Ys.Max();
             for (Int32 Y = MinY; Y <= MaxY; Y += 1)
             {
                 List<Double> Intersections = new List<Double>();
                 for (Int32 Iter = 0; Iter < Count; Iter += 1)
                 {
-                    Int32 Y0 = ys[Iter];
-                    Int32 Y1 = ys[(Iter + 1) % Count];
-                    Int32 X0 = xs[Iter];
-                    Int32 X1 = xs[(Iter + 1) % Count];
+                    Int32 Y0 = Ys[Iter];
+                    Int32 Y1 = Ys[(Iter + 1) % Count];
+                    Int32 X0 = Xs[Iter];
+                    Int32 X1 = Xs[(Iter + 1) % Count];
                     if (Y0 == Y1)
                     {
                         continue;
@@ -1287,33 +1476,43 @@ namespace HaulBuilder
                     Int32 XEnd = RoundDown(Intersections[Iter]);
                     for (Int32 X = XStart; X <= XEnd; X += 1)
                     {
-                        Plot(image, X, Y, color);
+                        Plot(Image, X, Y, Color);
                     }
                 }
             }
         }
 
+        /// <summary>
+        /// Renders thin line bresenham.
+        /// </summary>
+        /// <param name="Image">The image used by the operation.</param>
+        /// <param name="X0">The x0 used by the operation.</param>
+        /// <param name="Y0">The y0 used by the operation.</param>
+        /// <param name="X1">The x1 used by the operation.</param>
+        /// <param name="Y1">The y1 used by the operation.</param>
+        /// <param name="Color">The color used by the operation.</param>
+
         private static void DrawThinLineBresenham
             (
-            Image<Rgba32> image,
-            Int32 x0,
-            Int32 y0,
-            Int32 x1,
-            Int32 y1,
-            Rgba32 color
+            Image<Rgba32> Image,
+            Int32 X0,
+            Int32 Y0,
+            Int32 X1,
+            Int32 Y1,
+            Rgba32 Color
             )
         {
-            Int32 Dx = Math.Abs(x1 - x0);
-            Int32 Dy = Math.Abs(y1 - y0);
-            Int32 Sx = (x0 < x1) ? 1 : -1;
-            Int32 Sy = (y0 < y1) ? 1 : -1;
+            Int32 Dx = Math.Abs(X1 - X0);
+            Int32 Dy = Math.Abs(Y1 - Y0);
+            Int32 Sx = (X0 < X1) ? 1 : -1;
+            Int32 Sy = (Y0 < Y1) ? 1 : -1;
             Int32 Err = (Dx - Dy);
-            Int32 X = x0;
-            Int32 Y = y0;
+            Int32 X = X0;
+            Int32 Y = Y0;
             while (true)
             {
-                Plot(image, X, Y, color);
-                if ((X == x1) && (Y == y1))
+                Plot(Image, X, Y, Color);
+                if ((X == X1) && (Y == Y1))
                 {
                     break;
                 }
@@ -1333,84 +1532,121 @@ namespace HaulBuilder
             }
         }
 
+        /// <summary>
+        /// Renders filled square.
+        /// </summary>
+        /// <param name="Image">The image used by the operation.</param>
+        /// <param name="Cx">The cx used by the operation.</param>
+        /// <param name="Cy">The cy used by the operation.</param>
+        /// <param name="Width">The width used by the operation.</param>
+        /// <param name="Color">The color used by the operation.</param>
+
         private static void DrawFilledSquare
             (
-            Image<Rgba32> image,
-            Int32 cx,
-            Int32 cy,
-            Int32 width,
-            Rgba32 color
+            Image<Rgba32> Image,
+            Int32 Cx,
+            Int32 Cy,
+            Int32 Width,
+            Rgba32 Color
             )
         {
-            Int32 Half = width / 2;
-            for (Int32 Dy = -Half; Dy <= (width - Half - 1); Dy += 1)
+            Int32 Half = Width / 2;
+            for (Int32 Dy = -Half; Dy <= (Width - Half - 1); Dy += 1)
             {
-                for (Int32 Dx = -Half; Dx <= (width - Half - 1); Dx += 1)
+                for (Int32 Dx = -Half; Dx <= (Width - Half - 1); Dx += 1)
                 {
-                    Plot(image, cx + Dx, cy + Dy, color);
+                    Plot(Image, Cx + Dx, Cy + Dy, Color);
                 }
             }
         }
+
+        /// <summary>
+        /// Renders circle.
+        /// </summary>
+        /// <param name="Image">The image used by the operation.</param>
+        /// <param name="X">Horizontal coordinate in field units.</param>
+        /// <param name="Y">Vertical coordinate in field units.</param>
+        /// <param name="Radius">The radius used by the operation.</param>
+        /// <param name="Fill">The fill used by the operation.</param>
+        /// <param name="Stroke">The stroke used by the operation.</param>
 
         private static void DrawCircle
             (
-            Image<Rgba32> image,
-            Double x,
-            Double y,
-            Int32 radius,
-            Rgba32 fill,
-            Rgba32 stroke
+            Image<Rgba32> Image,
+            Double X,
+            Double Y,
+            Int32 Radius,
+            Rgba32 Fill,
+            Rgba32 Stroke
             )
         {
             // Marker circles are rasterized manually to avoid optional drawing package dependencies.
-            DrawCircleFilled(image, (Int32)Math.Round(x), (Int32)Math.Round(y), radius, fill);
-            Int32 Outline = Math.Max(1, radius / 4);
+            DrawCircleFilled(Image, (Int32)Math.Round(X), (Int32)Math.Round(Y), Radius, Fill);
+            Int32 Outline = Math.Max(1, Radius / 4);
             for (Int32 Iter = 0; Iter < Outline; Iter += 1)
             {
-                DrawCircleRing(image, (Int32)Math.Round(x), (Int32)Math.Round(y), Math.Max(1, radius - Iter), stroke);
+                DrawCircleRing(Image, (Int32)Math.Round(X), (Int32)Math.Round(Y), Math.Max(1, Radius - Iter), Stroke);
             }
         }
 
+        /// <summary>
+        /// Renders circle filled.
+        /// </summary>
+        /// <param name="Image">The image used by the operation.</param>
+        /// <param name="Cx">The cx used by the operation.</param>
+        /// <param name="Cy">The cy used by the operation.</param>
+        /// <param name="Radius">The radius used by the operation.</param>
+        /// <param name="Color">The color used by the operation.</param>
+
         private static void DrawCircleFilled
             (
-            Image<Rgba32> image,
-            Int32 cx,
-            Int32 cy,
-            Int32 radius,
-            Rgba32 color
+            Image<Rgba32> Image,
+            Int32 Cx,
+            Int32 Cy,
+            Int32 Radius,
+            Rgba32 Color
             )
         {
             // Filled disk stamp is reused by markers and thick polyline drawing.
-            for (Int32 Dy = -radius; Dy <= radius; Dy += 1)
+            for (Int32 Dy = -Radius; Dy <= Radius; Dy += 1)
             {
-                for (Int32 Dx = -radius; Dx <= radius; Dx += 1)
+                for (Int32 Dx = -Radius; Dx <= Radius; Dx += 1)
                 {
-                    if (((Dx * Dx) + (Dy * Dy)) > (radius * radius)) continue;
-                    Int32 X = (cx + Dx);
-                    Int32 Y = (cy + Dy);
-                    if ((X < 0) || (Y < 0) || (X >= image.Width) || (Y >= image.Height)) continue;
-                    image[X, Y] = color;
+                    if (((Dx * Dx) + (Dy * Dy)) > (Radius * Radius)) continue;
+                    Int32 X = (Cx + Dx);
+                    Int32 Y = (Cy + Dy);
+                    if ((X < 0) || (Y < 0) || (X >= Image.Width) || (Y >= Image.Height)) continue;
+                    Image[X, Y] = Color;
                 }
             }
         }
 
+        /// <summary>
+        /// Renders circle ring.
+        /// </summary>
+        /// <param name="Image">The image used by the operation.</param>
+        /// <param name="Cx">The cx used by the operation.</param>
+        /// <param name="Cy">The cy used by the operation.</param>
+        /// <param name="Radius">The radius used by the operation.</param>
+        /// <param name="Color">The color used by the operation.</param>
+
         private static void DrawCircleRing
             (
-            Image<Rgba32> image,
-            Int32 cx,
-            Int32 cy,
-            Int32 radius,
-            Rgba32 color
+            Image<Rgba32> Image,
+            Int32 Cx,
+            Int32 Cy,
+            Int32 Radius,
+            Rgba32 Color
             )
         {
             // Ring midpoint stepping draws a crisp border around waypoint markers.
-            if (radius <= 0) return;
-            Int32 X = radius;
+            if (Radius <= 0) return;
+            Int32 X = Radius;
             Int32 Y = 0;
             Int32 Err = 0;
             while (X >= Y)
             {
-                Plot8(image, cx, cy, X, Y, color);
+                Plot8(Image, Cx, Cy, X, Y, Color);
                 Y += 1;
                 if (Err <= 0)
                 {
@@ -1424,65 +1660,97 @@ namespace HaulBuilder
             }
         }
 
+        /// <summary>
+        /// Renders plot8.
+        /// </summary>
+        /// <param name="Image">The image used by the operation.</param>
+        /// <param name="Cx">The cx used by the operation.</param>
+        /// <param name="Cy">The cy used by the operation.</param>
+        /// <param name="X">Horizontal coordinate in field units.</param>
+        /// <param name="Y">Vertical coordinate in field units.</param>
+        /// <param name="Color">The color used by the operation.</param>
+
         private static void Plot8
             (
-            Image<Rgba32> image,
-            Int32 cx,
-            Int32 cy,
-            Int32 x,
-            Int32 y,
-            Rgba32 color
+            Image<Rgba32> Image,
+            Int32 Cx,
+            Int32 Cy,
+            Int32 X,
+            Int32 Y,
+            Rgba32 Color
             )
         {
             // Eight-way symmetry keeps circle plotting branch-free at call sites.
-            Plot(image, (cx + x), (cy + y), color);
-            Plot(image, (cx + y), (cy + x), color);
-            Plot(image, (cx - y), (cy + x), color);
-            Plot(image, (cx - x), (cy + y), color);
-            Plot(image, (cx - x), (cy - y), color);
-            Plot(image, (cx - y), (cy - x), color);
-            Plot(image, (cx + y), (cy - x), color);
-            Plot(image, (cx + x), (cy - y), color);
+            Plot(Image, (Cx + X), (Cy + Y), Color);
+            Plot(Image, (Cx + Y), (Cy + X), Color);
+            Plot(Image, (Cx - Y), (Cy + X), Color);
+            Plot(Image, (Cx - X), (Cy + Y), Color);
+            Plot(Image, (Cx - X), (Cy - Y), Color);
+            Plot(Image, (Cx - Y), (Cy - X), Color);
+            Plot(Image, (Cx + Y), (Cy - X), Color);
+            Plot(Image, (Cx + X), (Cy - Y), Color);
         }
+
+        /// <summary>
+        /// Renders plot.
+        /// </summary>
+        /// <param name="Image">The image used by the operation.</param>
+        /// <param name="X">Horizontal coordinate in field units.</param>
+        /// <param name="Y">Vertical coordinate in field units.</param>
+        /// <param name="Color">The color used by the operation.</param>
 
         private static void Plot
             (
-            Image<Rgba32> image,
-            Int32 x,
-            Int32 y,
-            Rgba32 color
+            Image<Rgba32> Image,
+            Int32 X,
+            Int32 Y,
+            Rgba32 Color
             )
         {
             // Bounds checks are centralized so primitive routines remain simple.
-            if ((x < 0) || (y < 0) || (x >= image.Width) || (y >= image.Height)) return;
-            image[x, y] = color;
+            if ((X < 0) || (Y < 0) || (X >= Image.Width) || (Y >= Image.Height)) return;
+            Image[X, Y] = Color;
         }
+
+        /// <summary>
+        /// Renders text digit.
+        /// </summary>
+        /// <param name="Image">The image used by the operation.</param>
+        /// <param name="CenterX">Horizontal coordinate in field units.</param>
+        /// <param name="CenterY">Vertical coordinate in field units.</param>
+        /// <param name="Text">The text used by the operation.</param>
 
         private static void DrawTextDigit
             (
-            Image<Rgba32> image,
-            Int32 centerX,
-            Int32 centerY,
-            String text
+            Image<Rgba32> Image,
+            Int32 CenterX,
+            Int32 CenterY,
+            String Text
             )
         {
             // Small bitmap digits avoid adding a font rasterizer dependency just for waypoint labels.
-            if (String.IsNullOrWhiteSpace(text)) return;
-            String Value = text.Trim();
-            Int32 OffsetX = centerX - (Value.Length * 4);
+            if (String.IsNullOrWhiteSpace(Text)) return;
+            String Value = Text.Trim();
+            Int32 OffsetX = CenterX - (Value.Length * 4);
             for (Int32 Iter = 0; Iter < Value.Length; Iter += 1)
             {
-                DrawGlyph(image, Value[Iter], (OffsetX + (Iter * 8)), (centerY - 4), new Rgba32(0, 0, 0, 255));
+                DrawGlyph(Image, Value[Iter], (OffsetX + (Iter * 8)), (CenterY - 4), new Rgba32(0, 0, 0, Constants.MAX_COLOR_CHANNEL));
             }
         }
 
+        /// <summary>
+        /// Executes the grid exclusions operation.
+        /// </summary>
+        /// <param name="Grid">Field grid used by the operation.</param>
+        /// <returns>The resulting grid exclusions.</returns>
+
         private static IReadOnlyList<IReadOnlyList<(Double X, Double Y)>> GridExclusions
             (
-            Grid grid
+            Grid Grid
             )
         {
             // Reflection keeps this renderer compatible with grid variants that may omit exclusions.
-            Object? Value = grid.GetType().GetProperty("Exclusions")?.GetValue(grid);
+            Object? Value = Grid.GetType().GetProperty("Exclusions")?.GetValue(Grid);
             if (Value is IReadOnlyList<IReadOnlyList<(Double X, Double Y)>> Typed)
             {
                 return Typed;
@@ -1491,69 +1759,94 @@ namespace HaulBuilder
             return Array.Empty<IReadOnlyList<(Double X, Double Y)>>();
         }
 
+        /// <summary>
+        /// Executes the flow has arrow operation.
+        /// </summary>
+        /// <param name="Flow">The flow used by the operation.</param>
+        /// <param name="Bx">The bx used by the operation.</param>
+        /// <param name="By">The by used by the operation.</param>
+        /// <returns>The resulting flow has arrow.</returns>
+
         private static Boolean FlowHasArrow
             (
-            FlowField flow,
-            Int32 bx,
-            Int32 by
+            FlowField Flow,
+            Int32 Bx,
+            Int32 By
             )
         {
             // Both array-backed and method-backed flow ports are supported.
-            Object? ArrowArray = flow.GetType().GetProperty("HasArrow")?.GetValue(flow);
+            Object? ArrowArray = Flow.GetType().GetProperty("HasArrow")?.GetValue(Flow);
             if (ArrowArray is Boolean[,] Matrix)
             {
-                return Matrix[by, bx];
+                return Matrix[By, Bx];
             }
 
-            System.Reflection.MethodInfo? HasArrowMethod = flow.GetType().GetMethod("HasArrow");
+            System.Reflection.MethodInfo? HasArrowMethod = Flow.GetType().GetMethod("HasArrow");
             if (HasArrowMethod is not null)
             {
-                Object? Result = HasArrowMethod.Invoke(flow, new Object[] { bx, by });
+                Object? Result = HasArrowMethod.Invoke(Flow, new Object[] { Bx, By });
                 if (Result is Boolean Flag) return Flag;
             }
 
             return false;
         }
 
+        /// <summary>
+        /// Executes the flow direction deg operation.
+        /// </summary>
+        /// <param name="Flow">The flow used by the operation.</param>
+        /// <param name="Bx">The bx used by the operation.</param>
+        /// <param name="By">The by used by the operation.</param>
+        /// <returns>The resulting flow direction deg.</returns>
+
         private static Double FlowDirectionDeg
             (
-            FlowField flow,
-            Int32 bx,
-            Int32 by
+            FlowField Flow,
+            Int32 Bx,
+            Int32 By
             )
         {
             // Direction lookup falls back to fx/fy vector conversion when a direct helper is absent.
-            System.Reflection.MethodInfo? DirectionMethod = flow.GetType().GetMethod("DirectionDeg");
+            System.Reflection.MethodInfo? DirectionMethod = Flow.GetType().GetMethod("DirectionDeg");
             if (DirectionMethod is not null)
             {
-                Object? Value = DirectionMethod.Invoke(flow, new Object[] { bx, by });
+                Object? Value = DirectionMethod.Invoke(Flow, new Object[] { Bx, By });
                 if (Value is Double Degrees) return Degrees;
             }
 
-            Object? FxValue = flow.GetType().GetProperty("Fx")?.GetValue(flow);
-            Object? FyValue = flow.GetType().GetProperty("Fy")?.GetValue(flow);
+            Object? FxValue = Flow.GetType().GetProperty("Fx")?.GetValue(Flow);
+            Object? FyValue = Flow.GetType().GetProperty("Fy")?.GetValue(Flow);
             if ((FxValue is Double[,] Fx) && (FyValue is Double[,] Fy))
             {
-                Double Rad = Math.Atan2(Fx[by, bx], Fy[by, bx]);
-                Double Deg = (Rad * (180.0 / Math.PI));
-                if (Deg < 0.0) Deg += 360.0;
+                Double Rad = Math.Atan2(Fx[By, Bx], Fy[By, Bx]);
+                Double Deg = (Rad * (Constants.DEGREES_PER_HALF_TURN / Math.PI));
+                if (Deg < 0.0) Deg += Constants.DEGREES_PER_TURN;
                 return Deg;
             }
 
             return 0.0;
         }
 
+        /// <summary>
+        /// Renders glyph.
+        /// </summary>
+        /// <param name="Image">The image used by the operation.</param>
+        /// <param name="Ch">The ch used by the operation.</param>
+        /// <param name="X">Horizontal coordinate in field units.</param>
+        /// <param name="Y">Vertical coordinate in field units.</param>
+        /// <param name="Color">The color used by the operation.</param>
+
         private static void DrawGlyph
             (
-            Image<Rgba32> image,
-            Char ch,
-            Int32 x,
-            Int32 y,
-            Rgba32 color
+            Image<Rgba32> Image,
+            Char Ch,
+            Int32 X,
+            Int32 Y,
+            Rgba32 Color
             )
         {
             // Minimal 3x5 digit glyphs keep labels legible without external drawing libraries.
-            String[] Glyph = ch switch
+            String[] Glyph = Ch switch
             {
                 '0' => new[] { "111", "101", "101", "101", "111" },
                 '1' => new[] { "010", "110", "010", "010", "111" },
@@ -1573,123 +1866,159 @@ namespace HaulBuilder
                 for (Int32 Col = 0; Col < Line.Length; Col += 1)
                 {
                     if (Line[Col] != '1') continue;
-                    Plot(image, (x + Col), (y + Row), color);
+                    Plot(Image, (X + Col), (Y + Row), Color);
                 }
             }
         }
 
+        /// <summary>
+        /// Executes the to png operation.
+        /// </summary>
+        /// <param name="Image">The image used by the operation.</param>
+        /// <returns>The resulting to png.</returns>
+
         private static Byte[] ToPng
             (
-            Image<Rgba32> image
+            Image<Rgba32> Image
             )
         {
             // Memory-stream encoding keeps the render API file-system independent.
             using MemoryStream Stream = new MemoryStream();
-            image.Save(Stream, new PngEncoder());
+            Image.Save(Stream, new PngEncoder());
             return Stream.ToArray();
         }
 
+        /// <summary>
+        /// Executes the percentile linear operation.
+        /// </summary>
+        /// <param name="SortedValues">The sorted values used by the operation.</param>
+        /// <param name="Percentile">The percentile used by the operation.</param>
+        /// <returns>The resulting percentile linear.</returns>
+
         private static Single PercentileLinear
             (
-            IReadOnlyList<Single> sortedValues,
-            Double percentile
+            IReadOnlyList<Single> SortedValues,
+            Double Percentile
             )
         {
             // Matches numpy.percentile(..., method="linear") used by Python render_pass_pairs_png.
-            if (sortedValues.Count == 0)
+            if (SortedValues.Count == 0)
             {
                 return 1.0f;
             }
 
-            if (sortedValues.Count == 1)
+            if (SortedValues.Count == 1)
             {
-                return sortedValues[0];
+                return SortedValues[0];
             }
 
-            Double Index = percentile * (sortedValues.Count - 1);
+            Double Index = Percentile * (SortedValues.Count - 1);
             Int32 Lo = (Int32)Math.Floor(Index);
             Int32 Hi = (Int32)Math.Ceiling(Index);
             if (Lo == Hi)
             {
-                return sortedValues[Lo];
+                return SortedValues[Lo];
             }
 
             Double Weight = Index - Lo;
-            return (Single)((sortedValues[Lo] * (1.0 - Weight)) + (sortedValues[Hi] * Weight));
+            return (Single)((SortedValues[Lo] * (1.0 - Weight)) + (SortedValues[Hi] * Weight));
         }
+
+        /// <summary>
+        /// Executes the heat map color operation.
+        /// </summary>
+        /// <param name="T">The t used by the operation.</param>
+        /// <returns>The resulting heat map color.</returns>
 
         private static Rgba32 HeatMapColor
             (
-            Single t
+            Single T
             )
         {
             // Yellow -> orange -> red ramp (_HEAT_STOPS / _HEAT_COLORS in Python render.py).
-            Double[] Stops = { 0.0, 0.5, 1.0 };
-            Double[] Rs = { 255.0, 255.0, 200.0 };
+            Double[] Stops = { 0.0, Constants.HALF_SCALE, 1.0 };
+            Double[] Rs = { Constants.MAX_COLOR_CHANNEL, Constants.MAX_COLOR_CHANNEL, 200.0 };
             Double[] Gs = { 225.0, 110.0, 0.0 };
             Double[] Bs = { 0.0, 0.0, 0.0 };
             return new Rgba32(
-                TruncByte(NumpyInterp(t, Stops, Rs)),
-                TruncByte(NumpyInterp(t, Stops, Gs)),
-                TruncByte(NumpyInterp(t, Stops, Bs)),
-                255);
+                TruncByte(NumpyInterp(T, Stops, Rs)),
+                TruncByte(NumpyInterp(T, Stops, Gs)),
+                TruncByte(NumpyInterp(T, Stops, Bs)),
+                Constants.MAX_COLOR_CHANNEL);
         }
+
+        /// <summary>
+        /// Executes the numpy interp operation.
+        /// </summary>
+        /// <param name="X">Horizontal coordinate in field units.</param>
+        /// <param name="Xp">The xp used by the operation.</param>
+        /// <param name="Fp">The fp used by the operation.</param>
+        /// <returns>The resulting numpy interp.</returns>
 
         private static Double NumpyInterp
             (
-            Double x,
-            Double[] xp,
-            Double[] fp
+            Double X,
+            Double[] Xp,
+            Double[] Fp
             )
         {
-            if (x <= xp[0])
+            if (X <= Xp[0])
             {
-                return fp[0];
+                return Fp[0];
             }
 
-            Int32 Last = xp.Length - 1;
-            if (x >= xp[Last])
+            Int32 Last = Xp.Length - 1;
+            if (X >= Xp[Last])
             {
-                return fp[Last];
+                return Fp[Last];
             }
 
             for (Int32 Iter = 0; Iter < Last; Iter += 1)
             {
-                if (x < xp[Iter + 1])
+                if (X < Xp[Iter + 1])
                 {
-                    Double T = (x - xp[Iter]) / (xp[Iter + 1] - xp[Iter]);
-                    return fp[Iter] + (T * (fp[Iter + 1] - fp[Iter]));
+                    Double T = (X - Xp[Iter]) / (Xp[Iter + 1] - Xp[Iter]);
+                    return Fp[Iter] + (T * (Fp[Iter + 1] - Fp[Iter]));
                 }
             }
 
-            return fp[Last];
+            return Fp[Last];
         }
+
+        /// <summary>
+        /// Executes the alpha composite pixel operation.
+        /// </summary>
+        /// <param name="Image">The image used by the operation.</param>
+        /// <param name="X">Horizontal coordinate in field units.</param>
+        /// <param name="Y">Vertical coordinate in field units.</param>
+        /// <param name="Source">The source used by the operation.</param>
+        /// <param name="SourceAlpha">The source alpha used by the operation.</param>
 
         private static void AlphaCompositePixel
             (
-            Image<Rgba32> image,
-            Int32 x,
-            Int32 y,
-            Rgba32 source,
-            Byte sourceAlpha
+            Image<Rgba32> Image,
+            Int32 X,
+            Int32 Y,
+            Rgba32 Source,
+            Byte SourceAlpha
             )
         {
             // PIL Image.alpha_composite over the existing base pixel.
-            Rgba32 Dest = image[x, y];
-            Double Sa = sourceAlpha / 255.0;
-            Double Da = Dest.A / 255.0;
+            Rgba32 Dest = Image[X, Y];
+            Double Sa = SourceAlpha / Constants.MAX_COLOR_CHANNEL;
+            Double Da = Dest.A / Constants.MAX_COLOR_CHANNEL;
             Double OutA = Sa + (Da * (1.0 - Sa));
-            if (OutA <= 1e-12)
+            if (OutA <= Constants.STRICT_NUMERIC_COMPARISON_TOLERANCE)
             {
-                image[x, y] = new Rgba32(0, 0, 0, 0);
+                Image[X, Y] = new Rgba32(0, 0, 0, 0);
                 return;
             }
 
-            Byte R = (Byte)Math.Round(((source.R * Sa) + (Dest.R * Da * (1.0 - Sa))) / OutA, MidpointRounding.AwayFromZero);
-            Byte G = (Byte)Math.Round(((source.G * Sa) + (Dest.G * Da * (1.0 - Sa))) / OutA, MidpointRounding.AwayFromZero);
-            Byte B = (Byte)Math.Round(((source.B * Sa) + (Dest.B * Da * (1.0 - Sa))) / OutA, MidpointRounding.AwayFromZero);
-            Byte A = (Byte)Math.Round(OutA * 255.0, MidpointRounding.AwayFromZero);
-            image[x, y] = new Rgba32(R, G, B, A);
+            Byte R = (Byte)Math.Round(((Source.R * Sa) + (Dest.R * Da * (1.0 - Sa))) / OutA, MidpointRounding.AwayFromZero);
+            Byte G = (Byte)Math.Round(((Source.G * Sa) + (Dest.G * Da * (1.0 - Sa))) / OutA, MidpointRounding.AwayFromZero);
+            Byte B = (Byte)Math.Round(((Source.B * Sa) + (Dest.B * Da * (1.0 - Sa))) / OutA, MidpointRounding.AwayFromZero);
+            Byte A = (Byte)Math.Round(OutA * Constants.MAX_COLOR_CHANNEL, MidpointRounding.AwayFromZero);
+            Image[X, Y] = new Rgba32(R, G, B, A);
         }
     }
 }

@@ -14,10 +14,10 @@ namespace HaulBuilder
     /// conserved changes are accepted. Route count and every cut ownership
     /// remain fixed.
     /// </summary>
-    public static class HaulCycleChainOptimizer
+    static public class HaulCycleChainOptimizer
     {
-        private const Double LOAD_TOLERANCE_BCY = 1e-9;
-        private const Double DEPTH_TOLERANCE_M = 1e-9;
+        private const Double LOAD_TOLERANCE_BCY = Constants.NUMERIC_COMPARISON_TOLERANCE;
+        private const Double DEPTH_TOLERANCE_M = Constants.NUMERIC_COMPARISON_TOLERANCE;
 
         /// <summary>Joint field-wide optimization diagnostics.</summary>
         public sealed class Result
@@ -96,7 +96,7 @@ namespace HaulBuilder
             TimeParams TimeParameters,
             Int32 MaximumRounds = 2,
             Int32 ExactCandidatesPerRoute = 4,
-            Double MinimumImprovementSeconds = 0.25,
+            Double MinimumImprovementSeconds = Constants.QUARTER_SCALE,
             ObstacleField? Obstacles = null)
         {
             if (OrderedSource == null)
@@ -260,9 +260,9 @@ namespace HaulBuilder
                         // different real costs. Never trade a regression in
                         // either one for an apparent gain in the other.
                         if ((AfterLocalProxySeconds
-                                > BeforeLocalProxySeconds + 1e-9)
+                                > BeforeLocalProxySeconds + Constants.NUMERIC_COMPARISON_TOLERANCE)
                             || (AfterLocalCompactM
-                                > BeforeLocalCompactM + 1e-9))
+                                > BeforeLocalCompactM + Constants.NUMERIC_COMPARISON_TOLERANCE))
                         {
                             continue;
                         }
@@ -278,7 +278,7 @@ namespace HaulBuilder
                         Double DeltaSeconds = AfterLocalSeconds
                             - BeforeLocalSeconds;
                         if ((DeltaSeconds < BestDeltaSeconds)
-                            || ((Math.Abs(DeltaSeconds - BestDeltaSeconds) <= 1e-9)
+                            || ((Math.Abs(DeltaSeconds - BestDeltaSeconds) <= Constants.NUMERIC_COMPARISON_TOLERANCE)
                                 && (Second < BestSecondIndex)))
                         {
                             BestDeltaSeconds = DeltaSeconds;
@@ -355,6 +355,16 @@ namespace HaulBuilder
                 AfterTransitionSeconds);
         }
 
+        /// <summary>
+        /// Executes the local objective seconds operation.
+        /// </summary>
+        /// <param name="Index">Zero-based item index.</param>
+        /// <param name="Passes">The passes used by the operation.</param>
+        /// <param name="Evaluator">The evaluator used by the operation.</param>
+        /// <param name="Grid">Field grid used by the operation.</param>
+        /// <param name="TimeParameters">The time parameters used by the operation.</param>
+        /// <returns>The resulting local objective seconds.</returns>
+
         private static Double LocalObjectiveSeconds(
             Int32 Index,
             IReadOnlyList<Pass> Passes,
@@ -370,6 +380,19 @@ namespace HaulBuilder
                 Grid, Passes[Index], TimeParameters) + TransitionSeconds;
         }
 
+        /// <summary>
+        /// Executes the local pair objective seconds operation.
+        /// </summary>
+        /// <param name="FirstIndex">Zero-based item index.</param>
+        /// <param name="SecondIndex">Zero-based item index.</param>
+        /// <param name="First">The first used by the operation.</param>
+        /// <param name="Second">The second used by the operation.</param>
+        /// <param name="Current">The current used by the operation.</param>
+        /// <param name="Evaluator">The evaluator used by the operation.</param>
+        /// <param name="Grid">Field grid used by the operation.</param>
+        /// <param name="TimeParameters">The time parameters used by the operation.</param>
+        /// <returns>The resulting local pair objective seconds.</returns>
+
         private static Double LocalPairObjectiveSeconds(
             Int32 FirstIndex,
             Int32 SecondIndex,
@@ -380,6 +403,9 @@ namespace HaulBuilder
             Grid Grid,
             TimeParams TimeParameters)
         {
+            // Returns the pass occupying a requested position in the
+            // candidate three-route chain.
+
             Pass At(Int32 Index)
             {
                 if (Index == FirstIndex) return First;
@@ -403,6 +429,16 @@ namespace HaulBuilder
                 + TransitionSeconds;
         }
 
+        /// <summary>
+        /// Executes the cheap pair delta m operation.
+        /// </summary>
+        /// <param name="First">The first used by the operation.</param>
+        /// <param name="Second">The second used by the operation.</param>
+        /// <param name="Passes">The passes used by the operation.</param>
+        /// <param name="Cuts">The cuts used by the operation.</param>
+        /// <param name="Fills">The fills used by the operation.</param>
+        /// <returns>The resulting cheap pair delta m.</returns>
+
         private static Double CheapPairDeltaM(
             Int32 First,
             Int32 Second,
@@ -410,6 +446,9 @@ namespace HaulBuilder
             IReadOnlyList<(Double X, Double Y)> Cuts,
             IReadOnlyList<(Double X, Double Y)> Fills)
         {
+            // Evaluates the cached or newly measured distance between a cut
+            // and fill candidate.
+
             Double Cost(Int32 CutIndex, Int32 FillIndex)
             {
                 Double Value = Distance(Cuts[CutIndex], Fills[FillIndex]);
@@ -427,6 +466,13 @@ namespace HaulBuilder
                 - Cost(Second, Second);
         }
 
+        /// <summary>
+        /// Executes the insert candidate operation.
+        /// </summary>
+        /// <param name="Candidates">The candidates used by the operation.</param>
+        /// <param name="Candidate">The candidate used by the operation.</param>
+        /// <param name="MaximumCount">Count limit applied by the operation.</param>
+
         private static void InsertCandidate(
             List<(Int32 Second, Double DeltaM)> Candidates,
             (Int32 Second, Double DeltaM) Candidate,
@@ -443,6 +489,16 @@ namespace HaulBuilder
                 Candidates.RemoveAt(Candidates.Count - 1);
             }
         }
+
+        /// <summary>
+        /// Executes the rebuild with fill operation.
+        /// </summary>
+        /// <param name="CutSource">The cut source used by the operation.</param>
+        /// <param name="FillCells">The fill cells used by the operation.</param>
+        /// <param name="FillHeadingDeg">Direction in degrees.</param>
+        /// <param name="Grid">Field grid used by the operation.</param>
+        /// <param name="Obstacles">The obstacles used by the operation.</param>
+        /// <returns>The resulting rebuild with fill.</returns>
 
         private static Pass RebuildWithFill(
             Pass CutSource,
@@ -463,6 +519,13 @@ namespace HaulBuilder
             return Rebuilt;
         }
 
+        /// <summary>
+        /// Executes the transition seconds operation.
+        /// </summary>
+        /// <param name="Passes">The passes used by the operation.</param>
+        /// <param name="Evaluator">The evaluator used by the operation.</param>
+        /// <returns>The resulting transition seconds.</returns>
+
         private static Double TransitionSeconds(
             IReadOnlyList<Pass> Passes,
             Routing.TransitionCostEvaluator Evaluator)
@@ -475,6 +538,14 @@ namespace HaulBuilder
             }
             return Seconds;
         }
+
+        /// <summary>
+        /// Executes the same work operation.
+        /// </summary>
+        /// <param name="First">The first used by the operation.</param>
+        /// <param name="Second">The second used by the operation.</param>
+        /// <param name="FillKind">The fill kind used by the operation.</param>
+        /// <returns>The resulting same work.</returns>
 
         private static Boolean SameWork(
             IEnumerable<Pass> First,
@@ -496,6 +567,13 @@ namespace HaulBuilder
                     <= DEPTH_TOLERANCE_M);
         }
 
+        /// <summary>
+        /// Executes the centroid operation.
+        /// </summary>
+        /// <param name="Cells">The cells used by the operation.</param>
+        /// <param name="Grid">Field grid used by the operation.</param>
+        /// <returns>The resulting centroid.</returns>
+
         private static (Double X, Double Y) Centroid(
             IReadOnlyList<((Int32 Bx, Int32 By) Cell, Double DepthM)> Cells,
             Grid Grid)
@@ -513,6 +591,13 @@ namespace HaulBuilder
             }
             return (X / Weight, Y / Weight);
         }
+
+        /// <summary>
+        /// Executes the distance operation.
+        /// </summary>
+        /// <param name="First">The first used by the operation.</param>
+        /// <param name="Second">The second used by the operation.</param>
+        /// <returns>The resulting distance.</returns>
 
         private static Double Distance(
             (Double X, Double Y) First,

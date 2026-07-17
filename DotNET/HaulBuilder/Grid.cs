@@ -6,7 +6,7 @@ namespace HaulBuilder
     /// <summary>
     /// Grid construction and BCY conversion utilities ported from landlevel.grid.
     /// </summary>
-    public static class GridMath
+    static public class GridMath
     {
         private const Double DEFAULT_COMPACTION = 1.2;
         private const Double DEFAULT_GRID_SIZE_FT = 8.5;
@@ -92,7 +92,7 @@ namespace HaulBuilder
                 return 0;
             }
 
-            return (Int32)Math.Ceiling(AbsDeltaM / (MaxDepthMm / 1000.0));
+            return (Int32)Math.Ceiling(AbsDeltaM / (MaxDepthMm / Constants.MILLIMETERS_PER_METER));
         }
 
         /// <summary>
@@ -177,10 +177,10 @@ namespace HaulBuilder
                 Mask = new Boolean[Height, Width];
                 for (Int32 By = 0; By < Height; By += 1)
                 {
-                    Double Cy = MinY + ((By + 0.5) * GridSizeM);
+                    Double Cy = MinY + ((By + Constants.HALF_SCALE) * GridSizeM);
                     for (Int32 Bx = 0; Bx < Width; Bx += 1)
                     {
-                        Double Cx = MinX + ((Bx + 0.5) * GridSizeM);
+                        Double Cx = MinX + ((Bx + Constants.HALF_SCALE) * GridSizeM);
                         Mask[By, Bx] = PointInPolygon(Cx, Cy, Ring);
                         if (Occupied[By, Bx])
                         {
@@ -688,7 +688,7 @@ namespace HaulBuilder
                 (Double Xj, Double Yj) = Ring[J];
                 if ((Yi > Y) != (Yj > Y))
                 {
-                    Double XAtY = ((Xj - Xi) * (Y - Yi) / ((Yj - Yi) + 1e-12)) + Xi;
+                    Double XAtY = ((Xj - Xi) * (Y - Yi) / ((Yj - Yi) + Constants.STRICT_NUMERIC_COMPARISON_TOLERANCE)) + Xi;
                     if (X <= XAtY)
                     {
                         Inside = !Inside;
@@ -842,6 +842,13 @@ namespace HaulBuilder
             }
         }
 
+        /// <summary>
+        /// Executes the or mask operation.
+        /// </summary>
+        /// <param name="A">The a used by the operation.</param>
+        /// <param name="B">The b used by the operation.</param>
+        /// <returns>The resulting or mask.</returns>
+
         static private Boolean[,] OrMask
             (
             Boolean[,] A,
@@ -929,10 +936,10 @@ namespace HaulBuilder
             CenterY = new Double[Height, Width];
             for (Int32 By = 0; By < Height; By += 1)
             {
-                Double Cy = MinY + ((By + 0.5) * GridSizeM);
+                Double Cy = MinY + ((By + Constants.HALF_SCALE) * GridSizeM);
                 for (Int32 Bx = 0; Bx < Width; Bx += 1)
                 {
-                    CenterX[By, Bx] = MinX + ((Bx + 0.5) * GridSizeM);
+                    CenterX[By, Bx] = MinX + ((Bx + Constants.HALF_SCALE) * GridSizeM);
                     CenterY[By, Bx] = Cy;
                 }
             }
@@ -1036,7 +1043,7 @@ namespace HaulBuilder
             get
             {
                 // Uniform square cells share one area value.
-                return GridSizeM * GridSizeM;
+                return this.GridSizeM * this.GridSizeM;
             }
         }
 
@@ -1049,12 +1056,12 @@ namespace HaulBuilder
             )
         {
             // Preserve NaN outside mask exactly like the Python property.
-            Double[,] Out = new Double[Height, Width];
-            for (Int32 By = 0; By < Height; By += 1)
+            Double[,] Out = new Double[this.Height, this.Width];
+            for (Int32 By = 0; By < this.Height; By += 1)
             {
-                for (Int32 Bx = 0; Bx < Width; Bx += 1)
+                for (Int32 Bx = 0; Bx < this.Width; Bx += 1)
                 {
-                    Out[By, Bx] = Valid[By, Bx] ? (Existing[By, Bx] - Target[By, Bx]) : Double.NaN;
+                    Out[By, Bx] = this.Valid[By, Bx] ? (this.Existing[By, Bx] - this.Target[By, Bx]) : Double.NaN;
                 }
             }
 
@@ -1070,18 +1077,18 @@ namespace HaulBuilder
             )
         {
             // Convert positive deltas into bank cut supply.
-            Double[,] Out = new Double[Height, Width];
-            for (Int32 By = 0; By < Height; By += 1)
+            Double[,] Out = new Double[this.Height, this.Width];
+            for (Int32 By = 0; By < this.Height; By += 1)
             {
-                for (Int32 Bx = 0; Bx < Width; Bx += 1)
+                for (Int32 Bx = 0; Bx < this.Width; Bx += 1)
                 {
-                    if (!Valid[By, Bx])
+                    if (!this.Valid[By, Bx])
                     {
                         Out[By, Bx] = 0.0;
                         continue;
                     }
 
-                    Double Delta = Existing[By, Bx] - Target[By, Bx];
+                    Double Delta = this.Existing[By, Bx] - this.Target[By, Bx];
                     Double Positive = Math.Max(Delta, 0.0);
                     Out[By, Bx] = Positive * AreaM2 * Constants.M3_TO_CY;
                 }
@@ -1099,18 +1106,18 @@ namespace HaulBuilder
             )
         {
             // Convert negative deltas into required compacted fill demand.
-            Double[,] Out = new Double[Height, Width];
-            for (Int32 By = 0; By < Height; By += 1)
+            Double[,] Out = new Double[this.Height, this.Width];
+            for (Int32 By = 0; By < this.Height; By += 1)
             {
-                for (Int32 Bx = 0; Bx < Width; Bx += 1)
+                for (Int32 Bx = 0; Bx < this.Width; Bx += 1)
                 {
-                    if (!Valid[By, Bx])
+                    if (!this.Valid[By, Bx])
                     {
                         Out[By, Bx] = 0.0;
                         continue;
                     }
 
-                    Double Delta = Existing[By, Bx] - Target[By, Bx];
+                    Double Delta = this.Existing[By, Bx] - this.Target[By, Bx];
                     Double Fill = Math.Max(-Delta, 0.0);
                     Out[By, Bx] = Fill * AreaM2 * Constants.M3_TO_CY * Compaction;
                 }
@@ -1131,7 +1138,7 @@ namespace HaulBuilder
             Int32 By
             )
         {
-            return (CenterX[By, Bx], CenterY[By, Bx]);
+            return (this.CenterX[By, Bx], this.CenterY[By, Bx]);
         }
 
         /// <summary>
@@ -1162,14 +1169,14 @@ namespace HaulBuilder
             Double Y
             )
         {
-            Int32 Bx = (Int32)Math.Floor((X - MinX) / GridSizeM);
-            Int32 By = (Int32)Math.Floor((Y - MinY) / GridSizeM);
-            if ((Bx < 0) || (By < 0) || (Bx >= Width) || (By >= Height))
+            Int32 Bx = (Int32)Math.Floor((X - this.MinX) / this.GridSizeM);
+            Int32 By = (Int32)Math.Floor((Y - this.MinY) / this.GridSizeM);
+            if ((Bx < 0) || (By < 0) || (Bx >= this.Width) || (By >= this.Height))
             {
                 return false;
             }
 
-            return Valid[By, Bx];
+            return this.Valid[By, Bx];
         }
     }
 

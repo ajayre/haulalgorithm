@@ -5,7 +5,7 @@ namespace HaulBuilder
     /// <summary>
     /// Global cut/fill balance computation and optional vertical target adjustment.
     /// </summary>
-    public static class Balance
+    static public class Balance
     {
         /// <summary>
         /// Relative imbalance threshold (2%).
@@ -104,7 +104,7 @@ namespace HaulBuilder
             )
         {
             // Use max(supply,demand) denominator with epsilon floor.
-            Double Denom = Math.Max(Math.Max(Supply, Demand), 1e-9);
+            Double Denom = Math.Max(Math.Max(Supply, Demand), Constants.NUMERIC_COMPARISON_TOLERANCE);
             return Math.Abs(Supply - Demand) / Denom;
         }
 
@@ -159,9 +159,9 @@ namespace HaulBuilder
             for (Int32 Iter = 0; Iter < 100; Iter += 1)
             {
                 // Bisection shrinks bracket until root tolerance is met.
-                Double Mid = 0.5 * (Lo + Hi);
+                Double Mid = Constants.HALF_SCALE * (Lo + Hi);
                 Double FMid = ImbalanceAt(Grid, Delta, Mid);
-                if ((Math.Abs(FMid) < 1e-6) || ((Hi - Lo) < 1e-9))
+                if ((Math.Abs(FMid) < Constants.GEOMETRY_COMPARISON_TOLERANCE) || ((Hi - Lo) < Constants.NUMERIC_COMPARISON_TOLERANCE))
                 {
                     return Mid;
                 }
@@ -178,7 +178,7 @@ namespace HaulBuilder
                 }
             }
 
-            return 0.5 * (Lo + Hi);
+            return Constants.HALF_SCALE * (Lo + Hi);
         }
 
         /// <summary>

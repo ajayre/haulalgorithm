@@ -23,18 +23,18 @@ internal static class ExportFirstRoutes
     /// <summary>
     /// Exports guidance PNGs for the first <paramref name="routeCount"/> sequenced passes.
     /// </summary>
-    /// <param name="args">
+    /// <param name="Args">
     /// Optional: <c>[count] [outDir] [agdPath]</c>. Defaults: 12 routes,
     /// <c>assets/theshop2_first_routes/</c>, <c>DotNET/TheShop2_2ft.agd</c>.
     /// </param>
     /// <returns>Process exit code (0 on success).</returns>
-    public static Int32 Run
+    static public Int32 Run
         (
-        String[] args
+        String[] Args
         )
     {
         Int32 RouteCount = DEFAULT_ROUTE_COUNT;
-        if ((args.Length > 0) && !Int32.TryParse(args[0], NumberStyles.Integer, CultureInfo.InvariantCulture, out RouteCount))
+        if ((Args.Length > 0) && !Int32.TryParse(Args[0], NumberStyles.Integer, CultureInfo.InvariantCulture, out RouteCount))
         {
             Console.Error.WriteLine("usage: --export-first-routes [count] [outDir] [agdPath]");
             return 2;
@@ -47,11 +47,11 @@ internal static class ExportFirstRoutes
         }
 
         String RepoRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", ".."));
-        String OutDir = (args.Length > 1)
-            ? Path.GetFullPath(args[1])
+        String OutDir = (Args.Length > 1)
+            ? Path.GetFullPath(Args[1])
             : Path.Combine(RepoRoot, "assets", "theshop2_first_routes");
-        String AgdPath = (args.Length > 2)
-            ? Path.GetFullPath(args[2])
+        String AgdPath = (Args.Length > 2)
+            ? Path.GetFullPath(Args[2])
             : Path.Combine(RepoRoot, "DotNET", "TheShop2_2ft.agd");
 
         if (!File.Exists(AgdPath))
@@ -82,7 +82,7 @@ internal static class ExportFirstRoutes
             ScraperBcy,
             0,
             null,
-            0.5,
+            Constants.HALF_SCALE,
             50.0,
             Constants.DEFAULT_MAX_DROP_HOP_FT * Constants.FEET_TO_METERS,
             Flow,
@@ -106,7 +106,7 @@ internal static class ExportFirstRoutes
             Constants.DEFAULT_TURNING_CIRCLE_FT, 12, Obstacles.EMPTY_OBSTACLES);
 
         Int32 N = Math.Min(RouteCount, FullRoute.OrderedPasses.Count);
-        Double BladeM = Constants.DEFAULT_BLADE_WIDTH_MM / 1000.0;
+        Double BladeM = Constants.DEFAULT_BLADE_WIDTH_MM / Constants.MILLIMETERS_PER_METER;
         for (Int32 PassIndex = 0; PassIndex < N; PassIndex += 1)
         {
             Pass PassN = FullRoute.OrderedPasses[PassIndex];

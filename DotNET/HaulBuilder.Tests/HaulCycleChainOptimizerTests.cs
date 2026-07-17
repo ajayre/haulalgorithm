@@ -4,8 +4,16 @@ using System.Linq;
 
 namespace HaulBuilder.Tests
 {
+    /// <summary>
+    /// Contains automated checks for haul cycle chain optimizer.
+    /// </summary>
+
     public sealed class HaulCycleChainOptimizerTests
     {
+        /// <summary>
+        /// Verifies whole fill swap reduces production objective and conserves work.
+        /// </summary>
+
         [Fact]
         public void WholeFillSwapReducesProductionObjectiveAndConservesWork()
         {
@@ -52,6 +60,10 @@ namespace HaulBuilder.Tests
             AssertWorkEqual(Source, Result.Passes, FillKind: true);
         }
 
+        /// <summary>
+        /// Verifies field audit bounds do not exceed measured portfolio costs.
+        /// </summary>
+
         [Fact]
         public void FieldAuditBoundsDoNotExceedMeasuredPortfolioCosts()
         {
@@ -74,12 +86,21 @@ namespace HaulBuilder.Tests
                 TurningCircleFt: 20.0);
 
             Assert.True(Result.TransitionLowerBoundSeconds
-                <= Result.CurrentTransitionSeconds + 1e-9);
+                <= Result.CurrentTransitionSeconds + Constants.NUMERIC_COMPARISON_TOLERANCE);
             Assert.True(Result.CutFillLowerBoundM
-                <= Result.CurrentCutFillCentroidM + 1e-9);
+                <= Result.CurrentCutFillCentroidM + Constants.NUMERIC_COMPARISON_TOLERANCE);
             Assert.True(Result.JointLowerBoundEquivalentM
-                <= Result.CurrentJointEquivalentM + 1e-9);
+                <= Result.CurrentJointEquivalentM + Constants.NUMERIC_COMPARISON_TOLERANCE);
         }
+
+        /// <summary>
+        /// Builds pass.
+        /// </summary>
+        /// <param name="Grid">Field grid used by the operation.</param>
+        /// <param name="Cut">The cut used by the operation.</param>
+        /// <param name="Fill">The fill used by the operation.</param>
+        /// <param name="Load">The load used by the operation.</param>
+        /// <returns>The resulting pass.</returns>
 
         private static Pass MakePass(
             Grid Grid,
@@ -101,6 +122,14 @@ namespace HaulBuilder.Tests
                 Obstacles.EMPTY_OBSTACLES,
                 Ordered: false);
         }
+
+        /// <summary>
+        /// Resolves improving pair.
+        /// </summary>
+        /// <param name="Grid">Field grid used by the operation.</param>
+        /// <param name="Load">The load used by the operation.</param>
+        /// <param name="Parameters">The parameters used by the operation.</param>
+        /// <returns>The resulting improving pair.</returns>
 
         private static List<Pass> FindImprovingPair(
             Grid Grid,
@@ -157,8 +186,8 @@ namespace HaulBuilder.Tests
                     Double AfterObjective = AfterProxy
                         + Transition.CostSeconds(
                             SwappedFirst, SwappedSecond);
-                    if ((AfterProxy <= BeforeProxy + 1e-9)
-                        && (AfterCompact <= BeforeCompact + 1e-9)
+                    if ((AfterProxy <= BeforeProxy + Constants.NUMERIC_COMPARISON_TOLERANCE)
+                        && (AfterCompact <= BeforeCompact + Constants.NUMERIC_COMPARISON_TOLERANCE)
                         && (AfterObjective < BeforeObjective - 0.01))
                     {
                         return new List<Pass> { First, Second };
@@ -168,6 +197,13 @@ namespace HaulBuilder.Tests
             throw new InvalidOperationException(
                 "Synthetic fixture could not find a Pareto-improving exchange.");
         }
+
+        /// <summary>
+        /// Verifies assert work equal.
+        /// </summary>
+        /// <param name="First">The first used by the operation.</param>
+        /// <param name="Second">The second used by the operation.</param>
+        /// <param name="FillKind">The fill kind used by the operation.</param>
 
         private static void AssertWorkEqual(
             IEnumerable<Pass> First,
@@ -186,6 +222,12 @@ namespace HaulBuilder.Tests
                 Assert.Equal(A[Cell], B[Cell], 10);
             }
         }
+
+        /// <summary>
+        /// Builds grid.
+        /// </summary>
+        /// <param name="Size">The size used by the operation.</param>
+        /// <returns>The resulting grid.</returns>
 
         private static Grid MakeGrid(Int32 Size)
         {

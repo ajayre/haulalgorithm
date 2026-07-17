@@ -87,7 +87,7 @@ namespace HaulBuilder.Tests
             Double Before = Balance.Compute(GridBefore, "check").RelativeImbalance;
             Grid GridAfter = GridMath.BuildGrid(Field);
             Double After = Balance.Compute(GridAfter, "adjust").RelativeImbalance;
-            Assert.True(After <= Before + 1e-6);
+            Assert.True(After <= Before + Constants.GEOMETRY_COMPARISON_TOLERANCE);
         }
 
         /// <summary>
@@ -151,10 +151,10 @@ namespace HaulBuilder.Tests
             FlowField Flow = FlowFieldSolver.Compute(Grid, "poisson");
             List<Strip> StripList = Strips.TraceStrips(Grid, Flow);
             PassResult PassResult = Passes.GeneratePasses(Grid, StripList, 10.0, 20.0);
-            Double MaxDepthM = (Grid.MaxDepthMm / 1000.0) + 1e-9;
+            Double MaxDepthM = (Grid.MaxDepthMm / Constants.MILLIMETERS_PER_METER) + Constants.NUMERIC_COMPARISON_TOLERANCE;
             foreach (Pass Pass in PassResult.Passes)
             {
-                Assert.True(Pass.LoadBcy <= (20.0 + 1e-6));
+                Assert.True(Pass.LoadBcy <= (20.0 + Constants.GEOMETRY_COMPARISON_TOLERANCE));
                 foreach (((Int32 Bx, Int32 By) Cell, Double DepthM) Entry in Pass.CutCells)
                 {
                     Assert.True(Entry.DepthM <= MaxDepthM);
@@ -178,13 +178,13 @@ namespace HaulBuilder.Tests
             (Grid Grid, Route Route, GuidanceResult Guidance) = GuidanceForRamp(2271.0, 15.0);
             Assert.True(Guidance.Points.Count > 0);
             Assert.Equal(Guidance.RouteHaulDistM, Guidance.HaulDistM, Guidance.RouteHaulDistM * 0.15 + 2.0);
-            Assert.True(Guidance.CutDistM >= Guidance.PlannedCutDistM - 1e-6);
-            Assert.True(Guidance.FillDistM >= Guidance.PlannedFillDistM - 1e-6);
-            Double Cap = Grid.MaxDepthMm + 1e-6;
+            Assert.True(Guidance.CutDistM >= Guidance.PlannedCutDistM - Constants.GEOMETRY_COMPARISON_TOLERANCE);
+            Assert.True(Guidance.FillDistM >= Guidance.PlannedFillDistM - Constants.GEOMETRY_COMPARISON_TOLERANCE);
+            Double Cap = Grid.MaxDepthMm + Constants.GEOMETRY_COMPARISON_TOLERANCE;
             foreach (GuidancePoint Point in Guidance.Points)
             {
                 Assert.True(Point.DepthMm <= Cap);
-                Assert.True(Point.HeadingDeg >= 0.0 && Point.HeadingDeg <= 360.0);
+                Assert.True(Point.HeadingDeg >= 0.0 && Point.HeadingDeg <= Constants.DEGREES_PER_TURN);
                 Assert.True(Point.Blade is "UP" or "DOWN");
             }
         }
@@ -227,7 +227,7 @@ namespace HaulBuilder.Tests
                 15.38,
                 0,
                 90.0,
-                0.5);
+                Constants.HALF_SCALE);
             Route Route = Routing.SequencePasses(PassResult.Passes);
             GuidanceResult G1 = Swaths.BuildGuidance(Grid, Field, Route, 2271.0, 90.0);
             GuidanceResult G2 = Swaths.BuildGuidance(Grid, Field, Route, 2271.0, 90.0);
@@ -250,7 +250,7 @@ namespace HaulBuilder.Tests
         {
             GuidanceResult Wide = GuidanceForRamp(4572.0, 15.0).Guidance;
             GuidanceResult Narrow = GuidanceForRamp(2271.0, 15.0).Guidance;
-            Assert.True(Narrow.CoverageFactor() >= Wide.CoverageFactor() - 1e-6);
+            Assert.True(Narrow.CoverageFactor() >= Wide.CoverageFactor() - Constants.GEOMETRY_COMPARISON_TOLERANCE);
             Assert.True(Narrow.CoverageFactor() > 1.0);
         }
 
@@ -320,8 +320,8 @@ namespace HaulBuilder.Tests
                 }
             }
 
-            Double Cx = Grid.MinX + (Grid.Width * Grid.GridSizeM * 0.5);
-            Double Cy = Grid.MinY + (Grid.Height * Grid.GridSizeM * 0.5);
+            Double Cx = Grid.MinX + (Grid.Width * Grid.GridSizeM * Constants.HALF_SCALE);
+            Double Cy = Grid.MinY + (Grid.Height * Grid.GridSizeM * Constants.HALF_SCALE);
             Double H = Grid.GridSizeM * 0.75;
             List<(Double X, Double Y)> Ring = new List<(Double X, Double Y)>
             {
@@ -405,7 +405,7 @@ namespace HaulBuilder.Tests
                 (20.0 / 1.3),
                 0,
                 90.0,
-                0.5);
+                Constants.HALF_SCALE);
             Route Route = Routing.SequencePasses(PassResult.Passes);
             GuidanceResult Guidance = Swaths.BuildGuidance(Grid, Field, Route, Constants.DEFAULT_BLADE_WIDTH_MM, 90.0);
             HashSet<String> Actions = Guidance.Points.Select(Point => Point.Action).ToHashSet(StringComparer.Ordinal);
@@ -426,7 +426,7 @@ namespace HaulBuilder.Tests
             Assert.Equal((Byte)0x80, Render.CutFillColor(-1.0).R);
             Assert.Equal((Byte)0x00, Render.CutFillColor(0.0).R);
             Assert.Equal((Byte)0xB4, Render.CutFillColor(1.0).R);
-            Assert.Equal((Byte)0xFF, Render.CutFillColor(0.03).R);
+            Assert.Equal((Byte)Constants.BYTE_MASK, Render.CutFillColor(0.03).R);
         }
 
         /// <summary>
@@ -440,12 +440,12 @@ namespace HaulBuilder.Tests
             // A center-blocking obstacle must force detours to validate obstacle routing.
             List<(Double X, Double Y)> Ring = new List<(Double X, Double Y)>
             {
-                (-0.5, -0.5),
-                (0.5, -0.5),
-                (0.5, 0.5),
-                (-0.5, 0.5),
+                (-Constants.HALF_SCALE, -Constants.HALF_SCALE),
+                (Constants.HALF_SCALE, -Constants.HALF_SCALE),
+                (Constants.HALF_SCALE, Constants.HALF_SCALE),
+                (-Constants.HALF_SCALE, Constants.HALF_SCALE),
             };
-            ExclusionZone Zone = ExclusionZone.FromRing(Ring, 0.5);
+            ExclusionZone Zone = ExclusionZone.FromRing(Ring, Constants.HALF_SCALE);
             ObstacleField Field = ObstacleField.FromZones(new[] { Zone });
             (Double X, Double Y) A = (-5.0, 0.0);
             (Double X, Double Y) B = (5.0, 0.0);
@@ -508,7 +508,7 @@ namespace HaulBuilder.Tests
                 IncludeCutFillPairCsv = true,
                 IncludeCutFillPairPng = true,
                 RandomRouteImageCount = 1,
-                RandomSeed = 1234,
+                RandomSeed = Constants.DEFAULT_SEED,
             };
             HaulBuilderResult Result = Engine.Run(Options);
             Assert.NotNull(Result.Grid);
@@ -517,7 +517,9 @@ namespace HaulBuilder.Tests
             Assert.True(Result.PngBytesByName.ContainsKey("main"));
             Assert.True(Result.PngBytesByName.ContainsKey("cut_fill_pairs"));
             Assert.True(Result.PngBytesByName.ContainsKey("guidance"));
-            Assert.True(Result.PngBytesByName.Keys.Any(Key => Key.StartsWith("pair_", StringComparison.Ordinal)));
+            Assert.Contains(
+                Result.PngBytesByName.Keys,
+                Key => Key.StartsWith("pair_", StringComparison.Ordinal));
             Assert.True(Result.PassResult!.Passes.Count > 0);
             Assert.True(Result.Metrics!.MoveVolumeBcy > 0.0);
             Assert.True(Result.GuidancePoints.Count > 0);
@@ -583,13 +585,13 @@ namespace HaulBuilder.Tests
         /// </summary>
         private static (Grid Grid, Route Route, GuidanceResult Guidance) GuidanceForRamp
             (
-            Double bladeWidthMm = 2271.0,
-            Double gridSizeFt = 15.0
+            Double BladeWidthMm = 2271.0,
+            Double GridSizeFt = 15.0
             )
         {
             String Path = CreateTempAgd(BuildRampRows(false));
             AgdField Field = Agd.Parse(Path);
-            Grid Grid = GridMath.BuildGrid(Field, gridSizeFt);
+            Grid Grid = GridMath.BuildGrid(Field, GridSizeFt);
             FlowField Flow = FlowFieldSolver.Compute(Grid, "poisson");
             List<Strip> StripList = Strips.TraceStrips(Grid, Flow);
             PassResult PassResult = Passes.GeneratePasses(
@@ -599,9 +601,9 @@ namespace HaulBuilder.Tests
                 15.38,
                 0,
                 90.0,
-                0.5);
+                Constants.HALF_SCALE);
             Route Route = Routing.SequencePasses(PassResult.Passes);
-            GuidanceResult Guidance = Swaths.BuildGuidance(Grid, Field, Route, bladeWidthMm, 90.0);
+            GuidanceResult Guidance = Swaths.BuildGuidance(Grid, Field, Route, BladeWidthMm, 90.0);
             return (Grid, Route, Guidance);
         }
 
@@ -610,20 +612,20 @@ namespace HaulBuilder.Tests
         /// </summary>
         private static Double TotalHaul
             (
-            Grid grid,
-            List<Strip> strips,
-            Double stripBias
+            Grid Grid,
+            List<Strip> Strips,
+            Double StripBias
             )
         {
             PassResult PassResult = Passes.GeneratePasses(
-                grid,
-                strips,
+                Grid,
+                Strips,
                 10.0,
                 15.38,
                 0,
                 90.0,
-                0.5,
-                stripBias);
+                Constants.HALF_SCALE,
+                StripBias);
             Route Route = Routing.SequencePasses(PassResult.Passes);
             Double Total = 0.0;
             foreach (Pass Pass in Route.OrderedPasses)
@@ -672,7 +674,7 @@ namespace HaulBuilder.Tests
             Double Lat0 = 40.0;
             Double Lon0 = -93.0;
             Double DLat = (1.0 / 111000.0);
-            Double DLon = (1.0 / (111000.0 * Math.Cos((Math.PI / 180.0) * Lat0)));
+            Double DLon = (1.0 / (111000.0 * Math.Cos((Math.PI / Constants.DEGREES_PER_HALF_TURN) * Lat0)));
             Int32 N = 24;
             for (Int32 R = 0; R < N; R += 1)
             {

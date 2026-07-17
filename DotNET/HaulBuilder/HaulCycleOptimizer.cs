@@ -9,7 +9,7 @@ namespace HaulBuilder
     /// <summary>
     /// Pairs lane-first cut and fill work into capacity-balanced machine cycles.
     /// </summary>
-    public static class HaulCycleOptimizer
+    static public class HaulCycleOptimizer
     {
         private const Double VOLUME_TOLERANCE_BCY = 1e-8;
         private const Double DEFAULT_MINIMUM_TURN_RADIUS_M = 7.62;
@@ -112,8 +112,8 @@ namespace HaulBuilder
                     0.0, Ledger.TotalCutBcy - Ledger.TotalFillBcy);
                 Double ExpectedFillBcy = Math.Max(
                     0.0, Ledger.TotalFillBcy - Ledger.TotalCutBcy);
-                if ((Math.Abs(UnmatchedCutBcy - ExpectedCutBcy) > 1e-6)
-                    || (Math.Abs(UnmatchedFillBcy - ExpectedFillBcy) > 1e-6))
+                if ((Math.Abs(UnmatchedCutBcy - ExpectedCutBcy) > Constants.GEOMETRY_COMPARISON_TOLERANCE)
+                    || (Math.Abs(UnmatchedFillBcy - ExpectedFillBcy) > Constants.GEOMETRY_COMPARISON_TOLERANCE))
                 {
                     throw new InvalidOperationException(
                         "The complete optimizer left work deferred beyond the exact material imbalance.");
@@ -122,7 +122,7 @@ namespace HaulBuilder
             PassResult PassResult = new PassResult(
                 PassList, 1, UnmatchedCutBcy, UnmatchedFillBcy);
             HaulPlanValidation Validation = Ledger.ValidateComplete(
-                PassList, MaximumLoadBcy, Grid.MaxDepthMm / 1000.0,
+                PassList, MaximumLoadBcy, Grid.MaxDepthMm / Constants.MILLIMETERS_PER_METER,
                 AllowDeferredWork: true);
             return new HaulOptimizationResult(
                 PassResult,
@@ -135,6 +135,13 @@ namespace HaulBuilder
                 DeferredWork,
                 Validation);
         }
+
+        /// <summary>
+        /// Resolves primary cut.
+        /// </summary>
+        /// <param name="States">The states used by the operation.</param>
+        /// <param name="MaximumLoadBcy">Count limit applied by the operation.</param>
+        /// <returns>The resulting primary cut.</returns>
 
         private static LaneState? SelectPrimaryCut
             (
@@ -149,6 +156,16 @@ namespace HaulBuilder
                 .ThenBy(State => State.Lane.Id)
                 .FirstOrDefault();
         }
+
+        /// <summary>
+        /// Builds group.
+        /// </summary>
+        /// <param name="Primary">The primary used by the operation.</param>
+        /// <param name="States">The states used by the operation.</param>
+        /// <param name="TargetBcy">The target bcy used by the operation.</param>
+        /// <param name="MaximumRuns">Count limit applied by the operation.</param>
+        /// <param name="Grid">Field grid used by the operation.</param>
+        /// <returns>The resulting group.</returns>
 
         private static List<LaneState> BuildGroup
             (
@@ -184,6 +201,19 @@ namespace HaulBuilder
             }
             return Output;
         }
+
+        /// <summary>
+        /// Resolves fill group.
+        /// </summary>
+        /// <param name="Cut">The cut used by the operation.</param>
+        /// <param name="FillStates">The fill states used by the operation.</param>
+        /// <param name="DesiredBcy">The desired bcy used by the operation.</param>
+        /// <param name="MaximumLoadBcy">Count limit applied by the operation.</param>
+        /// <param name="MaximumRuns">Count limit applied by the operation.</param>
+        /// <param name="Grid">Field grid used by the operation.</param>
+        /// <param name="Flow">The flow used by the operation.</param>
+        /// <param name="FlowPenaltyWeight">The flow penalty weight used by the operation.</param>
+        /// <returns>The resulting fill group.</returns>
 
         private static List<LaneState>? SelectFillGroup
             (
@@ -239,6 +269,17 @@ namespace HaulBuilder
             return Best;
         }
 
+        /// <summary>
+        /// Executes the pair cost operation.
+        /// </summary>
+        /// <param name="Cut">The cut used by the operation.</param>
+        /// <param name="Fill">The fill used by the operation.</param>
+        /// <param name="DesiredBcy">The desired bcy used by the operation.</param>
+        /// <param name="Grid">Field grid used by the operation.</param>
+        /// <param name="Flow">The flow used by the operation.</param>
+        /// <param name="FlowPenaltyWeight">The flow penalty weight used by the operation.</param>
+        /// <returns>The resulting pair cost.</returns>
+
         private static Double PairCost
             (
             LaneState Cut,
@@ -254,7 +295,7 @@ namespace HaulBuilder
             Double Dx = FillPoint.X - CutPoint.X;
             Double Dy = FillPoint.Y - CutPoint.Y;
             Double DistanceM = Math.Sqrt((Dx * Dx) + (Dy * Dy));
-            if (DistanceM <= 1e-9) return 0.0;
+            if (DistanceM <= Constants.NUMERIC_COMPARISON_TOLERANCE) return 0.0;
             (Int32 Bx, Int32 By) CutCell = Cut.CurrentCell;
             Double Fx = Flow.Fx[CutCell.By, CutCell.Bx];
             Double Fy = Flow.Fy[CutCell.By, CutCell.Bx];
@@ -272,6 +313,15 @@ namespace HaulBuilder
                 + AgainstFlowPenalty
                 + CrossFlowPenalty;
         }
+
+        /// <summary>
+        /// Executes the connector lower bound operation.
+        /// </summary>
+        /// <param name="Cut">The cut used by the operation.</param>
+        /// <param name="Fill">The fill used by the operation.</param>
+        /// <param name="DesiredBcy">The desired bcy used by the operation.</param>
+        /// <param name="Grid">Field grid used by the operation.</param>
+        /// <returns>The resulting connector lower bound.</returns>
 
         private static Double ConnectorLowerBound
             (
@@ -306,7 +356,7 @@ namespace HaulBuilder
                 new ConnectorPlanner.Pose(
                     CutFirst.X,
                     CutFirst.Y,
-                    (CutForwardHeading + 180.0) % 360.0),
+                    (CutForwardHeading + Constants.DEGREES_PER_HALF_TURN) % Constants.DEGREES_PER_TURN),
             };
             ConnectorPlanner.Pose[] FillEntries =
             {
@@ -315,7 +365,7 @@ namespace HaulBuilder
                 new ConnectorPlanner.Pose(
                     FillLast.X,
                     FillLast.Y,
-                    (FillForwardHeading + 180.0) % 360.0),
+                    (FillForwardHeading + Constants.DEGREES_PER_HALF_TURN) % Constants.DEGREES_PER_TURN),
             };
             Double BestM = Double.PositiveInfinity;
             foreach (ConnectorPlanner.Pose CutExit in CutExits)
@@ -333,6 +383,14 @@ namespace HaulBuilder
             return BestM;
         }
 
+        /// <summary>
+        /// Executes the lane heading operation.
+        /// </summary>
+        /// <param name="First">The first used by the operation.</param>
+        /// <param name="Last">The last used by the operation.</param>
+        /// <param name="FallbackAxisHeadingDeg">Direction in degrees.</param>
+        /// <returns>The resulting lane heading.</returns>
+
         private static Double LaneHeading
             (
             (Double X, Double Y) First,
@@ -342,12 +400,19 @@ namespace HaulBuilder
         {
             Double Dx = Last.X - First.X;
             Double Dy = Last.Y - First.Y;
-            if ((Math.Abs(Dx) <= 1e-9) && (Math.Abs(Dy) <= 1e-9))
+            if ((Math.Abs(Dx) <= Constants.NUMERIC_COMPARISON_TOLERANCE) && (Math.Abs(Dy) <= Constants.NUMERIC_COMPARISON_TOLERANCE))
             {
                 return FallbackAxisHeadingDeg;
             }
-            return (Math.Atan2(Dx, Dy) * 180.0 / Math.PI + 360.0) % 360.0;
+            return (Math.Atan2(Dx, Dy) * Constants.DEGREES_PER_HALF_TURN / Math.PI + Constants.DEGREES_PER_TURN) % Constants.DEGREES_PER_TURN;
         }
+
+        /// <summary>
+        /// Executes the axis headings match operation.
+        /// </summary>
+        /// <param name="FirstDeg">The first deg used by the operation.</param>
+        /// <param name="SecondDeg">The second deg used by the operation.</param>
+        /// <returns>The resulting axis headings match.</returns>
 
         private static Boolean AxisHeadingsMatch
             (
@@ -355,9 +420,17 @@ namespace HaulBuilder
             Double SecondDeg
             )
         {
-            Double Difference = Math.Abs(FirstDeg - SecondDeg) % 180.0;
-            return Math.Min(Difference, 180.0 - Difference) <= 1e-9;
+            Double Difference = Math.Abs(FirstDeg - SecondDeg) % Constants.DEGREES_PER_HALF_TURN;
+            return Math.Min(Difference, Constants.DEGREES_PER_HALF_TURN - Difference) <= Constants.NUMERIC_COMPARISON_TOLERANCE;
         }
+
+        /// <summary>
+        /// Executes the lane distance operation.
+        /// </summary>
+        /// <param name="First">The first used by the operation.</param>
+        /// <param name="Second">The second used by the operation.</param>
+        /// <param name="Grid">Field grid used by the operation.</param>
+        /// <returns>The resulting lane distance.</returns>
 
         private static Double LaneDistance
             (
@@ -372,6 +445,14 @@ namespace HaulBuilder
             Double Dy = B.Y - A.Y;
             return Math.Sqrt((Dx * Dx) + (Dy * Dy));
         }
+
+        /// <summary>
+        /// Executes the consume operation.
+        /// </summary>
+        /// <param name="States">The states used by the operation.</param>
+        /// <param name="TargetBcy">The target bcy used by the operation.</param>
+        /// <param name="BcyPerDepthM">The bcy per depth m used by the operation.</param>
+        /// <returns>The resulting consume.</returns>
 
         private static List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Consume
             (
@@ -406,6 +487,12 @@ namespace HaulBuilder
             return Output;
         }
 
+        /// <summary>
+        /// Executes the remaining volume operation.
+        /// </summary>
+        /// <param name="States">The states used by the operation.</param>
+        /// <returns>The resulting remaining volume.</returns>
+
         private static Double RemainingVolume
             (
             IEnumerable<LaneState> States
@@ -413,6 +500,10 @@ namespace HaulBuilder
         {
             return States.Sum(State => State.RemainingVolumeBcy);
         }
+
+        /// <summary>
+        /// Provides lane state behavior.
+        /// </summary>
 
         private sealed class LaneState
         {
@@ -458,16 +549,16 @@ namespace HaulBuilder
                 {
                     RemainingVolumeBcy = 0.0;
                 }
-                if (_CurrentDepthM <= 1e-12)
+                if (_CurrentDepthM <= Constants.STRICT_NUMERIC_COMPARISON_TOLERANCE)
                 {
                     _EntryIndex += 1;
-                    if (_EntryIndex < Lane.Entries.Count)
+                    if (_EntryIndex < this.Lane.Entries.Count)
                     {
-                        _CurrentDepthM = Lane.Entries[_EntryIndex].DepthM;
+                        _CurrentDepthM = this.Lane.Entries[_EntryIndex].DepthM;
                     }
                     else
                     {
-                        _EntryIndex = Lane.Entries.Count - 1;
+                        _EntryIndex = this.Lane.Entries.Count - 1;
                         _CurrentDepthM = 0.0;
                     }
                 }
@@ -482,7 +573,7 @@ namespace HaulBuilder
                 {
                     return Array.Empty<(Int32 Bx, Int32 By)>();
                 }
-                return Lane.Entries
+                return this.Lane.Entries
                     .Skip(_EntryIndex)
                     .Select(Entry => Entry.Cell);
             }
@@ -499,21 +590,21 @@ namespace HaulBuilder
                 Int32 Index = _EntryIndex;
                 Double DepthM = _CurrentDepthM;
                 while ((RemainingBcy > VOLUME_TOLERANCE_BCY)
-                    && (Index < Lane.Entries.Count))
+                    && (Index < this.Lane.Entries.Count))
                 {
                     Double AvailableBcy = DepthM * BcyPerDepthM;
                     if (RemainingBcy <= AvailableBcy + VOLUME_TOLERANCE_BCY)
                     {
-                        return Lane.Entries[Index].Cell;
+                        return this.Lane.Entries[Index].Cell;
                     }
                     RemainingBcy -= AvailableBcy;
                     Index += 1;
-                    if (Index < Lane.Entries.Count)
+                    if (Index < this.Lane.Entries.Count)
                     {
-                        DepthM = Lane.Entries[Index].DepthM;
+                        DepthM = this.Lane.Entries[Index].DepthM;
                     }
                 }
-                return Lane.Entries[Math.Min(
+                return this.Lane.Entries[Math.Min(
                     Lane.Entries.Count - 1,
                     Math.Max(_EntryIndex, Index - 1))].Cell;
             }
@@ -526,9 +617,9 @@ namespace HaulBuilder
             {
                 if (RemainingVolumeBcy <= VOLUME_TOLERANCE_BCY)
                 {
-                    return Lane.CentroidXy;
+                    return this.Lane.CentroidXy;
                 }
-                IReadOnlyList<HaulLaneBuilder.LaneEntry> Entries = Lane.Entries;
+                IReadOnlyList<HaulLaneBuilder.LaneEntry> Entries = this.Lane.Entries;
                 Double SumX = 0.0;
                 Double SumY = 0.0;
                 Int32 Count = 0;
@@ -540,7 +631,7 @@ namespace HaulBuilder
                 }
                 return Count > 0
                     ? (SumX / Count, SumY / Count)
-                    : Lane.CentroidXy;
+                    : this.Lane.CentroidXy;
             }
         }
     }

@@ -7,7 +7,7 @@ namespace HaulBuilder
     /// <summary>
     /// Builds straight coverage runs without modifying passes or production guidance.
     /// </summary>
-    public static class CoveragePlanner
+    static public class CoveragePlanner
     {
         private const Double HEADING_STEP_DEG = 5.0;
         private const Double MAX_ALONG_GAP_GRID_MULTIPLIER = 1.75;
@@ -16,7 +16,7 @@ namespace HaulBuilder
         private const Double WORK_DISTANCE_WEIGHT = 0.01;
         private const Double OMITTED_CELL_WEIGHT = 1000000000000.0;
         private const Double EDGE_PARALLEL_TOLERANCE_DEG = 7.5;
-        private const Double NUMERIC_TOLERANCE = 1e-9;
+        private const Double NUMERIC_TOLERANCE = Constants.NUMERIC_COMPARISON_TOLERANCE;
         private const Double ENDPOINT_EXTENSION_GRID_FRACTION = 0.49;
 
         /// <summary>
@@ -69,6 +69,7 @@ namespace HaulBuilder
             {
                 get
                 {
+                    // Derive run length from endpoints so cached geometry cannot drift.
                     Double Dx = EndXy.X - StartXy.X;
                     Double Dy = EndXy.Y - StartXy.Y;
                     return Math.Sqrt((Dx * Dx) + (Dy * Dy));
@@ -140,6 +141,7 @@ namespace HaulBuilder
             {
                 get
                 {
+                    // Rebuild drive order from runs so callers see current allocation order.
                     List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Output =
                         new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>();
                     foreach (Run CoverageRun in Runs)
@@ -155,12 +157,17 @@ namespace HaulBuilder
             {
                 get
                 {
+                    // Include omissions so conservation checks account for every allocation.
                     List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Output = OrderedCells;
                     Output.AddRange(OmittedCells);
                     return Output;
                 }
             }
         }
+
+        /// <summary>
+        /// Provides projected cell behavior.
+        /// </summary>
 
         private sealed class ProjectedCell
         {
@@ -249,7 +256,7 @@ namespace HaulBuilder
             FieldEdgePolicy EdgePolicy =
                 new FieldEdgePolicy(Grid, Grid.GridSizeM);
             List<PlanResult> Candidates = new List<PlanResult>();
-            for (Double HeadingDeg = 0.0; HeadingDeg < 180.0; HeadingDeg += HEADING_STEP_DEG)
+            for (Double HeadingDeg = 0.0; HeadingDeg < Constants.DEGREES_PER_HALF_TURN; HeadingDeg += HEADING_STEP_DEG)
             {
                 List<((Int32 Bx, Int32 By) Cell, Double DepthM)> WorkCells = Cells
                     .Where(Entry => EdgePolicy.IsParallelToEdge(
@@ -346,8 +353,8 @@ namespace HaulBuilder
                 throw new ArgumentOutOfRangeException(
                     nameof(MaximumAlongGapGridMultiplier));
             }
-            Double NormalizedHeadingDeg = ((HeadingDeg % 180.0) + 180.0)
-                % 180.0;
+            Double NormalizedHeadingDeg = ((HeadingDeg % Constants.DEGREES_PER_HALF_TURN) + Constants.DEGREES_PER_HALF_TURN)
+                % Constants.DEGREES_PER_HALF_TURN;
             List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Omitted =
                 new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>();
             PlanResult Selected = new Boolean[] { false, true }
@@ -399,7 +406,7 @@ namespace HaulBuilder
                     OmittedCells.Count * OMITTED_CELL_WEIGHT,
                     new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>(OmittedCells));
             }
-            Double Theta = HeadingDeg * Math.PI / 180.0;
+            Double Theta = HeadingDeg * Math.PI / Constants.DEGREES_PER_HALF_TURN;
             (Double X, Double Y) AlongUnit = (Math.Sin(Theta), Math.Cos(Theta));
             (Double X, Double Y) CrossUnit = (Math.Cos(Theta), -Math.Sin(Theta));
             (Double X, Double Y) Origin = CellCentroid(Cells, Grid);
@@ -498,7 +505,7 @@ namespace HaulBuilder
             Grid Grid
             )
         {
-            Double HeadingRad = HeadingDeg * Math.PI / 180.0;
+            Double HeadingRad = HeadingDeg * Math.PI / Constants.DEGREES_PER_HALF_TURN;
             (Double X, Double Y) AlongUnit = (Math.Sin(HeadingRad), Math.Cos(HeadingRad));
             (Double X, Double Y) CrossUnit = (Math.Cos(HeadingRad), -Math.Sin(HeadingRad));
             List<(Double Along, Double Cross)> Projected =
@@ -514,7 +521,7 @@ namespace HaulBuilder
                 - (ENDPOINT_EXTENSION_GRID_FRACTION * Grid.GridSizeM);
             Double MaximumAlong = Projected.Max(Point => Point.Along)
                 + (ENDPOINT_EXTENSION_GRID_FRACTION * Grid.GridSizeM);
-            Double CenterCross = 0.5 * (
+            Double CenterCross = Constants.HALF_SCALE * (
                 Projected.Min(Point => Point.Cross) + Projected.Max(Point => Point.Cross));
             (Double X, Double Y) Start = (
                 (MinimumAlong * AlongUnit.X) + (CenterCross * CrossUnit.X),
@@ -537,7 +544,7 @@ namespace HaulBuilder
         {
             Int32 Count = Math.Max(
                 1,
-                (Int32)Math.Ceiling(Run.LengthM / Math.Min(0.5, Grid.GridSizeM * 0.5)));
+                (Int32)Math.Ceiling(Run.LengthM / Math.Min(Constants.HALF_SCALE, Grid.GridSizeM * Constants.HALF_SCALE)));
             for (Int32 Index = 0; Index <= Count; Index += 1)
             {
                 Double Fraction = (Double)Index / Count;
@@ -640,7 +647,7 @@ namespace HaulBuilder
                     + (ENDPOINT_EXTENSION_GRID_FRACTION * GridSizeM);
                 Double MinimumCross = Part.Min(Cell => Cell.Cross);
                 Double MaximumCross = Part.Max(Cell => Cell.Cross);
-                Double CenterCross = 0.5 * (MinimumCross + MaximumCross);
+                Double CenterCross = Constants.HALF_SCALE * (MinimumCross + MaximumCross);
                 (Double X, Double Y) Start = ToWorld(Origin, AlongUnit, CrossUnit, MinimumAlong, CenterCross);
                 (Double X, Double Y) End = ToWorld(Origin, AlongUnit, CrossUnit, MaximumAlong, CenterCross);
                 Double MaximumErrorM = Part.Max(Cell => Math.Abs(Cell.Cross - CenterCross));
@@ -744,7 +751,7 @@ namespace HaulBuilder
             List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Cells =
                 new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>(Input.Cells);
             Cells.Reverse();
-            Double HeadingDeg = (Input.HeadingDeg + 180.0) % 360.0;
+            Double HeadingDeg = (Input.HeadingDeg + Constants.DEGREES_PER_HALF_TURN) % Constants.DEGREES_PER_TURN;
             return new Run(Cells, Input.EndXy, Input.StartXy, HeadingDeg, Input.MaximumLateralErrorM);
         }
 

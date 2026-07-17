@@ -2,8 +2,16 @@ using System;
 
 namespace HaulBuilder.Tests
 {
+    /// <summary>
+    /// Contains automated checks for haul difficult cycle filter.
+    /// </summary>
+
     public sealed class HaulDifficultCycleFilterTests
     {
+        /// <summary>
+        /// Resolves selection is bounded and deterministic.
+        /// </summary>
+
         [Fact]
         public void SelectionIsBoundedAndDeterministic
             (
@@ -24,6 +32,10 @@ namespace HaulBuilder.Tests
             Assert.Equal(new[] { 3, 4, 2 }, Omitted);
         }
 
+        /// <summary>
+        /// Resolves selection never omits successful cycles.
+        /// </summary>
+
         [Fact]
         public void SelectionNeverOmitsSuccessfulCycles
             (
@@ -39,6 +51,10 @@ namespace HaulBuilder.Tests
                 new[] { 1 },
                 HaulDifficultCycleFilter.SelectOmittedIndices(Results, 20));
         }
+
+        /// <summary>
+        /// Verifies fragmented priority selects largest run count first.
+        /// </summary>
 
         [Fact]
         public void FragmentedPrioritySelectsLargestRunCountFirst
@@ -60,6 +76,15 @@ namespace HaulBuilder.Tests
                     HaulDifficultCycleFilter.OmissionPriority
                         .MostFragmentedFirst));
         }
+
+        /// <summary>
+        /// Verifies compact.
+        /// </summary>
+        /// <param name="Success">The success used by the operation.</param>
+        /// <param name="CutRuns">The cut runs used by the operation.</param>
+        /// <param name="FillRuns">The fill runs used by the operation.</param>
+        /// <param name="Failure">The failure used by the operation.</param>
+        /// <returns>The resulting compact.</returns>
 
         private static GuidancePlanner.CompactCycleResult Compact
             (

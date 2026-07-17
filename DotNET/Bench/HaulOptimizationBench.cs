@@ -131,7 +131,7 @@ internal static class HaulOptimizationBench
         Int32 JointChainCandidates = Math.Max(
             1, ReadIntOption(Args, "--joint-chain-candidates=", 4));
         Double PairAuctionEpsilonM = ReadDoubleOption(
-            Args, "--pair-auction-epsilon=", 0.25);
+            Args, "--pair-auction-epsilon=", Constants.QUARTER_SCALE);
         HashSet<Int32> DiagnosticPasses = ReadIntSetOption(
             Args, "--diagnostic-pass=");
         Int32 RandomRoutePngCount = ReadIntOption(
@@ -174,7 +174,7 @@ internal static class HaulOptimizationBench
 
         HaulBuilderOptions Options = new HaulBuilderOptions
         {
-            AgdPath = AgdPath,
+            this.AgdPath = AgdPath,
             LaneAxisHeadingDeg = HeadingAxisDeg ?? 0.0,
         };
         AgdField Field = Agd.Parse(AgdPath);
@@ -266,7 +266,7 @@ internal static class HaulOptimizationBench
             EdgePairRepairResult = HaulPairRepair.Repair(
                 EdgeCandidatePasses,
                 Grid,
-                Options.BladeWidthMm / 1000.0,
+                Options.BladeWidthMm / Constants.MILLIMETERS_PER_METER,
                 true,
                 Obstacles: Obstacles.EMPTY_OBSTACLES);
             EdgeCandidatePasses = EdgePairRepairResult.Passes;
@@ -275,7 +275,7 @@ internal static class HaulOptimizationBench
                 EdgeOmissionResult = HaulDifficultCycleFilter.Apply(
                     EdgeCandidatePasses,
                     Grid,
-                    Options.BladeWidthMm / 1000.0,
+                    Options.BladeWidthMm / Constants.MILLIMETERS_PER_METER,
                     true,
                     EdgePairRepairResult.FinalFailures,
                     HaulDifficultCycleFilter.OmissionPriority.SimplestFirst);
@@ -294,8 +294,8 @@ internal static class HaulOptimizationBench
                 CandidatePasses,
                 Grid,
                 MaximumLoadBcy,
-                Grid.MaxDepthMm / 1000.0,
-                Options.BladeWidthMm / 1000.0,
+                Grid.MaxDepthMm / Constants.MILLIMETERS_PER_METER,
+                Options.BladeWidthMm / Constants.MILLIMETERS_PER_METER,
                 true,
                 Obstacles: Obstacles.EMPTY_OBSTACLES);
             CandidatePasses = ConsolidationResult.Passes;
@@ -313,13 +313,13 @@ internal static class HaulOptimizationBench
             MultiRouteExchangeResult = HaulMultiRouteExchangeOptimizer.Optimize(
                 CandidatePasses,
                 Grid,
-                Grid.MaxDepthMm / 1000.0,
+                Grid.MaxDepthMm / Constants.MILLIMETERS_PER_METER,
                 MultiRouteExchangeRounds,
                 MultiRouteExchangeGroupRoutes,
                 MultiRouteExchangeMaximumGroups,
                 MinimumImprovementM:
                     MultiRouteExchangeMinimumImprovementM,
-                BladeWidthM: Options.BladeWidthMm / 1000.0,
+                BladeWidthM: Options.BladeWidthMm / Constants.MILLIMETERS_PER_METER,
                 GradeReturn: true,
                 Obstacles: Obstacles.EMPTY_OBSTACLES);
             CandidatePasses = MultiRouteExchangeResult.Passes;
@@ -341,7 +341,7 @@ internal static class HaulOptimizationBench
                 HaulDifficultCycleFilter.Apply(
                     CandidatePasses,
                     Grid,
-                    Options.BladeWidthMm / 1000.0,
+                    Options.BladeWidthMm / Constants.MILLIMETERS_PER_METER,
                     true,
                     OmitCompactFailures,
                     OmissionPriority);
@@ -354,7 +354,7 @@ internal static class HaulOptimizationBench
             PairRepair = HaulPairRepair.Repair(
                 CandidatePasses,
                 Grid,
-                Options.BladeWidthMm / 1000.0,
+                Options.BladeWidthMm / Constants.MILLIMETERS_PER_METER,
                 true,
                 Obstacles: Obstacles.EMPTY_OBSTACLES);
             CandidatePasses = PairRepair.Passes;
@@ -365,7 +365,7 @@ internal static class HaulOptimizationBench
             SplitRepair = HaulCycleSplitRepair.Repair(
                 CandidatePasses,
                 Grid,
-                Options.BladeWidthMm / 1000.0,
+                Options.BladeWidthMm / Constants.MILLIMETERS_PER_METER,
                 true,
                 Obstacles: Obstacles.EMPTY_OBSTACLES);
             CandidatePasses = SplitRepair.Passes;
@@ -395,7 +395,7 @@ internal static class HaulOptimizationBench
                     GuidancePlanner.EvaluateCompactCycle(
                         CandidatePasses[Index],
                         Grid,
-                        Options.BladeWidthMm / 1000.0,
+                        Options.BladeWidthMm / Constants.MILLIMETERS_PER_METER,
                         true));
         }
         Route Route;
@@ -469,7 +469,7 @@ internal static class HaulOptimizationBench
             JointChainResult = HaulCycleChainOptimizer.Optimize(
                 Route.OrderedPasses,
                 Grid,
-                Options.BladeWidthMm / 1000.0,
+                Options.BladeWidthMm / Constants.MILLIMETERS_PER_METER,
                 true,
                 true,
                 Options.UnloadedTravelSpeedMph,
@@ -594,7 +594,7 @@ internal static class HaulOptimizationBench
             HaulPlanValidation RepairValidation = Ledger.ValidateComplete(
                 CandidatePasses,
                 MaximumLoadBcy,
-                Grid.MaxDepthMm / 1000.0,
+                Grid.MaxDepthMm / Constants.MILLIMETERS_PER_METER,
                 AllowDeferredWork: true);
             Console.WriteLine(String.Format(
                 CultureInfo.InvariantCulture,
@@ -610,7 +610,7 @@ internal static class HaulOptimizationBench
             HaulPlanValidation PairTwoOptValidation = Ledger.ValidateComplete(
                 CandidatePasses,
                 MaximumLoadBcy,
-                Grid.MaxDepthMm / 1000.0,
+                Grid.MaxDepthMm / Constants.MILLIMETERS_PER_METER,
                 AllowDeferredWork: true);
             Console.WriteLine(String.Format(
                 CultureInfo.InvariantCulture,
@@ -672,7 +672,7 @@ internal static class HaulOptimizationBench
             HaulPlanValidation PairAuctionValidation = Ledger.ValidateComplete(
                 CandidatePasses,
                 MaximumLoadBcy,
-                Grid.MaxDepthMm / 1000.0,
+                Grid.MaxDepthMm / Constants.MILLIMETERS_PER_METER,
                 AllowDeferredWork: true);
             Console.WriteLine(String.Format(
                 CultureInfo.InvariantCulture,
@@ -687,7 +687,7 @@ internal static class HaulOptimizationBench
             HaulPlanValidation SplitValidation = Ledger.ValidateComplete(
                 CandidatePasses,
                 MaximumLoadBcy,
-                Grid.MaxDepthMm / 1000.0,
+                Grid.MaxDepthMm / Constants.MILLIMETERS_PER_METER,
                 AllowDeferredWork: true);
             Console.WriteLine(String.Format(
                 CultureInfo.InvariantCulture,
@@ -703,7 +703,7 @@ internal static class HaulOptimizationBench
             HaulPlanValidation OmissionValidation = Ledger.ValidateComplete(
                 CandidatePasses,
                 MaximumLoadBcy,
-                Grid.MaxDepthMm / 1000.0,
+                Grid.MaxDepthMm / Constants.MILLIMETERS_PER_METER,
                 AllowDeferredWork: true);
             Console.WriteLine(String.Format(
                 CultureInfo.InvariantCulture,
@@ -729,7 +729,7 @@ internal static class HaulOptimizationBench
             HaulPlanValidation ExchangeValidation = Ledger.ValidateComplete(
                 CandidatePasses,
                 MaximumLoadBcy,
-                Grid.MaxDepthMm / 1000.0,
+                Grid.MaxDepthMm / Constants.MILLIMETERS_PER_METER,
                 AllowDeferredWork: true);
             Console.WriteLine(String.Format(
                 CultureInfo.InvariantCulture,
@@ -793,7 +793,7 @@ internal static class HaulOptimizationBench
         Console.WriteLine(String.Format(
             CultureInfo.InvariantCulture,
             "proxy_hours={0:F3} proxy_haul_m={1:F1} proxy_deadhead_m={2:F1} elapsed_s={3:F2}",
-            ProxyTime.TotalTimeS / 3600.0,
+            ProxyTime.TotalTimeS / Constants.SECONDS_PER_HOUR,
             ProxyTime.HaulingDistM,
             Route.TotalDeadheadM,
             Timer.Elapsed.TotalSeconds));
@@ -912,12 +912,12 @@ internal static class HaulOptimizationBench
         Console.WriteLine(String.Format(
             CultureInfo.InvariantCulture,
             "exact_deterministic_hours={0:F3} exact_scheduled_hours={1:F3} exact_distance_m={2:F1} exact_segments={3} manual_assists={4} acceleration_overhead_hours={5:F3} motion_blocks={6} curvature_limited_m={7:F1} elapsed_minutes={8:F2}",
-            ExactResult.DeterministicSeconds / 3600.0,
-            ExactResult.ScheduledSeconds / 3600.0,
+            ExactResult.DeterministicSeconds / Constants.SECONDS_PER_HOUR,
+            ExactResult.ScheduledSeconds / Constants.SECONDS_PER_HOUR,
             ExactResult.DistanceM,
             ExactResult.Plan.Lifecycle.Segments.Count,
             ExactResult.Plan.Lifecycle.ManualAssistCount,
-            Timing.AccelerationConstraintSeconds / 3600.0,
+            Timing.AccelerationConstraintSeconds / Constants.SECONDS_PER_HOUR,
             Timing.MotionBlockCount,
             Timing.CurvatureLimitedDistanceM,
             Timer.Elapsed.TotalMinutes));
@@ -934,7 +934,7 @@ internal static class HaulOptimizationBench
                 CultureInfo.InvariantCulture,
                 "phase={0} hours={1:F4} distance_m={2:F1}",
                 Phase,
-                Timing.PhaseSeconds[Phase] / 3600.0,
+                Timing.PhaseSeconds[Phase] / Constants.SECONDS_PER_HOUR,
                 DistanceM));
         }
         foreach (KeyValuePair<Int32, Double> RouteTime in Timing.RouteSeconds
@@ -947,7 +947,7 @@ internal static class HaulOptimizationBench
                 CultureInfo.InvariantCulture,
                 "hot_route={0} hours={1:F4} distance_m={2:F1}",
                 RouteTime.Key,
-                RouteTime.Value / 3600.0,
+                RouteTime.Value / Constants.SECONDS_PER_HOUR,
                 RouteDistanceM));
         }
         FieldEdgePolicy ExactEdgePolicy = new FieldEdgePolicy(Grid, Grid.GridSizeM);
@@ -965,6 +965,9 @@ internal static class HaulOptimizationBench
                 Pass.Fill.Runs.Count);
             WriteExactRuns("cut", Pass.Cut.Runs);
             WriteExactRuns("fill", Pass.Fill.Runs);
+
+            // Writes the exact run membership for one work kind to the
+            // benchmark report.
 
             void WriteExactRuns
                 (
@@ -1015,7 +1018,7 @@ internal static class HaulOptimizationBench
             RenderRandomExactRoutes(
                 ExactResult.Plan,
                 Grid,
-                Options.BladeWidthMm / 1000.0,
+                Options.BladeWidthMm / Constants.MILLIMETERS_PER_METER,
                 Math.Min(RandomRoutePngCount, ExactResult.Plan.Passes.Count),
                 RandomRouteSeed,
                 Path.GetFullPath(RandomRouteOutputDirectory));
@@ -1025,7 +1028,7 @@ internal static class HaulOptimizationBench
             RenderExactRouteSequence(
                 ExactResult.Plan,
                 Grid,
-                Options.BladeWidthMm / 1000.0,
+                Options.BladeWidthMm / Constants.MILLIMETERS_PER_METER,
                 RouteSequenceStart,
                 3,
                 Path.GetFullPath(RouteSequenceOutputPath));
@@ -1037,7 +1040,7 @@ internal static class HaulOptimizationBench
             RenderExactRouteSequence(
                 ExactResult.Plan,
                 Grid,
-                Options.BladeWidthMm / 1000.0,
+                Options.BladeWidthMm / Constants.MILLIMETERS_PER_METER,
                 Start,
                 3,
                 Path.Combine(
@@ -1065,7 +1068,7 @@ internal static class HaulOptimizationBench
                 RenderExactRouteSequence(
                     ExactResult.Plan,
                     Grid,
-                    Options.BladeWidthMm / 1000.0,
+                    Options.BladeWidthMm / Constants.MILLIMETERS_PER_METER,
                     Start,
                     3,
                     Path.Combine(
@@ -1082,7 +1085,7 @@ internal static class HaulOptimizationBench
                 RandomRouteTripletSeed,
                 DirectoryPath);
         }
-        Double ExactHours = ExactResult.DeterministicSeconds / 3600.0;
+        Double ExactHours = ExactResult.DeterministicSeconds / Constants.SECONDS_PER_HOUR;
         Double SavingsPercent = 100.0 * (433.483 - ExactHours) / 433.483;
         Double MoveRateBcyPerHour = Route.OrderedPasses
             .Sum(Pass => Pass.LoadBcy) / ExactHours;
@@ -1351,6 +1354,14 @@ internal static class HaulOptimizationBench
         return (End == Message.Length) || !Char.IsDigit(Message[End]);
     }
 
+    /// <summary>
+    /// Executes the deferred work lower bound hours operation.
+    /// </summary>
+    /// <param name="Deferred">The deferred used by the operation.</param>
+    /// <param name="Grid">Field grid used by the operation.</param>
+    /// <param name="Options">Configuration controlling the operation.</param>
+    /// <returns>The resulting deferred work lower bound hours.</returns>
+
     private static Double DeferredWorkLowerBoundHours
         (
         IReadOnlyList<HaulDeferredWork> Deferred,
@@ -1369,8 +1380,16 @@ internal static class HaulOptimizationBench
             / (Options.FillSpeedMph * Constants.MPH_TO_MPS);
         Double GradeSeconds = FillDistanceM
             / (Options.GradeSpeedMph * Constants.MPH_TO_MPS);
-        return (CutSeconds + FillSeconds + GradeSeconds) / 3600.0;
+        return (CutSeconds + FillSeconds + GradeSeconds) / Constants.SECONDS_PER_HOUR;
     }
+
+    /// <summary>
+    /// Reads int option.
+    /// </summary>
+    /// <param name="Args">The args used by the operation.</param>
+    /// <param name="Prefix">The prefix used by the operation.</param>
+    /// <param name="DefaultValue">The default value used by the operation.</param>
+    /// <returns>The resulting int option.</returns>
 
     private static Int32 ReadIntOption
         (
@@ -1391,6 +1410,14 @@ internal static class HaulOptimizationBench
             : DefaultValue;
     }
 
+    /// <summary>
+    /// Reads double option.
+    /// </summary>
+    /// <param name="Args">The args used by the operation.</param>
+    /// <param name="Prefix">The prefix used by the operation.</param>
+    /// <param name="DefaultValue">The default value used by the operation.</param>
+    /// <returns>The resulting double option.</returns>
+
     private static Double ReadDoubleOption
         (
         IEnumerable<String> Args,
@@ -1409,6 +1436,13 @@ internal static class HaulOptimizationBench
             ? Math.Max(0.0, Value)
             : DefaultValue;
     }
+
+    /// <summary>
+    /// Reads nullable double option.
+    /// </summary>
+    /// <param name="Args">The args used by the operation.</param>
+    /// <param name="Prefix">The prefix used by the operation.</param>
+    /// <returns>The resulting nullable double option.</returns>
 
     private static Double? ReadNullableDoubleOption
         (

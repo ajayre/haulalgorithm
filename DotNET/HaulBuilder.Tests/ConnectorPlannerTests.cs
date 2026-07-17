@@ -10,6 +10,10 @@ namespace HaulBuilder.Tests
     /// </summary>
     public sealed class ConnectorPlannerTests
     {
+        /// <summary>
+        /// Verifies unconstrained distance is exact for straight aligned poses.
+        /// </summary>
+
         [Fact]
         public void UnconstrainedDistanceIsExactForStraightAlignedPoses
             (
@@ -24,7 +28,7 @@ namespace HaulBuilder.Tests
         }
 
         private const Double TURN_RADIUS_M = 10.0;
-        private const Double SAMPLE_SPACING_M = 0.5;
+        private const Double SAMPLE_SPACING_M = Constants.HALF_SCALE;
 
         /// <summary>
         /// Verifies a feasible connector is sampled inside the field with exact endpoints.
@@ -48,7 +52,7 @@ namespace HaulBuilder.Tests
             Assert.Equal((Start.X, Start.Y), Result.Points[0]);
             Assert.Equal((End.X, End.Y), Result.Points[Result.Points.Count - 1]);
             Assert.All(Result.Points, Point => Assert.True(Grid.ContainsWorldXy(Point.X, Point.Y)));
-            AssertMaximumStep(Result.Points, SAMPLE_SPACING_M + 1e-6);
+            AssertMaximumStep(Result.Points, SAMPLE_SPACING_M + Constants.GEOMETRY_COMPARISON_TOLERANCE);
         }
 
         /// <summary>
@@ -92,7 +96,7 @@ namespace HaulBuilder.Tests
 
             Assert.True(Result.Success, Result.FailureReason);
             Assert.Equal(40.0, Result.LengthM, 2);
-            AssertMaximumStep(Result.Points, SAMPLE_SPACING_M + 1e-6);
+            AssertMaximumStep(Result.Points, SAMPLE_SPACING_M + Constants.GEOMETRY_COMPARISON_TOLERANCE);
         }
 
         /// <summary>Verifies a coincident opposite-heading pose produces a complete keyhole-style turn.</summary>
@@ -114,7 +118,7 @@ namespace HaulBuilder.Tests
             Assert.True(Result.LengthM > 0.0);
             Assert.Equal((Start.X, Start.Y), Result.Points[0]);
             Assert.Equal((End.X, End.Y), Result.Points[Result.Points.Count - 1]);
-            AssertMaximumStep(Result.Points, SAMPLE_SPACING_M + 1e-6);
+            AssertMaximumStep(Result.Points, SAMPLE_SPACING_M + Constants.GEOMETRY_COMPARISON_TOLERANCE);
         }
 
         /// <summary>

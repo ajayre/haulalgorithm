@@ -9,7 +9,7 @@ namespace HaulBuilder
     /// <summary>
     /// UTM and AGD parsing utilities ported from landlevel.agd.
     /// </summary>
-    public static class Agd
+    static public class Agd
     {
         private const Double UTM_A = 6378137.0;
         private const Double UTM_F = 1.0 / 298.257223563;
@@ -37,8 +37,8 @@ namespace HaulBuilder
             }
 
             // Normalize longitude to [-180, 180).
-            Double LonNorm = ((((LongitudeDeg + 180.0) % 360.0) + 360.0) % 360.0) - 180.0;
-            Int32 Zone = (Int32)Math.Floor(((LonNorm + 180.0) / 6.0) + 1.0);
+            Double LonNorm = ((((LongitudeDeg + Constants.DEGREES_PER_HALF_TURN) % Constants.DEGREES_PER_TURN) + Constants.DEGREES_PER_TURN) % Constants.DEGREES_PER_TURN) - Constants.DEGREES_PER_HALF_TURN;
+            Int32 Zone = (Int32)Math.Floor(((LonNorm + Constants.DEGREES_PER_HALF_TURN) / 6.0) + 1.0);
             Boolean IsNorthern = (LatitudeDeg >= 0.0);
 
             Double LatRad = DegToRad(LatitudeDeg);
@@ -141,8 +141,8 @@ namespace HaulBuilder
                 ) / CosP;
 
             Double LonOrigin = ((Zone - 1) * 6) - 180 + 3;
-            Double LatDeg = LatRad * 180.0 / Math.PI;
-            Double LonDeg = LonOrigin + (LonRadOffset * 180.0 / Math.PI);
+            Double LatDeg = LatRad * Constants.DEGREES_PER_HALF_TURN / Math.PI;
+            Double LonDeg = LonOrigin + (LonRadOffset * Constants.DEGREES_PER_HALF_TURN / Math.PI);
             return (LatDeg, LonDeg);
         }
 
@@ -329,7 +329,7 @@ namespace HaulBuilder
             )
         {
             // Keep conversion centralized so projection formulas stay readable.
-            return Deg * Math.PI / 180.0;
+            return Deg * Math.PI / Constants.DEGREES_PER_HALF_TURN;
         }
 
         /// <summary>
@@ -480,7 +480,7 @@ namespace HaulBuilder
             get
             {
                 // Keep positive as cut, matching the Python sign convention.
-                return Existing - Proposed;
+                return this.Existing - Proposed;
             }
         }
     }
@@ -564,7 +564,7 @@ namespace HaulBuilder
             get
             {
                 // Preserve Python's alias property name.
-                return Points;
+                return this.Points;
             }
         }
 
@@ -581,7 +581,7 @@ namespace HaulBuilder
             )
         {
             // Instance helper mirrors Python field-scoped convenience.
-            return Agd.LatLonFromUtm(Easting, Northing, Zone, IsNorthern);
+            return Agd.LatLonFromUtm(Easting, Northing, this.Zone, this.IsNorthern);
         }
     }
 }

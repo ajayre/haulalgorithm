@@ -7,10 +7,10 @@ namespace HaulBuilder
     /// <summary>
     /// Builds isolated forward-only minimum-radius connectors for guidance coverage runs.
     /// </summary>
-    public static class ConnectorPlanner
+    static public class ConnectorPlanner
     {
         private const Double TWO_PI = 2.0 * Math.PI;
-        private const Double NUMERIC_TOLERANCE = 1e-9;
+        private const Double NUMERIC_TOLERANCE = Constants.NUMERIC_COMPARISON_TOLERANCE;
 
         /// <summary>
         /// Planar centerline pose with compass heading.
@@ -33,7 +33,7 @@ namespace HaulBuilder
                 // Normalize heading once so candidate comparison stays deterministic.
                 this.X = X;
                 this.Y = Y;
-                this.HeadingDeg = ((HeadingDeg % 360.0) + 360.0) % 360.0;
+                this.HeadingDeg = ((HeadingDeg % Constants.DEGREES_PER_TURN) + Constants.DEGREES_PER_TURN) % Constants.DEGREES_PER_TURN;
             }
 
             /// <summary>Gets easting in metres.</summary>
@@ -91,6 +91,10 @@ namespace HaulBuilder
             /// <summary>Gets failure reason when no connector was accepted.</summary>
             public String FailureReason { get; }
         }
+
+        /// <summary>
+        /// Provides candidate behavior.
+        /// </summary>
 
         private sealed class Candidate
         {
@@ -438,7 +442,7 @@ namespace HaulBuilder
             Double HeadingDeg
             )
         {
-            return (Math.PI / 2.0) - (HeadingDeg * Math.PI / 180.0);
+            return (Math.PI / 2.0) - (HeadingDeg * Math.PI / Constants.DEGREES_PER_HALF_TURN);
         }
 
         /// <summary>

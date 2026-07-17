@@ -6,157 +6,165 @@ using System.IO;
 using System.Linq;
 using HaulBuilder;
 
+/// <summary>
+/// Provides program behavior.
+/// </summary>
 internal static class Program
 {
+    /// <summary>
+    /// Runs the command-line entry point.
+    /// </summary>
+    /// <param name="Args">The args used by the operation.</param>
+
     private static void Main
         (
-        String[] args
+        String[] Args
         )
     {
-        if ((args.Length > 0)
-            && ((args[0] == "--probe-haul-optimizer")
-                || (args[0] == "--optimize-haul")))
+        if ((Args.Length > 0)
+            && ((Args[0] == "--probe-haul-optimizer")
+                || (Args[0] == "--optimize-haul")))
         {
-            Environment.Exit(HaulOptimizationBench.Run(args.Skip(1).ToArray()));
+            Environment.Exit(HaulOptimizationBench.Run(Args.Skip(1).ToArray()));
             return;
         }
 
-        if ((args.Length > 0) && (args[0] == "--compare-paths"))
+        if ((Args.Length > 0) && (Args[0] == "--compare-paths"))
         {
             ComparePaths.Run(Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "TheShop2_2ft.agd")));
             return;
         }
 
-        if ((args.Length > 0) && (args[0] == "--make-gif"))
+        if ((Args.Length > 0) && (Args[0] == "--make-gif"))
         {
-            Environment.Exit(MakeLevelingAnimation.Run(args.Skip(1).ToArray()));
+            Environment.Exit(MakeLevelingAnimation.Run(Args.Skip(1).ToArray()));
             return;
         }
 
-        if ((args.Length > 0) && (args[0] == "--kd-bench"))
+        if ((Args.Length > 0) && (Args[0] == "--kd-bench"))
         {
             KdMicrobench.Run(5000, 8000, 100);
             return;
         }
 
-        if ((args.Length > 0) && (args[0] == "--diag-route3-fill"))
+        if ((Args.Length > 0) && (Args[0] == "--diag-route3-fill"))
         {
-            Environment.Exit(DiagRoute3Fill.Run(args.Skip(1).ToArray()));
+            Environment.Exit(DiagRoute3Fill.Run(Args.Skip(1).ToArray()));
             return;
         }
 
-        if ((args.Length > 0) && (args[0] == "--diag-cut-path"))
+        if ((Args.Length > 0) && (Args[0] == "--diag-cut-path"))
         {
-            Environment.Exit(DiagCutPath.Run(args.Skip(1).ToArray()));
+            Environment.Exit(DiagCutPath.Run(Args.Skip(1).ToArray()));
             return;
         }
 
-        if ((args.Length > 0) && (args[0] == "--diag-route-loops"))
+        if ((Args.Length > 0) && (Args[0] == "--diag-route-loops"))
         {
-            Environment.Exit(DiagRouteLoops.Run(args.Skip(1).ToArray()));
+            Environment.Exit(DiagRouteLoops.Run(Args.Skip(1).ToArray()));
             return;
         }
 
-        if ((args.Length > 0) && (args[0] == "--diag-route-radius"))
+        if ((Args.Length > 0) && (Args[0] == "--diag-route-radius"))
         {
-            Environment.Exit(DiagRouteRadius.Run(args.Skip(1).ToArray()));
+            Environment.Exit(DiagRouteRadius.Run(Args.Skip(1).ToArray()));
             return;
         }
 
-        if ((args.Length > 0) && (args[0] == "--diag-route-outside"))
+        if ((Args.Length > 0) && (Args[0] == "--diag-route-outside"))
         {
-            Environment.Exit(DiagRouteOutside.Run(args.Skip(1).ToArray()));
+            Environment.Exit(DiagRouteOutside.Run(Args.Skip(1).ToArray()));
             return;
         }
 
-        if ((args.Length > 0) && (args[0] == "--export-first-routes"))
+        if ((Args.Length > 0) && (Args[0] == "--export-first-routes"))
         {
-            Environment.Exit(ExportFirstRoutes.Run(args.Skip(1).ToArray()));
+            Environment.Exit(ExportFirstRoutes.Run(Args.Skip(1).ToArray()));
             return;
         }
 
-        if ((args.Length > 0) && (args[0] == "--compare-guidance-coverage"))
+        if ((Args.Length > 0) && (Args[0] == "--compare-guidance-coverage"))
         {
-            Environment.Exit(GuidancePlanner.Run(args.Skip(1).ToArray()));
+            Environment.Exit(GuidancePlanner.Run(Args.Skip(1).ToArray()));
             return;
         }
 
-        if ((args.Length > 0) && (args[0] == "--report-whole-guidance"))
+        if ((Args.Length > 0) && (Args[0] == "--report-whole-guidance"))
         {
             Environment.Exit(GuidancePlanner.ReportWholeField(
-                args.Skip(1).ToArray()));
+                Args.Skip(1).ToArray()));
             return;
         }
 
-        if ((args.Length > 0) && (args[0] == "--profile-guidance-coverage"))
+        if ((Args.Length > 0) && (Args[0] == "--profile-guidance-coverage"))
         {
             Environment.Exit(GuidancePlanner.ProfileGuidanceCoverage(
-                args.Skip(1).ToArray()));
+                Args.Skip(1).ToArray()));
             return;
         }
 
-        if ((args.Length > 0) && (args[0] == "--diagnose-guidance-connector"))
+        if ((Args.Length > 0) && (Args[0] == "--diagnose-guidance-connector"))
         {
             Environment.Exit(GuidancePlanner.DiagnoseGuidanceConnector(
-                args.Skip(1).ToArray()));
+                Args.Skip(1).ToArray()));
             return;
         }
 
-        if ((args.Length > 0) && (args[0] == "--export-routes-1-3"))
+        if ((Args.Length > 0) && (Args[0] == "--export-routes-1-3"))
         {
-            Environment.Exit(GuidancePlanner.ExportFirstThree(args.Skip(1).ToArray()));
+            Environment.Exit(GuidancePlanner.ExportFirstThree(Args.Skip(1).ToArray()));
             return;
         }
 
-        if ((args.Length > 0) && (args[0] == "--export-routes-3-5"))
+        if ((Args.Length > 0) && (Args[0] == "--export-routes-3-5"))
         {
             Environment.Exit(GuidancePlanner.ExportRoutesThreeToFive(
-                args.Skip(1).ToArray()));
+                Args.Skip(1).ToArray()));
             return;
         }
 
-        if ((args.Length > 0) && (args[0] == "--export-route-range"))
+        if ((Args.Length > 0) && (Args[0] == "--export-route-range"))
         {
             Environment.Exit(GuidancePlanner.ExportRouteRange(
-                args.Skip(1).ToArray()));
+                Args.Skip(1).ToArray()));
             return;
         }
 
-        if ((args.Length > 0) && (args[0] == "--route2-png"))
+        if ((Args.Length > 0) && (Args[0] == "--route2-png"))
         {
-            String OutPath = (args.Length > 1)
-                ? Path.GetFullPath(args[1])
+            String OutPath = (Args.Length > 1)
+                ? Path.GetFullPath(Args[1])
                 : Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "assets", "theshop2_route2_actual_dotnet.png"));
-            String AgdPath = (args.Length > 2)
-                ? Path.GetFullPath(args[2])
+            String AgdPath = (Args.Length > 2)
+                ? Path.GetFullPath(Args[2])
                 : Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "TheShop2_2ft.agd"));
-            WriteRoutePng(AgdPath, OutPath, passIndex: 1);
+            WriteRoutePng(AgdPath, OutPath, PassIndex: 1);
             return;
         }
 
-        if ((args.Length > 0) && (args[0] == "--route11-png"))
+        if ((Args.Length > 0) && (Args[0] == "--route11-png"))
         {
-            String OutPath = (args.Length > 1)
-                ? Path.GetFullPath(args[1])
+            String OutPath = (Args.Length > 1)
+                ? Path.GetFullPath(Args[1])
                 : Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "assets", "theshop2_route11_actual_dotnet.png"));
-            String AgdPath = (args.Length > 2)
-                ? Path.GetFullPath(args[2])
+            String AgdPath = (Args.Length > 2)
+                ? Path.GetFullPath(Args[2])
                 : Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "TheShop2_2ft.agd"));
-            WriteRoutePng(AgdPath, OutPath, passIndex: 10);
+            WriteRoutePng(AgdPath, OutPath, PassIndex: 10);
             return;
         }
 
-        if ((args.Length > 0) && (args[0] == "--dump-early-passes"))
+        if ((Args.Length > 0) && (Args[0] == "--dump-early-passes"))
         {
-            String AgdPath = (args.Length > 1)
-                ? Path.GetFullPath(args[1])
+            String AgdPath = (Args.Length > 1)
+                ? Path.GetFullPath(Args[1])
                 : Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "TheShop2_2ft.agd"));
             DumpEarlyPasses(AgdPath);
             return;
         }
 
-        String Fixture = args.Length > 0
-            ? args[0]
+        String Fixture = Args.Length > 0
+            ? Args[0]
             : Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "TheShop2_2ft.agd");
         Fixture = Path.GetFullPath(Fixture);
 
@@ -179,7 +187,7 @@ internal static class Program
             ScraperBcy,
             0,
             null,
-            0.5,
+            Constants.HALF_SCALE,
             50.0,
             Constants.DEFAULT_MAX_DROP_HOP_FT * Constants.FEET_TO_METERS,
             Flow,
@@ -230,31 +238,31 @@ internal static class Program
         Console.WriteLine(String.Format("route: {0:F2}s", (T5 - T4).TotalSeconds));
         Console.WriteLine(String.Format("knots: {0:F2}s", (T6 - T5).TotalSeconds));
         Console.WriteLine(String.Format("metrics: {0:F2}s", (T7 - T6).TotalSeconds));
-        Console.WriteLine(String.Format("moved_bcy={0:F2} haul_m={1:F1} hours={2:F2}", MovedBcy, Time.HaulingDistM, Time.TotalTimeS / 3600.0));
+        Console.WriteLine(String.Format("moved_bcy={0:F2} haul_m={1:F1} hours={2:F2}", MovedBcy, Time.HaulingDistM, Time.TotalTimeS / Constants.SECONDS_PER_HOUR));
         Console.WriteLine(String.Format("total: {0:F2}s", Sw.Elapsed.TotalSeconds));
     }
 
     /// <summary>
     /// Plans TheShop2 (or another AGD) and writes the sequenced route-2 single-pair PNG.
     /// </summary>
-    /// <param name="agdPath">Path to the AGD fixture.</param>
-    /// <param name="outPath">Destination PNG path.</param>
+    /// <param name="AgdPath">Path to the AGD fixture.</param>
+    /// <param name="OutPath">Destination PNG path.</param>
     /// <summary>
     /// Writes a single-pass guidance PNG for TheShop2 (1-based pass display via 0-based index).
     /// </summary>
-    /// <param name="agdPath">Path to the AGD fixture.</param>
-    /// <param name="outPath">Output PNG path.</param>
-    /// <param name="passIndex">0-based index into the sequenced route.</param>
+    /// <param name="AgdPath">Path to the AGD fixture.</param>
+    /// <param name="OutPath">Output PNG path.</param>
+    /// <param name="PassIndex">0-based index into the sequenced route.</param>
     private static void WriteRoutePng
         (
-        String agdPath,
-        String outPath,
-        Int32 passIndex
+        String AgdPath,
+        String OutPath,
+        Int32 PassIndex
         )
     {
         // Match the Python single-route render: default grid/blade flow-aligned plan, one ordered pass.
         Double ScraperBcy = Constants.DEFAULT_SCRAPER_CAPACITY_LCY / Constants.DEFAULT_SWELL_FACTOR;
-        AgdField Field = Agd.Parse(agdPath);
+        AgdField Field = Agd.Parse(AgdPath);
         Grid Grid = GridMath.BuildGrid(Field, Constants.DEFAULT_GRID_SIZE_FT);
         Balance.Compute(Grid, "check", Double.PositiveInfinity);
         FlowField Flow = FlowFieldSolver.Compute(Grid, "poisson");
@@ -266,7 +274,7 @@ internal static class Program
             ScraperBcy,
             0,
             null,
-            0.5,
+            Constants.HALF_SCALE,
             50.0,
             Constants.DEFAULT_MAX_DROP_HOP_FT * Constants.FEET_TO_METERS,
             Flow,
@@ -285,53 +293,53 @@ internal static class Program
         Double Heading = Passes.EstimateSlopeHeading(Grid);
         Swaths.ReprofileKnots(FullRoute, Grid, Constants.DEFAULT_BLADE_WIDTH_MM, 3, Heading, 0.0);
 
-        if ((passIndex < 0) || (passIndex >= FullRoute.OrderedPasses.Count))
+        if ((PassIndex < 0) || (PassIndex >= FullRoute.OrderedPasses.Count))
         {
             throw new ArgumentOutOfRangeException(
-                nameof(passIndex),
-                passIndex,
+                nameof(PassIndex),
+                PassIndex,
                 String.Format(
                     CultureInfo.InvariantCulture,
                     "pass index {0} out of range (n={1})",
-                    passIndex,
+                    PassIndex,
                     FullRoute.OrderedPasses.Count));
         }
 
-        Pass PassN = FullRoute.OrderedPasses[passIndex];
+        Pass PassN = FullRoute.OrderedPasses[PassIndex];
         Route Mini = new Route(new List<Int32> { 0 }, new List<Pass> { PassN }, 0.0);
         GuidanceResult Guidance = Swaths.BuildGuidance(Grid, Field, Mini, Constants.DEFAULT_BLADE_WIDTH_MM, Heading);
         List<GuidancePoint> Pts = Guidance.Points.Where(Point => Point.PassNo == 1).ToList();
-        Double BladeM = Constants.DEFAULT_BLADE_WIDTH_MM / 1000.0;
+        Double BladeM = Constants.DEFAULT_BLADE_WIDTH_MM / Constants.MILLIMETERS_PER_METER;
         Byte[] Png = Render.RenderSinglePairPng(Grid, Pts, BladeM, pixelsPerBin: 40, padCells: 6);
 
-        String? Dir = Path.GetDirectoryName(outPath);
+        String? Dir = Path.GetDirectoryName(OutPath);
         if (!String.IsNullOrEmpty(Dir))
         {
             Directory.CreateDirectory(Dir);
         }
 
-        File.WriteAllBytes(outPath, Png);
+        File.WriteAllBytes(OutPath, Png);
         Console.WriteLine(String.Format(
             CultureInfo.InvariantCulture,
             "wrote {0} ({1} bytes, {2} waypoints, route={3}, haul_m={4:F1})",
-            outPath,
+            OutPath,
             Png.Length,
             Pts.Count,
-            passIndex + 1,
+            PassIndex + 1,
             PassN.HaulDistanceM));
     }
 
     /// <summary>
     /// Prints JSON fingerprints for the first generated and ordered passes (parity debugging).
     /// </summary>
-    /// <param name="agdPath">Path to the AGD fixture.</param>
+    /// <param name="AgdPath">Path to the AGD fixture.</param>
     private static void DumpEarlyPasses
         (
-        String agdPath
+        String AgdPath
         )
     {
         Double ScraperBcy = Constants.DEFAULT_SCRAPER_CAPACITY_LCY / Constants.DEFAULT_SWELL_FACTOR;
-        AgdField Field = Agd.Parse(agdPath);
+        AgdField Field = Agd.Parse(AgdPath);
         Grid Grid = GridMath.BuildGrid(Field, Constants.DEFAULT_GRID_SIZE_FT);
         Balance.Compute(Grid, "check", Double.PositiveInfinity);
         FlowField Flow = FlowFieldSolver.Compute(Grid, "poisson");
@@ -343,7 +351,7 @@ internal static class Program
             ScraperBcy,
             0,
             null,
-            0.5,
+            Constants.HALF_SCALE,
             50.0,
             Constants.DEFAULT_MAX_DROP_HOP_FT * Constants.FEET_TO_METERS,
             Flow,
@@ -361,7 +369,7 @@ internal static class Program
             Obstacles.EMPTY_OBSTACLES);
 
         // Snapshot generation fingerprints before knot reprofile mutates shared Pass instances.
-        String FpPath = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(agdPath)!, "..", "assets", "cs_pass_fps.txt"));
+        String FpPath = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(AgdPath)!, "..", "assets", "cs_pass_fps.txt"));
         Directory.CreateDirectory(Path.GetDirectoryName(FpPath)!);
         using (StreamWriter Writer = new StreamWriter(FpPath))
         {
@@ -439,7 +447,7 @@ internal static class Program
         Console.WriteLine(String.Format(CultureInfo.InvariantCulture, "TOTAL {0} {1:F2} {2:F1}", PassResult.Passes.Count, Moved, Haul));
         Console.WriteLine("ORDER " + String.Join(",", FullRoute.Order.Take(20)));
 
-        String CellPath = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(agdPath)!, "..", "assets", "cs_cells.txt"));
+        String CellPath = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(AgdPath)!, "..", "assets", "cs_cells.txt"));
         using (StreamWriter Writer = new StreamWriter(CellPath))
         {
             for (Int32 Idx = 0; Idx < 5; Idx += 1)
@@ -465,32 +473,32 @@ internal static class Program
     /// <summary>
     /// Builds a short MD5 fingerprint of haul, load, and cut endpoints for parity diffs.
     /// </summary>
-    /// <param name="pass">Pass to fingerprint.</param>
+    /// <param name="Pass">Pass to fingerprint.</param>
     /// <returns>12-character hex digest prefix.</returns>
     private static String PassFingerprint
         (
-        Pass pass
+        Pass Pass
         )
     {
         using System.Security.Cryptography.MD5 Md5 = System.Security.Cryptography.MD5.Create();
         List<Byte> Bytes = new List<Byte>();
-        Bytes.AddRange(BitConverter.GetBytes(pass.HaulDistanceM));
-        Bytes.AddRange(BitConverter.GetBytes(pass.LoadBcy));
-        Bytes.AddRange(BitConverter.GetBytes(pass.CutCells.Count));
-        Int32 TakeFront = Math.Min(5, pass.CutCells.Count);
+        Bytes.AddRange(BitConverter.GetBytes(Pass.HaulDistanceM));
+        Bytes.AddRange(BitConverter.GetBytes(Pass.LoadBcy));
+        Bytes.AddRange(BitConverter.GetBytes(Pass.CutCells.Count));
+        Int32 TakeFront = Math.Min(5, Pass.CutCells.Count);
         for (Int32 Iter = 0; Iter < TakeFront; Iter += 1)
         {
-            Bytes.AddRange(BitConverter.GetBytes(pass.CutCells[Iter].Cell.Bx));
-            Bytes.AddRange(BitConverter.GetBytes(pass.CutCells[Iter].Cell.By));
-            Bytes.AddRange(BitConverter.GetBytes(pass.CutCells[Iter].DepthM));
+            Bytes.AddRange(BitConverter.GetBytes(Pass.CutCells[Iter].Cell.Bx));
+            Bytes.AddRange(BitConverter.GetBytes(Pass.CutCells[Iter].Cell.By));
+            Bytes.AddRange(BitConverter.GetBytes(Pass.CutCells[Iter].DepthM));
         }
 
-        Int32 TailStart = Math.Max(0, pass.CutCells.Count - 3);
-        for (Int32 Iter = TailStart; Iter < pass.CutCells.Count; Iter += 1)
+        Int32 TailStart = Math.Max(0, Pass.CutCells.Count - 3);
+        for (Int32 Iter = TailStart; Iter < Pass.CutCells.Count; Iter += 1)
         {
-            Bytes.AddRange(BitConverter.GetBytes(pass.CutCells[Iter].Cell.Bx));
-            Bytes.AddRange(BitConverter.GetBytes(pass.CutCells[Iter].Cell.By));
-            Bytes.AddRange(BitConverter.GetBytes(pass.CutCells[Iter].DepthM));
+            Bytes.AddRange(BitConverter.GetBytes(Pass.CutCells[Iter].Cell.Bx));
+            Bytes.AddRange(BitConverter.GetBytes(Pass.CutCells[Iter].Cell.By));
+            Bytes.AddRange(BitConverter.GetBytes(Pass.CutCells[Iter].DepthM));
         }
 
         Byte[] Hash = Md5.ComputeHash(Bytes.ToArray());
@@ -500,38 +508,38 @@ internal static class Program
     /// <summary>
     /// Writes one pass fingerprint line as compact JSON for cross-language comparison.
     /// </summary>
-    /// <param name="pass">Pass to summarize.</param>
-    /// <param name="label">Fingerprint label.</param>
+    /// <param name="Pass">Pass to summarize.</param>
+    /// <param name="Label">Fingerprint label.</param>
     private static void PrintPassFingerprint
         (
-        Pass pass,
-        String label
+        Pass Pass,
+        String Label
         )
     {
-        Int32 Uniq = pass.CutCells.Select(Entry => (Entry.Cell.Bx, Entry.Cell.By)).Distinct().Count();
-        String First = String.Join(",", pass.CutCells.Take(8).Select(Entry =>
+        Int32 Uniq = Pass.CutCells.Select(Entry => (Entry.Cell.Bx, Entry.Cell.By)).Distinct().Count();
+        String First = String.Join(",", Pass.CutCells.Take(8).Select(Entry =>
             String.Format(CultureInfo.InvariantCulture, "[{0},{1},{2:F6}]", Entry.Cell.Bx, Entry.Cell.By, Entry.DepthM)));
-        String Last = String.Join(",", pass.CutCells.Skip(Math.Max(0, pass.CutCells.Count - 5)).Select(Entry =>
+        String Last = String.Join(",", Pass.CutCells.Skip(Math.Max(0, Pass.CutCells.Count - 5)).Select(Entry =>
             String.Format(CultureInfo.InvariantCulture, "[{0},{1},{2:F6}]", Entry.Cell.Bx, Entry.Cell.By, Entry.DepthM)));
-        String CutH = pass.CutHeadingDeg.HasValue
-            ? pass.CutHeadingDeg.Value.ToString("F3", CultureInfo.InvariantCulture)
+        String CutH = Pass.CutHeadingDeg.HasValue
+            ? Pass.CutHeadingDeg.Value.ToString("F3", CultureInfo.InvariantCulture)
             : "null";
         Console.WriteLine(String.Format(
             CultureInfo.InvariantCulture,
             "{{\"label\":\"{0}\",\"ncut\":{1},\"nfill\":{2},\"uniq_cut\":{3},\"haul_m\":{4:F3},\"load_bcy\":{5:F4},\"cut_h\":{6},\"cut_start\":[{7:F3},{8:F3}],\"cut_end\":[{9:F3},{10:F3}],\"fill_start\":[{11:F3},{12:F3}],\"first_cut\":[{13}],\"last_cut\":[{14}]}}",
-            label,
-            pass.CutCells.Count,
-            pass.FillCells.Count,
+            Label,
+            Pass.CutCells.Count,
+            Pass.FillCells.Count,
             Uniq,
-            pass.HaulDistanceM,
-            pass.LoadBcy,
+            Pass.HaulDistanceM,
+            Pass.LoadBcy,
             CutH,
-            pass.CutStartXy.X,
-            pass.CutStartXy.Y,
-            pass.CutEndXy.X,
-            pass.CutEndXy.Y,
-            pass.FillStartXy.X,
-            pass.FillStartXy.Y,
+            Pass.CutStartXy.X,
+            Pass.CutStartXy.Y,
+            Pass.CutEndXy.X,
+            Pass.CutEndXy.Y,
+            Pass.FillStartXy.X,
+            Pass.FillStartXy.Y,
             First,
             Last));
     }

@@ -187,41 +187,41 @@ namespace HaulBuilder
         /// <summary>
         /// Initializes a new instance of the <see cref="CutFillPair"/> class.
         /// </summary>
-        /// <param name="order">1-based pass order.</param>
-        /// <param name="loadBcy">Carried bank volume in BCY.</param>
-        /// <param name="haulDistanceM">Haul distance in metres.</param>
-        /// <param name="cutStartXy">Cut-start world coordinates.</param>
-        /// <param name="cutEndXy">Cut-end world coordinates.</param>
-        /// <param name="fillStartXy">Fill-start world coordinates.</param>
-        /// <param name="fillEndXy">Fill-end world coordinates.</param>
-        /// <param name="totalCutBcyBefore">Cumulative cut BCY completed before this route.</param>
-        /// <param name="totalFillBcyBefore">Cumulative fill BCY completed before this route.</param>
-        /// <param name="routeTimeS">Estimated time to complete this route in seconds.</param>
+        /// <param name="Order">1-based pass order.</param>
+        /// <param name="LoadBcy">Carried bank volume in BCY.</param>
+        /// <param name="HaulDistanceM">Haul distance in metres.</param>
+        /// <param name="CutStartXy">Cut-start world coordinates.</param>
+        /// <param name="CutEndXy">Cut-end world coordinates.</param>
+        /// <param name="FillStartXy">Fill-start world coordinates.</param>
+        /// <param name="FillEndXy">Fill-end world coordinates.</param>
+        /// <param name="TotalCutBcyBefore">Cumulative cut BCY completed before this route.</param>
+        /// <param name="TotalFillBcyBefore">Cumulative fill BCY completed before this route.</param>
+        /// <param name="RouteTimeS">Estimated time to complete this route in seconds.</param>
         public CutFillPair
             (
-            Int32 order,
-            Double loadBcy,
-            Double haulDistanceM,
-            (Double X, Double Y) cutStartXy,
-            (Double X, Double Y) cutEndXy,
-            (Double X, Double Y) fillStartXy,
-            (Double X, Double Y) fillEndXy,
-            Double totalCutBcyBefore,
-            Double totalFillBcyBefore,
-            Double routeTimeS
+            Int32 Order,
+            Double LoadBcy,
+            Double HaulDistanceM,
+            (Double X, Double Y) CutStartXy,
+            (Double X, Double Y) CutEndXy,
+            (Double X, Double Y) FillStartXy,
+            (Double X, Double Y) FillEndXy,
+            Double TotalCutBcyBefore,
+            Double TotalFillBcyBefore,
+            Double RouteTimeS
             )
         {
             // Pair rows keep both scalar metrics and world geometry for exporters and UIs.
-            Order = order;
-            LoadBcy = loadBcy;
-            HaulDistanceM = haulDistanceM;
-            CutStartXy = cutStartXy;
-            CutEndXy = cutEndXy;
-            FillStartXy = fillStartXy;
-            FillEndXy = fillEndXy;
-            TotalCutBcyBefore = totalCutBcyBefore;
-            TotalFillBcyBefore = totalFillBcyBefore;
-            RouteTimeS = routeTimeS;
+            this.Order = Order;
+            this.LoadBcy = LoadBcy;
+            this.HaulDistanceM = HaulDistanceM;
+            this.CutStartXy = CutStartXy;
+            this.CutEndXy = CutEndXy;
+            this.FillStartXy = FillStartXy;
+            this.FillEndXy = FillEndXy;
+            this.TotalCutBcyBefore = TotalCutBcyBefore;
+            this.TotalFillBcyBefore = TotalFillBcyBefore;
+            this.RouteTimeS = RouteTimeS;
         }
 
         /// <summary>

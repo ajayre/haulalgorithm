@@ -58,8 +58,8 @@ namespace HaulBuilder.Tests
 
             Assert.NotEmpty(Plan.Runs);
             Assert.All(Plan.Runs, Run => Assert.NotEmpty(Run.Cells));
-            Assert.True(Plan.MaximumLateralErrorM <= (0.5 * BLADE_WIDTH_M) + 1e-9);
-            Assert.All(Plan.Runs, Run => Assert.True(Run.LengthM >= (0.98 * Grid.GridSizeM) - 1e-9));
+            Assert.True(Plan.MaximumLateralErrorM <= (Constants.HALF_SCALE * BLADE_WIDTH_M) + Constants.NUMERIC_COMPARISON_TOLERANCE);
+            Assert.All(Plan.Runs, Run => Assert.True(Run.LengthM >= (0.98 * Grid.GridSizeM) - Constants.NUMERIC_COMPARISON_TOLERANCE));
             Assert.All(Plan.Runs, Run =>
             {
                 Assert.True(Grid.ContainsWorldXy(Run.StartXy.X, Run.StartXy.Y));
@@ -110,7 +110,7 @@ namespace HaulBuilder.Tests
             AgdField Field = new AgdField(
                 new List<AgdPoint>(), new List<AgdPoint>(), 12, true, 0.0, 0.0, 0);
             GuidanceResult Before = Swaths.BuildGuidance(
-                Grid, Field, Route, BLADE_WIDTH_M * 1000.0, 90.0);
+                Grid, Field, Route, BLADE_WIDTH_M * Constants.MILLIMETERS_PER_METER, 90.0);
 
             CoveragePlanner.PlanResult Ignored = CoveragePlanner.Plan(
                 Pass.CutCells,
@@ -119,7 +119,7 @@ namespace HaulBuilder.Tests
                 null,
                 Pass.FillStartXy);
             GuidanceResult After = Swaths.BuildGuidance(
-                Grid, Field, Route, BLADE_WIDTH_M * 1000.0, 90.0);
+                Grid, Field, Route, BLADE_WIDTH_M * Constants.MILLIMETERS_PER_METER, 90.0);
 
             Assert.NotNull(Ignored);
             Assert.Equal(Before.Points.Count, After.Points.Count);
@@ -190,7 +190,7 @@ namespace HaulBuilder.Tests
             Assert.NotEmpty(Plan.Runs);
             Assert.All(Plan.Runs, Run => Assert.True(
                 FieldEdgePolicy.AxialHeadingDifferenceDeg(
-                    Run.HeadingDeg, 90.0) <= 7.5 + 1e-9));
+                    Run.HeadingDeg, 90.0) <= 7.5 + Constants.NUMERIC_COMPARISON_TOLERANCE));
         }
 
         /// <summary>

@@ -10,7 +10,7 @@ namespace HaulBuilder
     /// Applies deterministic two-exchanges to equal-volume fill allocations so
     /// loaded cut-to-fill centroid travel cannot increase.
     /// </summary>
-    public static class HaulPairDistanceRefiner
+    static public class HaulPairDistanceRefiner
     {
         private const Double LOAD_TOLERANCE_BCY = 1e-7;
         private const Double IMPROVEMENT_TOLERANCE_M = 0.01;
@@ -184,6 +184,13 @@ namespace HaulBuilder
             return new Result(Output, Swaps, BeforeM, AfterM);
         }
 
+        /// <summary>
+        /// Executes the endpoints operation.
+        /// </summary>
+        /// <param name="Cells">The cells used by the operation.</param>
+        /// <param name="Grid">Field grid used by the operation.</param>
+        /// <returns>The resulting endpoints.</returns>
+
         private static ((Double X, Double Y) First, (Double X, Double Y) Last)
             Endpoints
             (
@@ -197,6 +204,16 @@ namespace HaulBuilder
                 Grid.CellCenterXy(First.Bx, First.By),
                 Grid.CellCenterXy(Last.Bx, Last.By));
         }
+
+        /// <summary>
+        /// Executes the cost operation.
+        /// </summary>
+        /// <param name="CutCentroid">The cut centroid used by the operation.</param>
+        /// <param name="FillCentroid">The fill centroid used by the operation.</param>
+        /// <param name="CutEnds">The cut ends used by the operation.</param>
+        /// <param name="FillEnds">The fill ends used by the operation.</param>
+        /// <param name="Metric">The metric used by the operation.</param>
+        /// <returns>The resulting cost.</returns>
 
         private static Double Cost
             (
@@ -218,8 +235,15 @@ namespace HaulBuilder
                     Distance(CutEnds.Last, FillEnds.Last)));
             return Metric == PairMetric.Endpoint
                 ? EndpointM
-                : EndpointM + (0.25 * CentroidM);
+                : EndpointM + (Constants.QUARTER_SCALE * CentroidM);
         }
+
+        /// <summary>
+        /// Executes the centroid operation.
+        /// </summary>
+        /// <param name="Cells">The cells used by the operation.</param>
+        /// <param name="Grid">Field grid used by the operation.</param>
+        /// <returns>The resulting centroid.</returns>
 
         private static (Double X, Double Y) Centroid
             (
@@ -242,6 +266,13 @@ namespace HaulBuilder
                 ? (0.0, 0.0)
                 : (SumX / Weight, SumY / Weight);
         }
+
+        /// <summary>
+        /// Executes the distance operation.
+        /// </summary>
+        /// <param name="First">The first used by the operation.</param>
+        /// <param name="Second">The second used by the operation.</param>
+        /// <returns>The resulting distance.</returns>
 
         private static Double Distance
             (

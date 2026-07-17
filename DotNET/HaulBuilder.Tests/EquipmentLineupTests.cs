@@ -10,56 +10,56 @@ namespace HaulBuilder.Tests
         /// <summary>
         /// Absolute heading change along a→b→c in degrees.
         /// </summary>
-        /// <param name="a">Inbound start.</param>
-        /// <param name="b">Corner.</param>
-        /// <param name="c">Outbound end.</param>
+        /// <param name="A">Inbound start.</param>
+        /// <param name="B">Corner.</param>
+        /// <param name="C">Outbound end.</param>
         /// <returns>Absolute turn angle in degrees.</returns>
         private static Double HeadingChangeDeg
             (
-            (Double X, Double Y) a,
-            (Double X, Double Y) b,
-            (Double X, Double Y) c
+            (Double X, Double Y) A,
+            (Double X, Double Y) B,
+            (Double X, Double Y) C
             )
         {
-            Double Dx1 = b.X - a.X;
-            Double Dy1 = b.Y - a.Y;
-            Double Dx2 = c.X - b.X;
-            Double Dy2 = c.Y - b.Y;
+            Double Dx1 = B.X - A.X;
+            Double Dy1 = B.Y - A.Y;
+            Double Dx2 = C.X - B.X;
+            Double Dy2 = C.Y - B.Y;
             return Math.Abs((Math.Atan2((Dx1 * Dy2) - (Dy1 * Dx2), (Dx1 * Dx2) + (Dy1 * Dy2))
-                * (180.0 / Math.PI)));
+                * (Constants.DEGREES_PER_HALF_TURN / Math.PI)));
         }
 
         /// <summary>
-        /// Straight blade-up length immediately before the first blade-down point of <paramref name="action"/>.
+        /// Straight blade-up length immediately before the first blade-down point of <paramref name="Action"/>.
         /// </summary>
-        /// <param name="points">Guidance waypoints.</param>
-        /// <param name="action">CUT or FILL.</param>
+        /// <param name="Points">Guidance waypoints.</param>
+        /// <param name="Action">CUT or FILL.</param>
         /// <returns>Along-track approach length in metres.</returns>
         private static Double StraightApproachBeforeActionM
             (
-            IReadOnlyList<GuidancePoint> points,
-            String action
+            IReadOnlyList<GuidancePoint> Points,
+            String Action
             )
         {
             Int32 Tip = -1;
-            for (Int32 I = 0; I < points.Count; I += 1)
+            for (Int32 I = 0; I < Points.Count; I += 1)
             {
-                if (points[I].Action == action)
+                if (Points[I].Action == Action)
                 {
                     Tip = I;
                     break;
                 }
             }
 
-            Assert.True(Tip > 0, $"expected a {action} tip with prior points");
-            (Double X, Double Y) TipXy = (points[Tip].X, points[Tip].Y);
-            (Double X, Double Y) NextXy = Tip + 1 < points.Count
-                ? (points[Tip + 1].X, points[Tip + 1].Y)
+            Assert.True(Tip > 0, $"expected a {Action} tip with prior points");
+            (Double X, Double Y) TipXy = (Points[Tip].X, Points[Tip].Y);
+            (Double X, Double Y) NextXy = Tip + 1 < Points.Count
+                ? (Points[Tip + 1].X, Points[Tip + 1].Y)
                 : TipXy;
             Double OutDx = NextXy.X - TipXy.X;
             Double OutDy = NextXy.Y - TipXy.Y;
             Double OutLen = Math.Sqrt((OutDx * OutDx) + (OutDy * OutDy));
-            Assert.True(OutLen > 1e-6, $"expected outbound leg after {action}");
+            Assert.True(OutLen > Constants.GEOMETRY_COMPARISON_TOLERANCE, $"expected outbound leg after {Action}");
             Double Ux = OutDx / OutLen;
             Double Uy = OutDy / OutLen;
 
@@ -67,7 +67,7 @@ namespace HaulBuilder.Tests
             (Double X, Double Y) Cur = TipXy;
             for (Int32 I = Tip - 1; I >= 0; I -= 1)
             {
-                GuidancePoint P = points[I];
+                GuidancePoint P = Points[I];
                 if ((P.Action != "MOVE") && (P.Action != "START") && (P.Action != "RETURN")
                     && (P.Action != "HAUL"))
                 {
@@ -78,7 +78,7 @@ namespace HaulBuilder.Tests
                 Double Dx = Cur.X - Q.X;
                 Double Dy = Cur.Y - Q.Y;
                 Double Seg = Math.Sqrt((Dx * Dx) + (Dy * Dy));
-                if (Seg < 1e-9)
+                if (Seg < Constants.NUMERIC_COMPARISON_TOLERANCE)
                 {
                     Cur = Q;
                     continue;
@@ -98,21 +98,21 @@ namespace HaulBuilder.Tests
         }
 
         /// <summary>
-        /// Straight blade-up length immediately after the last contiguous tip of <paramref name="action"/>.
+        /// Straight blade-up length immediately after the last contiguous tip of <paramref name="Action"/>.
         /// </summary>
-        /// <param name="points">Guidance waypoints.</param>
-        /// <param name="action">CUT or FILL.</param>
+        /// <param name="Points">Guidance waypoints.</param>
+        /// <param name="Action">CUT or FILL.</param>
         /// <returns>Along-track exit length in metres.</returns>
         private static Double StraightExitAfterActionM
             (
-            IReadOnlyList<GuidancePoint> points,
-            String action
+            IReadOnlyList<GuidancePoint> Points,
+            String Action
             )
         {
             Int32 Tip = -1;
-            for (Int32 I = 0; I < points.Count; I += 1)
+            for (Int32 I = 0; I < Points.Count; I += 1)
             {
-                if (points[I].Action == action)
+                if (Points[I].Action == Action)
                 {
                     Tip = I;
                 }
@@ -123,42 +123,42 @@ namespace HaulBuilder.Tests
                 }
             }
 
-            Assert.True(Tip >= 1, $"expected a {action} tip");
-            (Double X, Double Y) TipXy = (points[Tip].X, points[Tip].Y);
-            (Double X, Double Y) PrevXy = (points[Tip - 1].X, points[Tip - 1].Y);
+            Assert.True(Tip >= 1, $"expected a {Action} tip");
+            (Double X, Double Y) TipXy = (Points[Tip].X, Points[Tip].Y);
+            (Double X, Double Y) PrevXy = (Points[Tip - 1].X, Points[Tip - 1].Y);
             Double InDx = TipXy.X - PrevXy.X;
             Double InDy = TipXy.Y - PrevXy.Y;
             Double InLen = Math.Sqrt((InDx * InDx) + (InDy * InDy));
             // Intent: tip may sit on a pinned mid-cell; walk back for inbound heading.
-            if (InLen < 1e-6)
+            if (InLen < Constants.GEOMETRY_COMPARISON_TOLERANCE)
             {
                 for (Int32 J = Tip - 2; J >= 0; J -= 1)
                 {
-                    if (points[J].Action != action)
+                    if (Points[J].Action != Action)
                     {
                         break;
                     }
 
-                    PrevXy = (points[J].X, points[J].Y);
+                    PrevXy = (Points[J].X, Points[J].Y);
                     InDx = TipXy.X - PrevXy.X;
                     InDy = TipXy.Y - PrevXy.Y;
                     InLen = Math.Sqrt((InDx * InDx) + (InDy * InDy));
-                    if (InLen > 1e-6)
+                    if (InLen > Constants.GEOMETRY_COMPARISON_TOLERANCE)
                     {
                         break;
                     }
                 }
             }
 
-            Assert.True(InLen > 1e-6, $"expected inbound leg into {action} tip");
+            Assert.True(InLen > Constants.GEOMETRY_COMPARISON_TOLERANCE, $"expected inbound leg into {Action} tip");
             Double Ux = InDx / InLen;
             Double Uy = InDy / InLen;
 
             Double Along = 0.0;
             (Double X, Double Y) Cur = TipXy;
-            for (Int32 I = Tip + 1; I < points.Count; I += 1)
+            for (Int32 I = Tip + 1; I < Points.Count; I += 1)
             {
-                GuidancePoint P = points[I];
+                GuidancePoint P = Points[I];
                 if (P.Action != "MOVE")
                 {
                     break;
@@ -168,7 +168,7 @@ namespace HaulBuilder.Tests
                 Double Dx = Q.X - Cur.X;
                 Double Dy = Q.Y - Cur.Y;
                 Double Seg = Math.Sqrt((Dx * Dx) + (Dy * Dy));
-                if (Seg < 1e-9)
+                if (Seg < Constants.NUMERIC_COMPARISON_TOLERANCE)
                 {
                     Cur = Q;
                     continue;
@@ -222,7 +222,7 @@ namespace HaulBuilder.Tests
                 FillKnotReduced = true,
             };
             Route Route = new Route(new List<Int32> { 0 }, new List<Pass> { Pass }, 0.0);
-            Double TurnRadiusM = Constants.DEFAULT_TURNING_CIRCLE_FT * 0.5 * Constants.FEET_TO_METERS;
+            Double TurnRadiusM = Constants.DEFAULT_TURNING_CIRCLE_FT * Constants.HALF_SCALE * Constants.FEET_TO_METERS;
             // Intent: L fits in-field west of the cut start; fill is off-axis so exit is not clamped.
             Double LineupM = G;
             GuidanceResult Guidance = Swaths.BuildGuidance(
@@ -308,29 +308,29 @@ namespace HaulBuilder.Tests
         /// <summary>
         /// Absolute signed heading change sum along a polyline (degrees).
         /// </summary>
-        /// <param name="points">Waypoints.</param>
-        /// <param name="from">Inclusive start index.</param>
-        /// <param name="to">Exclusive end index.</param>
+        /// <param name="Points">Waypoints.</param>
+        /// <param name="From">Inclusive start index.</param>
+        /// <param name="To">Exclusive end index.</param>
         /// <returns>Signed winding in degrees.</returns>
         private static Double PolylineWindingDeg
             (
-            IReadOnlyList<GuidancePoint> points,
-            Int32 from,
-            Int32 to
+            IReadOnlyList<GuidancePoint> Points,
+            Int32 From,
+            Int32 To
             )
         {
             Double Sum = 0.0;
-            for (Int32 I = from + 1; I < (to - 1); I += 1)
+            for (Int32 I = From + 1; I < (To - 1); I += 1)
             {
-                GuidancePoint P0 = points[I - 1];
-                GuidancePoint P1 = points[I];
-                GuidancePoint P2 = points[I + 1];
+                GuidancePoint P0 = Points[I - 1];
+                GuidancePoint P1 = Points[I];
+                GuidancePoint P2 = Points[I + 1];
                 Double Dx1 = P1.X - P0.X;
                 Double Dy1 = P1.Y - P0.Y;
                 Double Dx2 = P2.X - P1.X;
                 Double Dy2 = P2.Y - P1.Y;
                 Sum += Math.Atan2((Dx1 * Dy2) - (Dy1 * Dx2), (Dx1 * Dx2) + (Dy1 * Dy2))
-                    * (180.0 / Math.PI);
+                    * (Constants.DEGREES_PER_HALF_TURN / Math.PI);
             }
 
             return Sum;
@@ -374,7 +374,7 @@ namespace HaulBuilder.Tests
                 FillKnotReduced = true,
             };
             Route Route = new Route(new List<Int32> { 0 }, new List<Pass> { Pass }, 0.0);
-            Double TurnRadiusM = Constants.DEFAULT_TURNING_CIRCLE_FT * 0.5 * Constants.FEET_TO_METERS;
+            Double TurnRadiusM = Constants.DEFAULT_TURNING_CIRCLE_FT * Constants.HALF_SCALE * Constants.FEET_TO_METERS;
             Double LineupM = Constants.DEFAULT_EQUIPMENT_LENGTH_FT * Constants.FEET_TO_METERS;
             GuidanceResult Guidance = Swaths.BuildGuidance(
                 Grid,
@@ -475,7 +475,7 @@ namespace HaulBuilder.Tests
                 FillKnotReduced = true,
             };
             Route Route = new Route(new List<Int32> { 0 }, new List<Pass> { Pass }, 0.0);
-            Double TurnRadiusM = Constants.DEFAULT_TURNING_CIRCLE_FT * 0.5 * Constants.FEET_TO_METERS;
+            Double TurnRadiusM = Constants.DEFAULT_TURNING_CIRCLE_FT * Constants.HALF_SCALE * Constants.FEET_TO_METERS;
             Double DefaultL = Constants.DEFAULT_EQUIPMENT_LENGTH_FT * Constants.FEET_TO_METERS;
             GuidanceResult Guidance = Swaths.BuildGuidance(
                 Grid,
@@ -496,13 +496,13 @@ namespace HaulBuilder.Tests
             Double Entry = StraightApproachBeforeActionM(Guidance.Points, "CUT");
             Double Exit = StraightExitAfterActionM(Guidance.Points, "CUT");
             Assert.True(
-                Entry < (0.5 * DefaultL),
+                Entry < (Constants.HALF_SCALE * DefaultL),
                 String.Format(
                     CultureInfo.InvariantCulture,
                     "expected no full entry lineup when L=0, got {0:F2}m",
                     Entry));
             Assert.True(
-                Exit < (0.5 * DefaultL),
+                Exit < (Constants.HALF_SCALE * DefaultL),
                 String.Format(
                     CultureInfo.InvariantCulture,
                     "expected no full exit lineup when L=0, got {0:F2}m",

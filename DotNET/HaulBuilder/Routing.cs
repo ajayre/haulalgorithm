@@ -49,7 +49,7 @@ namespace HaulBuilder
     /// <summary>
     /// Pass sequencing and local route refinement.
     /// </summary>
-    public static class Routing
+    static public class Routing
     {
         private const Double DEFAULT_UNLOADED_TRAVEL_SPEED_MPH = 13.0;
         private const Double DEFAULT_TURN_SPEED_MPH = 4.0;
@@ -152,8 +152,8 @@ namespace HaulBuilder
                 Double Objective = RouteObjective(
                     Model,
                     CandidateOrder.Select(Index => Passes[Index]).ToList());
-                if ((Objective < BestObjective - 1e-9)
-                    || ((Math.Abs(Objective - BestObjective) <= 1e-9)
+                if ((Objective < BestObjective - Constants.NUMERIC_COMPARISON_TOLERANCE)
+                    || ((Math.Abs(Objective - BestObjective) <= Constants.NUMERIC_COMPARISON_TOLERANCE)
                         && ((Order == null)
                             || LexicographicallyLess(CandidateOrder, Order))))
                 {
@@ -184,6 +184,13 @@ namespace HaulBuilder
             return new Route(Order, Ordered, Total);
         }
 
+        /// <summary>
+        /// Executes the start candidates operation.
+        /// </summary>
+        /// <param name="Passes">The passes used by the operation.</param>
+        /// <param name="MaximumCount">Count limit applied by the operation.</param>
+        /// <returns>The resulting start candidates.</returns>
+
         private static List<Int32> StartCandidates
             (
             IReadOnlyList<Pass> Passes,
@@ -195,6 +202,8 @@ namespace HaulBuilder
                     (Index, Pass.CutStartXy.X, Pass.CutStartXy.Y));
             List<Int32> Candidates = new List<Int32> { 0 };
             if (MaximumCount <= 1) return Candidates;
+            // Adds a unique candidate index while respecting the search limit.
+
             void Add(Int32 Index)
             {
                 if (!Candidates.Contains(Index)
@@ -219,6 +228,15 @@ namespace HaulBuilder
                 .ThenBy(Point => Point.Index).First().Index);
             return Candidates;
         }
+
+        /// <summary>
+        /// Executes the nearest neighbor order operation.
+        /// </summary>
+        /// <param name="Passes">The passes used by the operation.</param>
+        /// <param name="Model">The model used by the operation.</param>
+        /// <param name="Start">The start used by the operation.</param>
+        /// <param name="PreserveLegacyTies">The preserve legacy ties used by the operation.</param>
+        /// <returns>The resulting nearest neighbor order.</returns>
 
         private static List<Int32> NearestNeighborOrder
             (
@@ -246,8 +264,8 @@ namespace HaulBuilder
                         Passes[Current], Passes[Candidate]);
                     Boolean Better = PreserveLegacyTies
                         ? Cost < BestCost
-                        : (Cost < BestCost - 1e-12)
-                            || ((Math.Abs(Cost - BestCost) <= 1e-12)
+                        : (Cost < BestCost - Constants.STRICT_NUMERIC_COMPARISON_TOLERANCE)
+                            || ((Math.Abs(Cost - BestCost) <= Constants.STRICT_NUMERIC_COMPARISON_TOLERANCE)
                                 && ((Best < 0) || (Candidate < Best)));
                     if (Better)
                     {
@@ -261,6 +279,13 @@ namespace HaulBuilder
             }
             return Order;
         }
+
+        /// <summary>
+        /// Executes the lexicographically less operation.
+        /// </summary>
+        /// <param name="First">The first used by the operation.</param>
+        /// <param name="Second">The second used by the operation.</param>
+        /// <returns>The resulting lexicographically less.</returns>
 
         private static Boolean LexicographicallyLess
             (
@@ -422,6 +447,13 @@ namespace HaulBuilder
             return (Before, After, Moves);
         }
 
+        /// <summary>
+        /// Executes the exit xy operation.
+        /// </summary>
+        /// <param name="P">The p used by the operation.</param>
+        /// <param name="GradeReturn">The grade return used by the operation.</param>
+        /// <returns>The resulting exit xy.</returns>
+
         static private (Double X, Double Y) ExitXy
             (
             Pass P,
@@ -431,6 +463,15 @@ namespace HaulBuilder
             // Return endpoint depends on whether final grade return is enabled.
             return GradeReturn ? P.FillStartXy : P.FillEndXy;
         }
+
+        /// <summary>
+        /// Executes the deadhead operation.
+        /// </summary>
+        /// <param name="A">The a used by the operation.</param>
+        /// <param name="B">The b used by the operation.</param>
+        /// <param name="GradeReturn">The grade return used by the operation.</param>
+        /// <param name="Obstacles">The obstacles used by the operation.</param>
+        /// <returns>The resulting deadhead.</returns>
 
         static private Double Deadhead
             (
@@ -443,6 +484,15 @@ namespace HaulBuilder
             // Measure direct deadhead between pass exit and next cut start.
             return DeadheadDistance(A, B, GradeReturn, Obstacles);
         }
+
+        /// <summary>
+        /// Executes the deadhead distance operation.
+        /// </summary>
+        /// <param name="A">The a used by the operation.</param>
+        /// <param name="B">The b used by the operation.</param>
+        /// <param name="GradeReturn">The grade return used by the operation.</param>
+        /// <param name="Obstacles">The obstacles used by the operation.</param>
+        /// <returns>The resulting deadhead distance.</returns>
 
         static private Double DeadheadDistance
             (
@@ -457,6 +507,13 @@ namespace HaulBuilder
             return Obstacles.Active ? Obstacles.PathLength(Exit, B.CutStartXy) : Distance(Exit, B.CutStartXy);
         }
 
+        /// <summary>
+        /// Executes the unit operation.
+        /// </summary>
+        /// <param name="P0">The p0 used by the operation.</param>
+        /// <param name="P1">The p1 used by the operation.</param>
+        /// <returns>The resulting unit.</returns>
+
         static private (Double X, Double Y)? Unit
             (
             (Double X, Double Y) P0,
@@ -467,13 +524,19 @@ namespace HaulBuilder
             Double Dx = P1.X - P0.X;
             Double Dy = P1.Y - P0.Y;
             Double Norm = Math.Sqrt((Dx * Dx) + (Dy * Dy));
-            if (Norm < 1e-9)
+            if (Norm < Constants.NUMERIC_COMPARISON_TOLERANCE)
             {
                 return null;
             }
 
             return (Dx / Norm, Dy / Norm);
         }
+
+        /// <summary>
+        /// Executes the cut dir operation.
+        /// </summary>
+        /// <param name="P">The p used by the operation.</param>
+        /// <returns>The resulting cut dir.</returns>
 
         static private (Double X, Double Y)? CutDir
             (
@@ -484,6 +547,13 @@ namespace HaulBuilder
             return Unit(P.CutStartXy, P.CutEndXy);
         }
 
+        /// <summary>
+        /// Executes the exit dir operation.
+        /// </summary>
+        /// <param name="P">The p used by the operation.</param>
+        /// <param name="GradeReturn">The grade return used by the operation.</param>
+        /// <returns>The resulting exit dir.</returns>
+
         static private (Double X, Double Y)? ExitDir
             (
             Pass P,
@@ -493,6 +563,13 @@ namespace HaulBuilder
             // Exit direction changes when grade-return reverses the final fill traverse.
             return GradeReturn ? Unit(P.FillEndXy, P.FillStartXy) : Unit(P.FillStartXy, P.FillEndXy);
         }
+
+        /// <summary>
+        /// Executes the turn angle operation.
+        /// </summary>
+        /// <param name="U">The u used by the operation.</param>
+        /// <param name="V">The v used by the operation.</param>
+        /// <returns>The resulting turn angle.</returns>
 
         static private Double TurnAngle
             (
@@ -510,6 +587,14 @@ namespace HaulBuilder
             return Math.Acos(Dot);
         }
 
+        /// <summary>
+        /// Executes the cost or zero operation.
+        /// </summary>
+        /// <param name="Model">The model used by the operation.</param>
+        /// <param name="A">The a used by the operation.</param>
+        /// <param name="B">The b used by the operation.</param>
+        /// <returns>The resulting cost or zero.</returns>
+
         static private Double CostOrZero
             (
             _TransitionModel Model,
@@ -525,6 +610,13 @@ namespace HaulBuilder
 
             return Model.Cost(A, B);
         }
+
+        /// <summary>
+        /// Executes the route objective operation.
+        /// </summary>
+        /// <param name="Model">The model used by the operation.</param>
+        /// <param name="Passes">The passes used by the operation.</param>
+        /// <returns>The resulting route objective.</returns>
 
         static private Double RouteObjective
             (
@@ -542,6 +634,15 @@ namespace HaulBuilder
             return Sum;
         }
 
+        /// <summary>
+        /// Executes the relocate delta operation.
+        /// </summary>
+        /// <param name="Model">The model used by the operation.</param>
+        /// <param name="Seq">The seq used by the operation.</param>
+        /// <param name="S">The s used by the operation.</param>
+        /// <param name="D">The d used by the operation.</param>
+        /// <returns>The resulting relocate delta.</returns>
+
         static private Double RelocateDelta
             (
             _TransitionModel Model,
@@ -557,6 +658,8 @@ namespace HaulBuilder
             Pass? NextS = (S < (N - 1)) ? Seq[S + 1] : null;
             Double Removed = CostOrZero(Model, PrevS, X) + CostOrZero(Model, X, NextS);
             Double Bridge = CostOrZero(Model, PrevS, NextS);
+
+            // Resolves the original work pass represented by a routed pass.
 
             Pass? Orig
                 (
@@ -577,6 +680,15 @@ namespace HaulBuilder
             Double AddedIns = CostOrZero(Model, Left, X) + CostOrZero(Model, X, Right);
             return (Bridge - Removed) + (AddedIns - RemovedIns);
         }
+
+        /// <summary>
+        /// Executes the two opt operation.
+        /// </summary>
+        /// <param name="Passes">The passes used by the operation.</param>
+        /// <param name="Order">The order used by the operation.</param>
+        /// <param name="MaxIter">The max iter used by the operation.</param>
+        /// <param name="GradeReturn">The grade return used by the operation.</param>
+        /// <returns>The resulting two opt.</returns>
 
         static private List<Int32> TwoOpt
             (
@@ -617,7 +729,7 @@ namespace HaulBuilder
                         }
 
                         Double Delta = (NewDA + NewTail) - (DAb + OldTail);
-                        if (Delta < -1e-6)
+                        if (Delta < -Constants.GEOMETRY_COMPARISON_TOLERANCE)
                         {
                             Order.Reverse(I + 1, K - I);
                             Improved = true;
@@ -634,6 +746,13 @@ namespace HaulBuilder
 
             return Order;
         }
+
+        /// <summary>
+        /// Executes the distance operation.
+        /// </summary>
+        /// <param name="A">The a used by the operation.</param>
+        /// <param name="B">The b used by the operation.</param>
+        /// <returns>The resulting distance.</returns>
 
         static private Double Distance
             (
@@ -723,22 +842,22 @@ namespace HaulBuilder
                 )
             {
                 // Blend deadhead drive time plus turn-arc time when enabled.
-                (Double X, Double Y) Exit = ExitXy(A, GradeReturn);
+                (Double X, Double Y) Exit = ExitXy(A, this.GradeReturn);
                 (Double X, Double Y) CutStart = B.CutStartXy;
-                Double Dist = Obstacles.Active ? Obstacles.PathLength(Exit, CutStart) : Distance(Exit, CutStart);
+                Double Dist = this.Obstacles.Active ? this.Obstacles.PathLength(Exit, CutStart) : Distance(Exit, CutStart);
                 if (!DirectionAware)
                 {
                     return Dist;
                 }
 
                 Double DriveT = (ReturnV > 0.0) ? (Dist / ReturnV) : Dist;
-                if ((Dist < 1e-6) || (TurnV <= 0.0))
+                if ((Dist < Constants.GEOMETRY_COMPARISON_TOLERANCE) || (TurnV <= 0.0))
                 {
                     return DriveT;
                 }
 
                 (Double X, Double Y)? DeadDir = Unit(Exit, CutStart);
-                Double Angle = TurnAngle(ExitDir(A, GradeReturn), DeadDir) + TurnAngle(DeadDir, CutDir(B));
+                Double Angle = TurnAngle(ExitDir(A, this.GradeReturn), DeadDir) + TurnAngle(DeadDir, CutDir(B));
                 Double TurnT = (R * Angle) / TurnV;
                 return DriveT + TurnT;
             }

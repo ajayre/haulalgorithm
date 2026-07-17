@@ -9,7 +9,7 @@ namespace HaulBuilder
     /// Deterministically defers a bounded number of cycles that fail the exact
     /// compact guidance preflight. Deferred work remains in the canonical ledger.
     /// </summary>
-    public static class HaulDifficultCycleFilter
+    static public class HaulDifficultCycleFilter
     {
         /// <summary>Deterministic ranking used when the omission bound is active.</summary>
         public enum OmissionPriority

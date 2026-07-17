@@ -12,9 +12,9 @@ namespace HaulBuilder
     /// its original work volume, so balance and scraper capacity cannot ripple
     /// outside the group; the pooled cell-depth ledger is conserved exactly.
     /// </summary>
-    public static class HaulMultiRouteExchangeOptimizer
+    static public class HaulMultiRouteExchangeOptimizer
     {
-        private const Double DEPTH_TOLERANCE_M = 1e-9;
+        private const Double DEPTH_TOLERANCE_M = Constants.NUMERIC_COMPARISON_TOLERANCE;
 
         /// <summary>Diagnostics from bounded multi-route exchanges.</summary>
         public sealed class Result
@@ -62,8 +62,20 @@ namespace HaulBuilder
             public Boolean ConservationValidated { get; }
         }
 
+        /// <summary>
+        /// Provides geometry behavior.
+        /// </summary>
+
         private sealed class Geometry
         {
+            /// <summary>
+            /// Initializes a new Geometry instance.
+            /// </summary>
+            /// <param name="RouteIndex">Zero-based item index.</param>
+            /// <param name="Anchor">The anchor used by the operation.</param>
+            /// <param name="Outlier">The outlier used by the operation.</param>
+            /// <param name="OutlierDistanceM">Distance in field units.</param>
+
             public Geometry
                 (
                 Int32 RouteIndex,
@@ -84,8 +96,18 @@ namespace HaulBuilder
             public Double OutlierDistanceM { get; }
         }
 
+        /// <summary>
+        /// Provides pooled cell behavior.
+        /// </summary>
+
         private sealed class PooledCell
         {
+            /// <summary>
+            /// Initializes a new Pooled Cell instance.
+            /// </summary>
+            /// <param name="Cell">The cell used by the operation.</param>
+            /// <param name="RemainingDepthM">The remaining depth m used by the operation.</param>
+
             public PooledCell
                 (
                 (Int32 Bx, Int32 By) Cell,
@@ -256,6 +278,15 @@ namespace HaulBuilder
                 Conserved);
         }
 
+        /// <summary>
+        /// Builds group.
+        /// </summary>
+        /// <param name="Seed">The seed used by the operation.</param>
+        /// <param name="GeometryByRoute">The geometry by route used by the operation.</param>
+        /// <param name="UsedRoutes">The used routes used by the operation.</param>
+        /// <param name="MaximumGroupRoutes">Count limit applied by the operation.</param>
+        /// <returns>The resulting group.</returns>
+
         private static List<Int32> BuildGroup
             (
             Geometry Seed,
@@ -287,6 +318,8 @@ namespace HaulBuilder
             }
             return Group;
 
+            // Adds the nearest available route to the exchange group.
+
             void AddNearest((Double X, Double Y) Point)
             {
                 Geometry? Nearest = Available
@@ -300,6 +333,22 @@ namespace HaulBuilder
                 }
             }
         }
+
+        /// <summary>
+        /// Executes the try reassign group operation.
+        /// </summary>
+        /// <param name="Source">The source used by the operation.</param>
+        /// <param name="Group">The group used by the operation.</param>
+        /// <param name="FillKind">The fill kind used by the operation.</param>
+        /// <param name="GeometryByRoute">The geometry by route used by the operation.</param>
+        /// <param name="Grid">Field grid used by the operation.</param>
+        /// <param name="MaximumDepthM">Count limit applied by the operation.</param>
+        /// <param name="MinimumImprovementM">The minimum improvement m used by the operation.</param>
+        /// <param name="BladeWidthM">The blade width m used by the operation.</param>
+        /// <param name="GradeReturn">The grade return used by the operation.</param>
+        /// <param name="Obstacles">The obstacles used by the operation.</param>
+        /// <param name="Candidate">The candidate used by the operation.</param>
+        /// <returns>The resulting try reassign group.</returns>
 
         private static Boolean TryReassignGroup
             (
@@ -446,7 +495,7 @@ namespace HaulBuilder
                 Source[Index], Grid));
             Double AfterM = Group.Sum(Index => RouteObjective(
                 Output[Index], Grid));
-            if ((BeforeM - AfterM) + 1e-9 < MinimumImprovementM)
+            if ((BeforeM - AfterM) + Constants.NUMERIC_COMPARISON_TOLERANCE < MinimumImprovementM)
             {
                 return false;
             }
@@ -485,7 +534,7 @@ namespace HaulBuilder
                 }
                 if ((AfterRunCount > BeforeRunCount)
                     || ((BeforeGuidanceDistanceM - AfterGuidanceDistanceM)
-                        + 1e-9 < MinimumImprovementM))
+                        + Constants.NUMERIC_COMPARISON_TOLERANCE < MinimumImprovementM))
                 {
                     return false;
                 }
@@ -493,6 +542,15 @@ namespace HaulBuilder
             Candidate = Output;
             return true;
         }
+
+        /// <summary>
+        /// Executes the available depth operation.
+        /// </summary>
+        /// <param name="Allocation">The allocation used by the operation.</param>
+        /// <param name="Cell">The cell used by the operation.</param>
+        /// <param name="RemainingQuotaM">The remaining quota m used by the operation.</param>
+        /// <param name="MaximumDepthM">Count limit applied by the operation.</param>
+        /// <returns>The resulting available depth.</returns>
 
         private static Double AvailableDepth
             (
@@ -503,6 +561,14 @@ namespace HaulBuilder
             ) => Math.Min(
                 RemainingQuotaM,
                 MaximumDepthM - Allocation.GetValueOrDefault(Cell));
+
+        /// <summary>
+        /// Builds geometry.
+        /// </summary>
+        /// <param name="RouteIndex">Zero-based item index.</param>
+        /// <param name="Cells">The cells used by the operation.</param>
+        /// <param name="Grid">Field grid used by the operation.</param>
+        /// <returns>The resulting geometry.</returns>
 
         private static Geometry? BuildGeometry
             (
@@ -539,6 +605,13 @@ namespace HaulBuilder
                 Distance(Anchor, Outlier));
         }
 
+        /// <summary>
+        /// Executes the cells operation.
+        /// </summary>
+        /// <param name="Pass">The pass used by the operation.</param>
+        /// <param name="FillKind">The fill kind used by the operation.</param>
+        /// <returns>The resulting cells.</returns>
+
         private static IReadOnlyList<((Int32 Bx, Int32 By) Cell, Double DepthM)>
             Cells
             (
@@ -546,11 +619,25 @@ namespace HaulBuilder
             Boolean FillKind
             ) => FillKind ? Pass.FillCells : Pass.CutCells;
 
+        /// <summary>
+        /// Executes the objective operation.
+        /// </summary>
+        /// <param name="Passes">The passes used by the operation.</param>
+        /// <param name="Grid">Field grid used by the operation.</param>
+        /// <returns>The resulting objective.</returns>
+
         private static Double Objective
             (
             IEnumerable<Pass> Passes,
             Grid Grid
             ) => Passes.Sum(Pass => RouteObjective(Pass, Grid));
+
+        /// <summary>
+        /// Executes the route objective operation.
+        /// </summary>
+        /// <param name="Pass">The pass used by the operation.</param>
+        /// <param name="Grid">Field grid used by the operation.</param>
+        /// <returns>The resulting route objective.</returns>
 
         private static Double RouteObjective
             (
@@ -559,6 +646,13 @@ namespace HaulBuilder
             ) => PatchTreeLength(Pass.CutCells, Grid)
                 + PatchTreeLength(Pass.FillCells, Grid)
                 + NearestDistance(Pass.CutCells, Pass.FillCells, Grid);
+
+        /// <summary>
+        /// Executes the patch tree length operation.
+        /// </summary>
+        /// <param name="Cells">The cells used by the operation.</param>
+        /// <param name="Grid">Field grid used by the operation.</param>
+        /// <returns>The resulting patch tree length.</returns>
 
         private static Double PatchTreeLength
             (
@@ -602,6 +696,14 @@ namespace HaulBuilder
             return TotalM;
         }
 
+        /// <summary>
+        /// Executes the nearest distance operation.
+        /// </summary>
+        /// <param name="First">The first used by the operation.</param>
+        /// <param name="Second">The second used by the operation.</param>
+        /// <param name="Grid">Field grid used by the operation.</param>
+        /// <returns>The resulting nearest distance.</returns>
+
         private static Double NearestDistance
             (
             IReadOnlyList<((Int32 Bx, Int32 By) Cell, Double DepthM)> First,
@@ -625,6 +727,14 @@ namespace HaulBuilder
             }
             return Double.IsFinite(BestM) ? BestM : 0.0;
         }
+
+        /// <summary>
+        /// Executes the same work operation.
+        /// </summary>
+        /// <param name="First">The first used by the operation.</param>
+        /// <param name="Second">The second used by the operation.</param>
+        /// <param name="FillKind">The fill kind used by the operation.</param>
+        /// <returns>The resulting same work.</returns>
 
         private static Boolean SameWork
             (
@@ -651,6 +761,13 @@ namespace HaulBuilder
                     - SecondDepth.GetValueOrDefault(Cell))
                         <= DEPTH_TOLERANCE_M);
         }
+
+        /// <summary>
+        /// Executes the same route volumes operation.
+        /// </summary>
+        /// <param name="First">The first used by the operation.</param>
+        /// <param name="Second">The second used by the operation.</param>
+        /// <returns>The resulting same route volumes.</returns>
 
         private static Boolean SameRouteVolumes
             (
@@ -680,6 +797,13 @@ namespace HaulBuilder
             }
             return true;
         }
+
+        /// <summary>
+        /// Executes the distance operation.
+        /// </summary>
+        /// <param name="First">The first used by the operation.</param>
+        /// <param name="Second">The second used by the operation.</param>
+        /// <returns>The resulting distance.</returns>
 
         private static Double Distance
             (

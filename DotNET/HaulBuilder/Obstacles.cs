@@ -6,7 +6,7 @@ namespace HaulBuilder
     /// <summary>
     /// Exclusion-zone geometry and obstacle-aware path routing.
     /// </summary>
-    public static class Obstacles
+    static public class Obstacles
     {
         /// <summary>
         /// Shared empty obstacle field.
@@ -33,7 +33,7 @@ namespace HaulBuilder
                 Area += (X1 * Y2) - (X2 * Y1);
             }
 
-            return 0.5 * Area;
+            return Constants.HALF_SCALE * Area;
         }
 
         /// <summary>
@@ -136,7 +136,7 @@ namespace HaulBuilder
                 Double Mx = NPrev.X + NCur.X;
                 Double My = NPrev.Y + NCur.Y;
                 Double MLen = Math.Sqrt((Mx * Mx) + (My * My));
-                if (MLen < 1e-9)
+                if (MLen < Constants.NUMERIC_COMPARISON_TOLERANCE)
                 {
                     Mx = NCur.X;
                     My = NCur.Y;
@@ -281,10 +281,10 @@ namespace HaulBuilder
             }
 
             List<Double> Breaks = new List<Double> { 0.0, 1.0 };
-            for (Int32 Index = 0; Index < BufferRing.Count; Index += 1)
+            for (Int32 Index = 0; Index < this.BufferRing.Count; Index += 1)
             {
-                (Double X, Double Y) C = BufferRing[Index];
-                (Double X, Double Y) D = BufferRing[(Index + 1) % BufferRing.Count];
+                (Double X, Double Y) C = this.BufferRing[Index];
+                (Double X, Double Y) D = this.BufferRing[(Index + 1) % this.BufferRing.Count];
                 if (TrySegmentIntersectionParameter(A, B, C, D, out Double T))
                 {
                     Breaks.Add(Math.Max(0.0, Math.Min(1.0, T)));
@@ -297,7 +297,7 @@ namespace HaulBuilder
             {
                 Double Current = Breaks[Index];
                 if (Current - Previous <= 1e-10) continue;
-                Double T = 0.5 * (Previous + Current);
+                Double T = Constants.HALF_SCALE * (Previous + Current);
                 if (StrictlyInside((
                     A.X + ((B.X - A.X) * T),
                     A.Y + ((B.Y - A.Y) * T))))
@@ -316,17 +316,17 @@ namespace HaulBuilder
             (Double X, Double Y) Point
             )
         {
-            for (Int32 Index = 0; Index < BufferRing.Count; Index += 1)
+            for (Int32 Index = 0; Index < this.BufferRing.Count; Index += 1)
             {
                 if (PointOnSegment(
                     Point,
                     BufferRing[Index],
-                    BufferRing[(Index + 1) % BufferRing.Count]))
+                    BufferRing[(Index + 1) % this.BufferRing.Count]))
                 {
                     return false;
                 }
             }
-            return Obstacles.PointInRing(Point.X, Point.Y, BufferRing);
+            return Obstacles.PointInRing(Point.X, Point.Y, this.BufferRing);
         }
 
         /// <summary>Finds the parameter on AB at a non-collinear CD crossing.</summary>
@@ -344,7 +344,7 @@ namespace HaulBuilder
             Double Sx = D.X - C.X;
             Double Sy = D.Y - C.Y;
             Double Denominator = (Rx * Sy) - (Ry * Sx);
-            if (Math.Abs(Denominator) <= 1e-12)
+            if (Math.Abs(Denominator) <= Constants.STRICT_NUMERIC_COMPARISON_TOLERANCE)
             {
                 T = 0.0;
                 return false;
@@ -411,7 +411,7 @@ namespace HaulBuilder
             get
             {
                 // Empty fields should short-circuit all expensive routing.
-                return Zones.Count > 0;
+                return this.Zones.Count > 0;
             }
         }
 
@@ -467,7 +467,7 @@ namespace HaulBuilder
             )
         {
             // Any zone blocking implies path detour is needed.
-            foreach (ExclusionZone Zone in Zones)
+            foreach (ExclusionZone Zone in this.Zones)
             {
                 if (Zone.Blocks(A, B))
                 {
@@ -650,7 +650,7 @@ namespace HaulBuilder
         {
             // Connect all mutually visible buffered vertices once.
             _Nodes = new List<(Double X, Double Y)>();
-            foreach (ExclusionZone Zone in Zones)
+            foreach (ExclusionZone Zone in this.Zones)
             {
                 foreach ((Double X, Double Y) Vertex in Zone.BufferRing)
                 {
@@ -692,7 +692,7 @@ namespace HaulBuilder
             )
         {
             // Visibility is blocked by any zone interior crossing.
-            foreach (ExclusionZone Zone in Zones)
+            foreach (ExclusionZone Zone in this.Zones)
             {
                 if (Zone.Blocks(A, B))
                 {

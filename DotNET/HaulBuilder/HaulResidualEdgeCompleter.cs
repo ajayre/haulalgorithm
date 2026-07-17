@@ -11,7 +11,7 @@ namespace HaulBuilder
     /// interior allocation.  Compact-infeasible residual cycles remain explicit
     /// manual-cleanup work rather than weakening guidance constraints.
     /// </summary>
-    public static class HaulResidualEdgeCompleter
+    static public class HaulResidualEdgeCompleter
     {
         /// <summary>Diagnostics and retained edge cycles.</summary>
         public sealed class Result
@@ -131,7 +131,7 @@ namespace HaulBuilder
             HaulPlanValidation Validation = FullLedger.ValidateComplete(
                 InteriorPasses.Concat(EdgePasses).ToList(),
                 MaximumLoadBcy,
-                Grid.MaxDepthMm / 1000.0,
+                Grid.MaxDepthMm / Constants.MILLIMETERS_PER_METER,
                 AllowDeferredWork: true);
             if (!Validation.Success)
             {

@@ -11,7 +11,7 @@ namespace HaulBuilder
     /// Reassigns equal-volume fill loads when the nominal compact cut geometry
     /// cannot reach its fill under immutable production guidance constraints.
     /// </summary>
-    public static class HaulPairRepair
+    static public class HaulPairRepair
     {
         private const Double LOAD_TOLERANCE_BCY = 1e-7;
 
@@ -157,6 +157,16 @@ namespace HaulBuilder
                 CandidateAttempts);
         }
 
+        /// <summary>
+        /// Builds pass.
+        /// </summary>
+        /// <param name="CutSource">The cut source used by the operation.</param>
+        /// <param name="FillCells">The fill cells used by the operation.</param>
+        /// <param name="FillHeadingDeg">Direction in degrees.</param>
+        /// <param name="Grid">Field grid used by the operation.</param>
+        /// <param name="Obstacles">The obstacles used by the operation.</param>
+        /// <returns>The resulting pass.</returns>
+
         private static Pass BuildPass
             (
             Pass CutSource,
@@ -178,6 +188,14 @@ namespace HaulBuilder
             return Output;
         }
 
+        /// <summary>
+        /// Executes the cross pair centroid distance operation.
+        /// </summary>
+        /// <param name="First">The first used by the operation.</param>
+        /// <param name="Second">The second used by the operation.</param>
+        /// <param name="Grid">Field grid used by the operation.</param>
+        /// <returns>The resulting cross pair centroid distance.</returns>
+
         private static Double CrossPairCentroidDistance
             (
             Pass First,
@@ -189,10 +207,25 @@ namespace HaulBuilder
                 + CellDistance(Second.CutCells, First.FillCells, Grid);
         }
 
+        /// <summary>
+        /// Executes the pair centroid distance operation.
+        /// </summary>
+        /// <param name="Pass">The pass used by the operation.</param>
+        /// <param name="Grid">Field grid used by the operation.</param>
+        /// <returns>The resulting pair centroid distance.</returns>
+
         private static Double PairCentroidDistance(Pass Pass, Grid Grid)
         {
             return CellDistance(Pass.CutCells, Pass.FillCells, Grid);
         }
+
+        /// <summary>
+        /// Executes the cell distance operation.
+        /// </summary>
+        /// <param name="First">The first used by the operation.</param>
+        /// <param name="Second">The second used by the operation.</param>
+        /// <param name="Grid">Field grid used by the operation.</param>
+        /// <returns>The resulting cell distance.</returns>
 
         private static Double CellDistance
             (
@@ -207,6 +240,13 @@ namespace HaulBuilder
             Double Dy = B.Y - A.Y;
             return Math.Sqrt((Dx * Dx) + (Dy * Dy));
         }
+
+        /// <summary>
+        /// Executes the centroid operation.
+        /// </summary>
+        /// <param name="Cells">The cells used by the operation.</param>
+        /// <param name="Grid">Field grid used by the operation.</param>
+        /// <returns>The resulting centroid.</returns>
 
         private static (Double X, Double Y) Centroid
             (

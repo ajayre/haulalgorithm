@@ -99,6 +99,10 @@ namespace HaulBuilder
     {
         private const Double VOLUME_TOLERANCE_BCY = 1e-8;
 
+        /// <summary>
+        /// Provides settings behavior.
+        /// </summary>
+
         internal sealed class Settings
         {
             public Boolean Enabled { get; set; } = true;
@@ -247,7 +251,7 @@ namespace HaulBuilder
                     AddDepth(OmittedFillDepths, Pair.Key, Pair.Value);
                 }
                 RemainingFill = RemainingFill
-                    .Where(Entry => Entry.DepthM > 1e-12)
+                    .Where(Entry => Entry.DepthM > Constants.STRICT_NUMERIC_COMPARISON_TOLERANCE)
                     .ToList();
                 OmittedComponentCount += Selected.Count(Candidate =>
                     Candidate.PassIndex == PassIndex);
@@ -303,6 +307,15 @@ namespace HaulBuilder
                 OmittedCutCells,
                 OmittedFillCells);
         }
+
+        /// <summary>
+        /// Builds candidates.
+        /// </summary>
+        /// <param name="Passes">The passes used by the operation.</param>
+        /// <param name="CutPerM">The cut per m used by the operation.</param>
+        /// <param name="EdgePolicy">The edge policy used by the operation.</param>
+        /// <param name="Options">Configuration controlling the operation.</param>
+        /// <returns>The resulting candidates.</returns>
 
         private static List<Candidate> BuildCandidates
             (
@@ -366,6 +379,13 @@ namespace HaulBuilder
             return Output;
         }
 
+        /// <summary>
+        /// Resolves candidates.
+        /// </summary>
+        /// <param name="Candidates">The candidates used by the operation.</param>
+        /// <param name="EffectiveCapBcy">The effective cap bcy used by the operation.</param>
+        /// <returns>The resulting candidates.</returns>
+
         private static List<Candidate> SelectCandidates
             (
             IReadOnlyList<Candidate> Candidates,
@@ -391,6 +411,13 @@ namespace HaulBuilder
             return Selected;
         }
 
+        /// <summary>
+        /// Adds depth.
+        /// </summary>
+        /// <param name="Depths">The depths used by the operation.</param>
+        /// <param name="Cell">The cell used by the operation.</param>
+        /// <param name="DepthM">The depth m used by the operation.</param>
+
         private static void AddDepth
             (
             IDictionary<(Int32 Bx, Int32 By), Double> Depths,
@@ -401,6 +428,13 @@ namespace HaulBuilder
             Depths.TryGetValue(Cell, out Double ExistingDepthM);
             Depths[Cell] = ExistingDepthM + DepthM;
         }
+
+        /// <summary>
+        /// Executes the to audit cells operation.
+        /// </summary>
+        /// <param name="Depths">The depths used by the operation.</param>
+        /// <param name="BcyPerM">The bcy per m used by the operation.</param>
+        /// <returns>The resulting to audit cells.</returns>
 
         private static List<EdgePatchOmissionCell> ToAuditCells
             (
@@ -415,6 +449,12 @@ namespace HaulBuilder
                     Pair.Value * BcyPerM))
                 .ToList();
 
+        /// <summary>
+        /// Executes the empty result operation.
+        /// </summary>
+        /// <param name="Source">The source used by the operation.</param>
+        /// <returns>The resulting empty result.</returns>
+
         private static EdgePatchOmissionResult EmptyResult
             (
             PassResult Source
@@ -427,8 +467,20 @@ namespace HaulBuilder
                 Array.Empty<EdgePatchOmissionCell>(),
                 Array.Empty<EdgePatchOmissionCell>());
 
+        /// <summary>
+        /// Provides candidate behavior.
+        /// </summary>
+
         private sealed class Candidate
         {
+            /// <summary>
+            /// Initializes a new Candidate instance.
+            /// </summary>
+            /// <param name="PassIndex">Zero-based item index.</param>
+            /// <param name="Cells">The cells used by the operation.</param>
+            /// <param name="VolumeBcy">The volume bcy used by the operation.</param>
+            /// <param name="EliminatesPass">The eliminates pass used by the operation.</param>
+
             public Candidate
                 (
                 Int32 PassIndex,

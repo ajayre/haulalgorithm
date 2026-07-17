@@ -200,7 +200,7 @@ namespace HaulBuilder
     /// <summary>
     /// Time estimation model.
     /// </summary>
-    public static class TimeModel
+    static public class TimeModel
     {
         /// <summary>
         /// Estimates total leveling time for a routed plan.
@@ -438,8 +438,8 @@ namespace HaulBuilder
                 return 0.0;
             }
 
-            Double DAcc = 0.5 * VmaxMps * AccelS;
-            Double DDec = 0.5 * VmaxMps * DecelS;
+            Double DAcc = Constants.HALF_SCALE * VmaxMps * AccelS;
+            Double DDec = Constants.HALF_SCALE * VmaxMps * DecelS;
             if (LengthM >= (DAcc + DDec))
             {
                 Double Cruise = LengthM - DAcc - DDec;
@@ -527,7 +527,7 @@ namespace HaulBuilder
     /// <summary>
     /// Backward-compatible snake/case-mismatched alias for time model.
     /// </summary>
-    public static class Timemodel
+    static public class Timemodel
     {
         /// <summary>
         /// Delegates to <see cref="TimeModel.EstimateTime"/>.

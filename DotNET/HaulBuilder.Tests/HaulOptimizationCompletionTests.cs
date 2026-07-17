@@ -4,8 +4,16 @@ using System.Linq;
 
 namespace HaulBuilder.Tests
 {
+    /// <summary>
+    /// Contains automated checks for haul optimization completion.
+    /// </summary>
+
     public sealed class HaulOptimizationCompletionTests
     {
+        /// <summary>
+        /// Verifies deferred summary separates cleanup from material surplus.
+        /// </summary>
+
         [Fact]
         public void DeferredSummarySeparatesCleanupFromMaterialSurplus()
         {
@@ -20,7 +28,7 @@ namespace HaulBuilder.Tests
             };
 
             HaulDeferredWorkSummary Summary = HaulDeferredWorkSummary.Create(
-                RequiredCutBcy: 1000.0,
+                RequiredCutBcy: Constants.MILLIMETERS_PER_METER,
                 RequiredFillBcy: 879.771,
                 DeferredCutBcy: 185.778,
                 DeferredFillBcy: 65.549,
@@ -35,6 +43,10 @@ namespace HaulBuilder.Tests
             Assert.Equal(100.0 * 65.549 / 879.771,
                 Summary.ManualCleanupPercentOfRequiredFill, 10);
         }
+
+        /// <summary>
+        /// Verifies consolidation removes underfilled cycle and conserves both ledgers.
+        /// </summary>
 
         [Fact]
         public void ConsolidationRemovesUnderfilledCycleAndConservesBothLedgers()
@@ -94,6 +106,10 @@ namespace HaulBuilder.Tests
                 Result.Passes.Sum(Pass => Pass.LoadBcy), 10);
         }
 
+        /// <summary>
+        /// Verifies residual edge completion keeps full ledger valid.
+        /// </summary>
+
         [Fact]
         public void ResidualEdgeCompletionKeepsFullLedgerValid()
         {
@@ -124,6 +140,16 @@ namespace HaulBuilder.Tests
                 String.Join(Environment.NewLine, Validation.Issues));
         }
 
+        /// <summary>
+        /// Builds pass.
+        /// </summary>
+        /// <param name="Grid">Field grid used by the operation.</param>
+        /// <param name="Cut">The cut used by the operation.</param>
+        /// <param name="Fill">The fill used by the operation.</param>
+        /// <param name="DepthM">The depth m used by the operation.</param>
+        /// <param name="BcyPerDepthM">The bcy per depth m used by the operation.</param>
+        /// <returns>The resulting pass.</returns>
+
         private static Pass MakePass(
             Grid Grid,
             (Int32 Bx, Int32 By) Cut,
@@ -145,6 +171,13 @@ namespace HaulBuilder.Tests
                 Obstacles.EMPTY_OBSTACLES,
                 Ordered: false);
         }
+
+        /// <summary>
+        /// Verifies assert work equal.
+        /// </summary>
+        /// <param name="First">The first used by the operation.</param>
+        /// <param name="Second">The second used by the operation.</param>
+        /// <param name="FillKind">The fill kind used by the operation.</param>
 
         private static void AssertWorkEqual(
             IEnumerable<Pass> First,
@@ -168,6 +201,13 @@ namespace HaulBuilder.Tests
             }
         }
 
+        /// <summary>
+        /// Builds grid.
+        /// </summary>
+        /// <param name="Size">The size used by the operation.</param>
+        /// <param name="MaximumDepthMm">Count limit applied by the operation.</param>
+        /// <returns>The resulting grid.</returns>
+
         private static Grid MakeGrid(Int32 Size, Double MaximumDepthMm)
         {
             Boolean[,] Valid = new Boolean[Size, Size];
@@ -188,6 +228,12 @@ namespace HaulBuilder.Tests
                 MaximumDepthMm,
                 new List<List<(Double X, Double Y)>>());
         }
+
+        /// <summary>
+        /// Verifies zero flow.
+        /// </summary>
+        /// <param name="Grid">Field grid used by the operation.</param>
+        /// <returns>The resulting zero flow.</returns>
 
         private static FlowField ZeroFlow(Grid Grid) => new FlowField(
             new Double[Grid.Height, Grid.Width],
