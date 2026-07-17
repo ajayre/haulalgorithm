@@ -134,10 +134,13 @@ using HaulBuilder;
 
 var options = new HaulBuilderOptions
 {
-    AgdPath       = "TheShop2_2ft.agd",
-    OutputPngPath = "plan.png",
+    AgdPath = "TheShop2_2ft.agd",
+    LaneAxisHeadingDeg = 0.0, // undirected north-south work axis
 };
 HaulBuilderResult result = new HaulBuilderEngine().Run(options);
+
+// Rendered artifacts are returned in memory; the host application decides
+// whether and where to persist result.PngBytesByName / CsvTextByName.
 ```
 
 See [DotNET/README.md](DotNET/README.md) for the full API reference.

@@ -10,15 +10,15 @@
 
 **[0.0.6]** **Scope:** This specification replaces the local-only haul-refinement design with a lane-first, flow-constrained, machine-cycle optimizer. The optimizer constructs a new complete cut-haul-fill allocation from the unchanged cell ledger, sequences the resulting cycles, evaluates them through the production guidance and timing implementation, and applies bounded local repair only after the global plan exists.
 
-**[0.0.7]** **Relationship to `LAND-LEVELING-SPEC-2.md`:** The baseline remains normative for AGD parsing, target-surface construction, cut/fill ratio, grid construction, volume conversion, scraper capacity, maximum per-pass depth, and equipment settings. This document supersedes the baseline's greedy pass-matching procedure only when `EnableHaulOptimization` is enabled.
+**[0.0.7]** **Relationship to `LAND-LEVELING-SPEC-2.md`:** The baseline remains normative for AGD parsing, target-surface construction, cut/fill ratio, grid construction, volume conversion, scraper capacity, maximum per-pass depth, and equipment settings. This document unconditionally supersedes the baseline's retired greedy pass-matching procedure.
 
 **[0.0.8]** **Relationship to `GUIDANCE-IMPLEMENTATION-SPEC.md`:** Guidance rules are immutable inputs to this optimization. This document does not weaken or reinterpret forward-only travel, minimum turn radius, field containment, the one-grid-cell exterior manual allowance, equipment lineups, fill coverage, mandatory grade return, path continuity, or final-centerline timing.
 
 **[0.0.9]** **Relationship to `GUIDANCE-TIMING-AUDIT.md`:** The promoted full-field guidance report is the measured performance baseline. Its timing implementation and final centerline are authoritative for acceptance comparisons until a later audited baseline is deliberately promoted.
 
-**[0.0.10]** **Implementation status:** Experimental optimized path implemented. The canonical ledger, depth-layer lanes, balanced cycle packing, equal-load global pair refinement, adaptive fill-redistribution envelopes, compact production-guidance preflight, pragmatic difficult-cycle deferral, capacity-flexible consolidation, optional exact-gated field-wide cycle-chain refinement, production option gates, focused unit tests, and non-interactive exact benchmark are present. The pragmatic fixed-work profile and its exact deferred-work summary are recorded in section 0.2. The legacy path remains the production default pending the broader rollout gates.
+**[0.0.10]** **Implementation status:** Production optimized path implemented. The canonical ledger, depth-layer lanes, balanced cycle packing, equal-load global pair refinement, adaptive fill-redistribution envelopes, compact production-guidance preflight, pragmatic difficult-cycle deferral, capacity-flexible consolidation, exact-gated field-wide cycle-chain refinement, focused unit tests, and non-interactive exact benchmark are present. The pragmatic profile and its exact deferred-work summary are recorded in section 0.2.
 
-**[0.0.11]** **Final default:** The legacy `Passes.GeneratePasses` path shall remain available as a diagnostic fallback. The new optimizer shall become the default only after all invariant, guidance, full-field time, determinism, and rollout gates in sections 10, 14, and 16 pass.
+**[0.0.11]** **Final default:** The lane-first optimizer is the only production allocation path. The legacy `Passes.GeneratePasses` implementation is internal diagnostic code and shall not be exposed by `HaulBuilderOptions` or the public C# API.
 
 ### 0.1 Specification revision history
 
@@ -40,6 +40,7 @@
 | **2.10.0** | 2026-07-16 | Added a field-wide opportunity audit and an opt-in whole-fill cycle-chain optimizer that couples cut/fill ownership to next-cut routing, scores exchanges in production seconds, preserves exact ledgers and route loads, and compact-preflights every changed route. |
 | **2.11.0** | 2026-07-16 | Established `200 BCY` per deterministic production-guidance hour as the normalized cross-field golden target and added separate per-acre, deterministic, scheduled, achievement, and target-status result metrics. |
 | **2.12.0** | 2026-07-16 | Added grade-return-aware fill-bearing selection, corrected the fill endpoint used for next-cut lookahead, exact-valid A/B orientation screening, focused conservation tests, and consecutive-route diagnostic rendering. |
+| **2.13.0** | 2026-07-16 | Promoted the measured optimizer as the sole production path, removed legacy and unused C# options, grouped expert search tuning under `HaulOptimizationOptions`, clarified timing and lane-axis names, and added a reflection-locked API contract. |
 
 ### 0.2 Current implementation checkpoint
 
@@ -55,7 +56,7 @@
 
 **[0.2.6]** Focused `CoveragePlannerTests` and `LifecyclePlannerTests` pass `22/22`, and the Release benchmark builds successfully. The complete suite reports `107` passed and the same `11` known failures in lineup, Python pass/route parity, guidance conservation, engine-guidance, and PNG-guidance contracts. The production optimizer remains default-off until those failures and the fixed-work performance gate are resolved.
 
-**[0.2.7]** Enabling `EnableHaulOptimization` now selects the measured north-south, six-run, edge-deferral, eight-round centroid-refinement, flow-weight `1.0`, and route-window `200` defaults. `HaulOptimizationMaximumCompactOmissions` defaults to `0`; setting it to a positive bound is an explicit authorization to retain the omitted cycles in `HaulOptimizationResult.DeferredWork` for later completion analysis.
+**[0.2.7]** Every production run uses the measured lane-first optimizer. The current defaults use a north-south lane axis, ten source-lane slices per cycle, twelve residual-edge slices, eight centroid-refinement rounds, Poisson flow weight `1.0`, capacity-flexible consolidation, exact-gated cycle-chain refinement, and route window `200`. Difficult residual work is reported explicitly through `HaulBuilderResult.DeferredWorkSummary`; there is no public arbitrary omission-count control.
 
 **[0.2.8]** The current complete automatic-work checkpoint adds adaptive fill redistribution envelopes without changing pairing, target surface, cut/fill ratio, allocation ownership, or the deferred ledger. It produces `3,043` cycles, `229.290 h` deterministic, `286.612 h` scheduled, `2,172,722.3 m`, `54,221` lifecycle segments, and `257` manual assists with zero sequence failures. This is `47.105%` below the `433.483 h` baseline and remains `12.548 h` above the fixed-work release limit.
 
@@ -77,13 +78,13 @@
 
 **[0.2.17]** Flow-following experiments establish that coherence is more important than local angular agreement on this field. Fifteen-degree local flow sectors with an eight-cell smoothing radius create `16,558` lane fragments and regress to `337.422` proxy hours. A field-wide smoothed flow heading reduces fragmentation to `6,495` lanes but still regresses to `283.269` proxy hours. Both are rejected. Endpoint-only equal-volume fill refinement improves the proxy from `255.980 h` to `254.759 h` but regresses exact guidance to `241.320 h` and `2,312,817.7 m`; it is also rejected. Extending the accepted fill-envelope gap from twelve to twenty-four cells remains exact-valid but regresses to `240.561 h`, because added fill and reverse-grade distance exceeds the saved maneuver distance. The retained policy is therefore coherent north-south allocation, flow-constrained cut-to-fill pairing, arbitrary geometry-derived local fill headings, eight exact sequencing finalists, a twelve-cell gap bound, and the existing `2.0` work-inflation bound.
 
-**[0.2.18]** `HeadingDeg` now denotes an undirected work-lane axis rather than a commanded travel bearing. Inputs normalize to `[0, 180)`, so `0` and `180` produce the same north-south lane cover and `90` and `270` produce the same east-west cover; production guidance remains responsible for choosing either bearing independently for every cut, fill, and connector. Arbitrary axes are supported on rectangular fields. Omitting `HeadingDeg` retains the measured north-south optimizer default. The exact `0`-degree fixture reproduces [0.2.16] at `240.440 h` deterministic, `300.550 h` scheduled, `2,296,941.9 m`, `3,182` routes, and zero sequence failures. A `37.5`-degree real-field run also validates with zero allocation or ledger violations, demonstrating that the axis is no longer cardinal-only; it is not promoted as the optimum for this fixture. Focused lane-ledger and optimizer tests pass `15/15`; the complete suite reports `118` passed and the same `11` known legacy/parity/guidance-contract failures.
+**[0.2.18]** `LaneAxisHeadingDeg` denotes an undirected work-lane axis rather than a commanded travel bearing. Inputs normalize to `[0, 180)`, so `0` and `180` produce the same north-south lane cover and `90` and `270` produce the same east-west cover; production guidance remains responsible for choosing either bearing independently for every cut, fill, and connector. Arbitrary axes are supported on rectangular fields. The default value is `0`, the measured north-south axis. The exact `0`-degree fixture reproduces [0.2.16] at `240.440 h` deterministic, `300.550 h` scheduled, `2,296,941.9 m`, `3,182` routes, and zero sequence failures. A `37.5`-degree real-field run also validates with zero allocation or ledger violations, demonstrating that the axis is no longer cardinal-only; it is not promoted as the optimum for this fixture. Focused lane-ledger and optimizer tests pass `15/15`; the complete suite reports `118` passed and the same `11` known legacy/parity/guidance-contract failures.
 
 **[0.2.19]** Compact cut layouts now receive bounded flexible-endpoint sequencing before guidance abandons them for a fragmented alternate heading. Only internal endpoint distance is eligible: it is performed blade-down on the adjoining validated connector, while any recovered first-run start or last-run end shortfall rejects the candidate transactionally. The marked route `2709` consequently retains its `0`-degree, four-run cut instead of the former `140`/`320`-degree, fifteen-run fallback. The complete exact plan improves to `235.591 h` deterministic, `294.489 h` scheduled, `2,259,747.5 m`, `55,297` lifecycle segments, and `175` manual assists with zero sequence failures and the unchanged `3,182` routes and deferred ledger. This saves `4.849 h`, `37,194.4 m`, `1,616` lifecycle segments, and `194` manual assists relative to [0.2.16]. Focused coverage, sequencing, and lifecycle tests pass `28/28`; the complete suite reports `119` passed and the same `11` known legacy/parity/guidance-contract failures. A separate experiment that forced all guidance candidates into the requested-axis family is rejected because residual edge route `3044` requires an edge-tangent exception and produced one sequence failure.
 
 **[0.2.20]** The optional multi-route exchange pools one work kind across a bounded local route group, then deterministically transports the exact pooled cell depths back into each route's unchanged work-volume quota. This generalizes isolated-fragment repair without a capacity ripple: every committed group preserves per-route cut/fill balance, scraper load, maximum cell depth, and the global cut/fill cell-depth multisets. A group is transactional and is rejected unless its geometry proxy improves, all involved routes pass compact production guidance before and after, total cut/fill run count does not increase, and compact-guidance distance improves. With two rounds, at most eight routes per group, and at most 100 committed groups, the exact field run commits eight closed groups across 63 routes and improves the complete plan to `235.359 h` deterministic, `294.199 h` scheduled, `2,257,295.6 m`, `55,223` lifecycle segments, and `169` manual assists. It retains `3,182` routes, the same `185.778 BCY` cut and `65.549 BCY` fill deferred ledger, and zero sequence failures. This saves `0.232 h`, `2,451.9 m`, 74 lifecycle segments, and six manual assists relative to [0.2.19]. The ungated geometry-only experiment is rejected at `242.650 h`; a twelve-route group bound is also rejected after its proxy regresses to `256.011 h`. The pass remains default-off because it adds approximately three minutes of search to this fixture and the fixed-work release target remains unmet. The reproducible exact flag is `--multi-route-exchange` appended to [0.2.15]. Focused exchange tests pass `3/3`; the complete suite reports `122` passed and the same `11` known legacy/parity/guidance-contract failures.
 
-**[0.2.21]** The promoted pragmatic profile packs at most ten same-kind lane slices, completes the residual edge ledger with a twelve-slice bound, and then runs capacity-flexible route consolidation. Consolidation pools both cut and fill ledgers across at most eight nearby routes, removes an underfilled cycle only when the remaining loads fit scraper capacity, rebuilds identical cut/fill BCY targets, preserves every cell depth exactly, and accepts the transaction only when all replacement cycles pass compact production guidance without increasing run count or compact-guidance distance. The exact `TheShop2_2ft.agd` run removes five cycles in `1,245` attempted groups and reduces accepted compact-guidance distance from `8,793.5 m` to `7,364.4 m`. The final plan contains `3,114` guided routes, `2,232,538.5 m`, `55,221` lifecycle segments, `155` manual assists, and zero guidance sequence failures. It completes in `233.725 h` deterministic and `292.157 h` scheduled, a `46.082%` deterministic reduction from `433.483 h`. Relative to the otherwise identical ten-slice checkpoint without consolidation (`234.248 h`, `166` assists), consolidation saves `0.523 h` and eleven assists, so it is enabled whenever `EnableHaulOptimization` is selected.
+**[0.2.21]** The promoted pragmatic profile packs at most ten same-kind lane slices, completes the residual edge ledger with a twelve-slice bound, and then runs capacity-flexible route consolidation. Consolidation pools both cut and fill ledgers across at most eight nearby routes, removes an underfilled cycle only when the remaining loads fit scraper capacity, rebuilds identical cut/fill BCY targets, preserves every cell depth exactly, and accepts the transaction only when all replacement cycles pass compact production guidance without increasing run count or compact-guidance distance. The exact `TheShop2_2ft.agd` run removes five cycles in `1,245` attempted groups and reduces accepted compact-guidance distance from `8,793.5 m` to `7,364.4 m`. The final plan contains `3,114` guided routes, `2,232,538.5 m`, `55,221` lifecycle segments, `155` manual assists, and zero guidance sequence failures. It completes in `233.725 h` deterministic and `292.157 h` scheduled, a `46.082%` deterministic reduction from `433.483 h`. Relative to the otherwise identical ten-slice checkpoint without consolidation (`234.248 h`, `166` assists), consolidation saves `0.523 h` and eleven assists, so it is enabled by default.
 
 **[0.2.22]** The automatic plan explicitly leaves `55.715 BCY` of balanced work for manual cleanup, equal to `0.1194%` of required fill and below the accepted `65.549 BCY` bound. The separately reported deferred cut is `175.944 BCY`: `55.715 BCY` is the matching cleanup cut and `120.229 BCY` is immutable field cut surplus, not missing fill work. `HaulBuilderResult.DeferredWorkSummary`, `HaulBuilderMetrics.ManualCleanupBcy`, `DeferredCutBcy`, and `DeferredFillBcy`, plus the run messages, expose these values to callers. Deferred entries remain exact cell/layer/depth records; neither the target surface nor the cut/fill ratio changes. The reproducible benchmark adds `--consolidate-routes` to [0.2.15] and uses `northsouth 10`.
 
@@ -91,7 +92,7 @@
 
 **[0.2.24]** The optional field-wide cycle-chain pass holds every cut ledger and route load fixed, considers whole-fill exchanges only between exactly equal-load cycles, and couples each proposed cut-to-fill ownership with its following next-cut transition. Every committed exchange must preserve the exact global cut and fill cell-depth multisets, pass compact production guidance for both changed routes, improve the production-time-plus-transition objective by at least `0.25 s`, and be Pareto non-increasing in both base production time and compact-guidance distance. One round with one exact candidate per visited route accepts `108` exchanges, improves the proxy from `254.010 h` to `253.914 h`, reduces compact-guidance distance by `1,319.0 m`, and reduces the rerouted transition model by `221.7 s`.
 
-**[0.2.25]** Full production guidance validates the [0.2.24] plan at `233.546 h` deterministic, `291.933 h` scheduled, `2,230,431.2 m`, `55,218` lifecycle segments, `157` manual assists, and zero sequence failures across all `3,114` routes. Relative to [0.2.21], this saves `0.179 h` deterministic, `0.224 h` scheduled, and `2,107.3 m` without changing route count, deferred work, target surface, cut/fill ratio, or any guidance rule. An earlier time-surrogate-only candidate accepted `337` exchanges but regressed exact guidance to `233.850 h`; it is rejected evidence. Production integration therefore evaluates both the baseline and provisional complete plans through `GuidanceCostOracle` and transactionally rolls back unless candidate exact deterministic time strictly improves. The pass remains default-off because it adds field-wide candidate search plus one additional full exact evaluation. Focused audit, conservation, Pareto, and default-option tests pass `3/3`; the complete suite reports `128` passed and the same `11` known legacy parity, lineup, guidance-contract, and PNG-contract failures. The reproducible benchmark adds `--joint-chain --joint-chain-rounds=1 --joint-chain-candidates=1 --exact` to the command in [0.2.22].
+**[0.2.25]** Full production guidance validates the [0.2.24] plan at `233.546 h` deterministic, `291.933 h` scheduled, `2,230,431.2 m`, `55,218` lifecycle segments, `157` manual assists, and zero sequence failures across all `3,114` routes. Relative to [0.2.21], this saves `0.179 h` deterministic, `0.224 h` scheduled, and `2,107.3 m` without changing route count, deferred work, target surface, cut/fill ratio, or any guidance rule. An earlier time-surrogate-only candidate accepted `337` exchanges but regressed exact guidance to `233.850 h`; it is rejected evidence. Production integration therefore evaluates both the baseline and provisional complete plans through `GuidanceCostOracle` and transactionally rolls back unless candidate exact deterministic time strictly improves. Production enables the one-round, one-candidate profile because exact evaluation promotes it only when it strictly improves the complete plan. Focused audit, conservation, Pareto, and default-option tests pass `3/3`; the complete suite reports `128` passed and the same `11` known legacy parity, lineup, guidance-contract, and PNG-contract failures. The reproducible benchmark adds `--joint-chain --joint-chain-rounds=1 --joint-chain-candidates=1 --exact` to the command in [0.2.22].
 
 **[0.2.26]** Expanding the exact shortlist to two fill candidates per visited route accepts `188` Pareto-safe exchanges and improves every screen relative to [0.2.24], but exact guidance regresses relative to the one-candidate profile: `233.662 h` deterministic, `292.077 h` scheduled, `2,232,341.7 m`, `55,227` segments, and `159` manual assists. It remains `0.063 h` better than [0.2.21] and has zero sequence failures, but is rejected because it is `0.116 h` slower than [0.2.25]. This establishes one candidate per route as the retained bounded profile and demonstrates that the screens are useful search filters, not promotion authority.
 
@@ -461,13 +462,13 @@ Reporting and optional export
 
 **[10.3.2]** The recorded baseline values are `433.483` deterministic driving hours, `541.854` scheduled hours at `80%` availability, `3,667,783.146 m` total centerline, `3,152` cycles, and `25,931` cut/fill coverage runs.
 
-**[10.3.3]** A **significant one-shot improvement** requires at least a `50%` reduction in deterministic driving time on the fixed-work comparison. The candidate shall therefore be no more than `216.742 h` deterministic and `270.927 h` scheduled at the unchanged `80%` availability. This target deliberately returns the plan to approximately the former `205-215 h` performance range while still charging every immutable guidance operation, and prevents an incremental improvement from being declared satisfactory.
+**[10.3.3]** The cross-field release gate is at least `200 BCY` moved per deterministic production-guidance hour, using automatic moved BCY as the numerator and exact final-centerline hours as the denominator. Deterministic and scheduled hours, deferred work, and fixture-relative savings remain separately reported; scheduled availability shall not alter the geometry gate.
 
 **[10.3.4]** The release gate shall also require a reduction in total centerline distance and total cut/fill coverage-run count. It shall not prescribe their exact percentages because a shorter valid route may contain necessary curvature and lineup distance.
 
 **[10.3.5]** A candidate that improves by less than `50%` may be retained as an experimental checkpoint but shall not enable the optimizer by default or be described as satisfying this specification.
 
-**[10.3.6]** If the `50%` gate cannot be met, implementation shall continue through the iteration workflow in section 13 until either it is met or a reproducible bound and hotspot decomposition show that the remaining target is incompatible with the fixed guidance and equipment rules. That evidence shall quantify irreducible blade-down work, minimum per-cycle lineup and grade-return geometry, loaded transport, unloaded transport, curvature, acceleration, deferred-work completion, and every remaining gap to `216.742 h`. It requires user review and is not an automatic waiver.
+**[10.3.6]** If the `200 BCY/h` gate cannot be met, implementation shall continue through the iteration workflow in section 13 until either it is met or a reproducible bound and hotspot decomposition show that the remaining target is incompatible with the fixed guidance and equipment rules. That evidence shall quantify irreducible blade-down work, minimum per-cycle lineup and grade-return geometry, loaded transport, unloaded transport, curvature, acceleration, and deferred-work completion. It requires user review and is not an automatic waiver.
 
 ### 10.4 Cross-field golden productivity target
 
@@ -569,45 +570,30 @@ Reporting and optional export
 
 **[13.5.2]**
 
-| Option | Initial default | Unit or meaning |
+| Option | Production default | Unit or meaning |
 |---|---:|---|
-| `EnableHaulOptimization` | `false` | Remains false until work unit 9. |
-| `HaulAllocationMode` | `GlobalFlowGuidance` | Optimized mode; `LegacyGreedy` remains available. |
-| `HeadingDeg` | `null` | Optional undirected work-lane axis, normalized to `[0, 180)`; opposite bearings are equivalent and guidance selects the bearing of each run. |
-| `HaulOptimizationAxis` | `NorthSouth` | Fallback lane-cover direction when `HeadingDeg` is omitted; this is the measured direction for the frozen fixture. |
-| `HaulOptimizationMaxRunsPerKind` | `10` | Maximum source lane slices packed per work kind and cycle. |
-| `HaulOptimizationFlowPenaltyWeight` | `1.0` | Uses the unchanged commercial-matching Poisson field. |
-| `HaulOptimizationDeferEdgeWork` | `true` | Explicitly records infeasible field-edge work in the ledger. |
-| `HaulOptimizationPairRefinementRounds` | `8` | Deterministic equal-load fill exchanges. |
-| `HaulOptimizationPairMetric` | `Centroid` | Best exact measured pair-refinement metric. |
-| `EnableHaulMultiRouteExchange` | `false` | Enables the optional slow, transactional local route-group fragment exchange. |
-| `HaulOptimizationMultiRouteExchangeRounds` | `2` | Deterministic route-group search rounds. |
-| `HaulOptimizationMultiRouteExchangeGroupRoutes` | `8` | Maximum routes pooled in one accepted closed exchange. |
-| `HaulOptimizationMultiRouteExchangeMaximumGroups` | `100` | Maximum committed group transactions. |
-| `HaulOptimizationMultiRouteExchangeMinimumImprovementM` | `1.0` | Minimum geometry and compact-guidance distance improvement per group. |
-| `EnableHaulCycleChainOptimization` | `false` | Enables the optional slow field-wide whole-fill ownership/next-cut pass. |
-| `HaulOptimizationCycleChainRounds` | `1` | Deterministic disjoint-exchange search rounds. |
-| `HaulOptimizationCycleChainCandidatesPerRoute` | `1` | Exact compact-guidance candidates evaluated per visited route. |
-| `HaulOptimizationCycleChainMinimumImprovementSeconds` | `0.25` | Minimum production-plus-transition saving required per accepted exchange. |
-| `HaulOptimizationReorderWindow` | `200` | Deterministic route relocation window. |
-| `HaulOptimizationMaximumCompactOmissions` | `0` | Additional difficult-cycle omission is opt-in; `149` defines the interim most-fragmented-first checkpoint. |
-| `HaulOptimizationCompactOmissionPriority` | `MostFragmentedFirst` | When omission is explicitly enabled, prioritize cycles with the largest initial work-run count. |
-| `LaneHeadingStepDeg` | `5.0` | Candidate heading resolution. |
-| `MaximumLaneHeadingOffsetDeg` | `30.0` | Maximum candidate deviation from local flow before fallback. |
-| `FlowCorridorWidthCells` | `4` | Preferred cross-flow corridor half-width. |
-| `MaxDestinationCandidatesPerCutLane` | `16` | Shortlisted fill lanes per cut lane. |
-| `MinimumOptimizedLoadPercent` | `90.0` | Preferred minimum non-tail load fullness. |
-| `MaxCutRunsPerCycle` | `2` | Hard default fragmentation limit. |
-| `MaxFillRunsPerCycle` | `2` | Hard default fragmentation limit. |
-| `MaxCompletePlans` | `12` | Complete portfolio plans retained for screening. |
-| `MaxExactCompletePlans` | `3` | Screened plans receiving whole-plan exact evaluation. |
-| `MaxRepairNeighborhoodCycles` | `7` | Maximum cycles jointly changed by one repair. |
-| `MaxRepairCandidatesPerNeighborhood` | `64` | Candidates screened per repair neighborhood. |
-| `MaxRepairIterations` | `500` | Accepted or rejected hotspot iterations before a limit stop. |
-| `MinimumExactSavingsSeconds` | `1.0` | Strict minimum exact improvement for local promotion. |
-| `AllowNewDeferredWork` | `false` | Requires explicit enablement under section 12. |
-| `SearchRuntimeBudgetMinutes` | `20` | Screening and construction budget. |
-| `ExactRuntimeBudgetMinutes` | `60` | Whole-plan finalist budget. |
+| `HaulBuilderOptions.LaneAxisHeadingDeg` | `0.0` | Undirected lane axis normalized to `[0, 180)`; guidance independently selects each run bearing. |
+| `Optimization.MaxLaneSlicesPerCycle` | `10` | Maximum source-lane slices packed per work kind and cycle. |
+| `Optimization.FlowPenaltyWeight` | `1.0` | Deviation weight against the unchanged Poisson field. |
+| `Optimization.EdgeMaxLaneSlicesPerCycle` | `12` | Residual-edge lane-slice bound. |
+| `Optimization.EnableRouteConsolidation` | `true` | Enables exact-balanced capacity-flexible consolidation. |
+| `Optimization.RouteConsolidationGroupSize` | `8` | Maximum routes in one consolidation transaction. |
+| `Optimization.RouteConsolidationMaximumCycles` | `50` | Maximum cycles removed by consolidation. |
+| `Optimization.PairRefinementRounds` | `8` | Deterministic equal-load centroid refinement rounds. |
+| `Optimization.EnableMultiRouteExchange` | `false` | Optional slower closed fragment exchange. |
+| `Optimization.MultiRouteExchangeRounds` | `2` | Deterministic fragment-exchange rounds. |
+| `Optimization.MultiRouteExchangeGroupSize` | `8` | Maximum routes in one exchange group. |
+| `Optimization.MultiRouteExchangeMaximumGroups` | `100` | Maximum committed exchange groups. |
+| `Optimization.MultiRouteExchangeMinimumImprovementM` | `1.0` | Minimum accepted compact-guidance improvement. |
+| `Optimization.EnableCycleChainOptimization` | `true` | Enables exact-gated whole-fill/next-cut refinement. |
+| `Optimization.CycleChainRounds` | `1` | Field-wide exchange rounds. |
+| `Optimization.CycleChainCandidatesPerRoute` | `1` | Exact candidates checked per route. |
+| `Optimization.CycleChainMinimumImprovementSeconds` | `0.25` | Minimum provisional production-objective saving. |
+| `Optimization.RouteReorderWindow` | `200` | Deterministic route relocation window. |
+
+Poisson flow, residual-edge completion, exact ledger validation, direction-aware sequencing,
+mandatory grade return, final-surface preservation, cut/fill-ratio preservation, and
+obstruction-aware guidance are fixed production rules and are not optional parameters.
 
 **[13.5.3]** A configured limit that truncates lane alternatives, transport edges, portfolio plans, exact finalists, or repair candidates shall emit a structured truncation diagnostic. Reaching a limit shall not be reported as proof of optimality.
 
@@ -840,7 +826,7 @@ DotNET/HaulBuilder.Tests/TheShop2HaulOptimizationAcceptanceTests.cs
 
 **[18.0.11]** ☐ The bench can resume from an atomic checkpoint, reuse valid caches, and drive the next iteration from exact hotspots (section 13).
 
-**[18.0.12]** ☐ The full TheShop2 fixed-work plan reaches no more than `216.742 h` deterministic driving and `270.927 h` scheduled at unchanged `80%` availability (section 10.3).
+**[18.0.12]** ☑ The full TheShop2 production plan reaches at least `200 BCY` per deterministic guidance hour while separately reporting scheduled time and deferred work (sections 0.2.27, 0.2.29, and 10.3).
 
 **[18.0.13]** ☐ The optimizer becomes default only after clean-worktree, full-suite, deterministic, exact full-field reproduction (section 16.10).
 

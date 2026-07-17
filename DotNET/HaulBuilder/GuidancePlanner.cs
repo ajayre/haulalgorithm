@@ -115,14 +115,12 @@ public static class GuidancePlanner
             LifecyclePlanner.Result Lifecycle,
             GuidanceTiming.Result Timing,
             GuidanceResult Guidance,
-            GuidanceTime SummaryTime,
             IReadOnlyList<LifecyclePlanner.PassPlan> Passes
             )
         {
             this.Lifecycle = Lifecycle;
             this.Timing = Timing;
             this.Guidance = Guidance;
-            this.SummaryTime = SummaryTime;
             this.Passes = Passes;
         }
 
@@ -134,9 +132,6 @@ public static class GuidancePlanner
 
         /// <summary>Gets the operator-facing waypoint adapter.</summary>
         public GuidanceResult Guidance { get; }
-
-        /// <summary>Gets the legacy-shaped timing summary backed by detailed timing.</summary>
-        public GuidanceTime SummaryTime { get; }
 
         /// <summary>Gets the final selected cut/fill sequences used by the lifecycle.</summary>
         public IReadOnlyList<LifecyclePlanner.PassPlan> Passes { get; }
@@ -168,7 +163,7 @@ public static class GuidancePlanner
         GeometrySettings? PreviousGeometry = CurrentGeometry.Value;
         List<LifecyclePlanner.PassPlan> Passes;
         CurrentGeometry.Value = new GeometrySettings(
-            Options.TurningCircleFt * 0.5 * Constants.FEET_TO_METERS,
+            Options.MinimumTurningDiameterFt * 0.5 * Constants.FEET_TO_METERS,
             Options.EquipmentLengthFt * Constants.FEET_TO_METERS);
         try
         {
@@ -176,7 +171,7 @@ public static class GuidancePlanner
                 Route,
                 Grid,
                 BladeM,
-                !Options.NoGradeReturn,
+                true,
                 Progress: Progress,
                 Diagnostic: ReportDiagnostic,
                 StopOnFailure: true);
@@ -187,9 +182,9 @@ public static class GuidancePlanner
         }
         LifecyclePlanner.Result Lifecycle = LifecyclePlanner.Build(
             Passes,
-            !Options.NoGradeReturn,
+            true,
             Options.EquipmentLengthFt * Constants.FEET_TO_METERS,
-            Options.TurningCircleFt * 0.5 * Constants.FEET_TO_METERS,
+            Options.MinimumTurningDiameterFt * 0.5 * Constants.FEET_TO_METERS,
             Math.Min(0.5, Grid.GridSizeM),
             Grid,
             FillSequencesPrepared: true);
@@ -208,8 +203,7 @@ public static class GuidancePlanner
             Lifecycle, new GuidanceTiming.Options(Options));
         GuidanceResult Guidance = BuildGuidanceResult(
             Lifecycle, Timing, Route, Grid, Field, HeadingDeg, Options);
-        GuidanceTime SummaryTime = BuildSummaryTime(Timing);
-        return new BuildResult(Lifecycle, Timing, Guidance, SummaryTime, Passes);
+        return new BuildResult(Lifecycle, Timing, Guidance, Passes);
     }
 
     /// <summary>
@@ -233,7 +227,7 @@ public static class GuidancePlanner
         GuidanceObstacleRouter.Result Routed = GuidanceObstacleRouter.Apply(
             Source.Lifecycle,
             Grid,
-            Options.TurningCircleFt * 0.5 * Constants.FEET_TO_METERS,
+            Options.MinimumTurningDiameterFt * 0.5 * Constants.FEET_TO_METERS,
             StaticObstacles,
             PerRouteObstacles);
         if (ReferenceEquals(Routed.Lifecycle, Source.Lifecycle))
@@ -244,12 +238,10 @@ public static class GuidancePlanner
             Routed.Lifecycle, new GuidanceTiming.Options(Options));
         GuidanceResult Guidance = BuildGuidanceResult(
             Routed.Lifecycle, Timing, Route, Grid, Field, HeadingDeg, Options);
-        GuidanceTime SummaryTime = BuildSummaryTime(Timing);
         return (new BuildResult(
             Routed.Lifecycle,
             Timing,
             Guidance,
-            SummaryTime,
             Source.Passes), Routed);
     }
 
@@ -309,7 +301,7 @@ public static class GuidancePlanner
             {
                 Double ChangeDeg = HeadingChangeDeg(
                     PreviousPoint, PendingPoint, Point);
-                if (ChangeDeg >= Options.TurnThresholdDeg)
+                if (ChangeDeg >= Options.WaypointTurnThresholdDeg)
                 {
                     TurnCount += 1;
                     TurnAngleRad += ChangeDeg * Math.PI / 180.0;
@@ -420,43 +412,6 @@ public static class GuidancePlanner
             TurnCount,
             TurnAngleRad,
             0);
-    }
-
-    /// <summary>Maps detailed timing to the established summary object.</summary>
-    private static GuidanceTime BuildSummaryTime
-        (
-        GuidanceTiming.Result Timing
-        )
-    {
-        Double LoadingS = PhaseSeconds(Timing, LifecyclePlanner.Phase.Cut);
-        Double DumpingS = PhaseSeconds(Timing, LifecyclePlanner.Phase.Fill);
-        Double GradingS = PhaseSeconds(Timing, LifecyclePlanner.Phase.Grade);
-        Double HaulingS = Math.Max(
-            0.0, Timing.LoadedSeconds - LoadingS - DumpingS);
-        Double ReturningS = Math.Max(
-            0.0, Timing.UnloadedSeconds - GradingS);
-        return new GuidanceTime(
-            Timing.TotalSeconds,
-            LoadingS,
-            DumpingS,
-            GradingS,
-            HaulingS,
-            ReturningS,
-            0.0,
-            Timing.EventSeconds + Timing.FieldEfficiencyAllowanceSeconds,
-            Timing.CurvatureConstraintCount);
-    }
-
-    /// <summary>Gets one phase's timing ledger value.</summary>
-    private static Double PhaseSeconds
-        (
-        GuidanceTiming.Result Timing,
-        LifecyclePlanner.Phase Phase
-        )
-    {
-        return Timing.PhaseSeconds.TryGetValue(Phase, out Double Seconds)
-            ? Seconds
-            : 0.0;
     }
 
     /// <summary>Maps a lifecycle segment to an established waypoint action.</summary>
@@ -577,7 +532,7 @@ public static class GuidancePlanner
     /// </summary>
     /// <param name="Args">Optional output directory and AGD path.</param>
     /// <returns>Zero when every guidance plan conserves allocation.</returns>
-    static public Int32 Run
+    static internal Int32 Run
         (
         String[] Args
         )
@@ -725,7 +680,7 @@ public static class GuidancePlanner
     /// </summary>
     /// <param name="Args">Optional AGD path, report path, and pass limit.</param>
     /// <returns>Zero when the complete lifecycle succeeds and stays within allowance.</returns>
-    static public Int32 ReportWholeField
+    static internal Int32 ReportWholeField
         (
         String[] Args
         )
@@ -1324,7 +1279,7 @@ public static class GuidancePlanner
     /// </summary>
     /// <param name="Args">Optional AGD path followed by CSV path.</param>
     /// <returns>Zero after the complete coverage inventory is written.</returns>
-    static public Int32 ProfileGuidanceCoverage
+    static internal Int32 ProfileGuidanceCoverage
         (
         String[] Args
         )
@@ -1412,7 +1367,7 @@ public static class GuidancePlanner
     /// <summary>Runs one exact field connector diagnostic without sequencing routes.</summary>
     /// <param name="Args">AGD path and start/end X, Y, heading values.</param>
     /// <returns>Zero when a forward connector succeeds.</returns>
-    static public Int32 DiagnoseGuidanceConnector
+    static internal Int32 DiagnoseGuidanceConnector
         (
         String[] Args
         )
@@ -1500,7 +1455,7 @@ public static class GuidancePlanner
     /// </summary>
     /// <param name="Args">Optional --gif flag, output PNG path, and AGD path.</param>
     /// <returns>Zero when the selected lifecycle is complete.</returns>
-    static public Int32 ExportFirstThree
+    static internal Int32 ExportFirstThree
         (
         String[] Args
         )
@@ -1509,7 +1464,7 @@ public static class GuidancePlanner
     }
 
     /// <summary>Writes one connected lifecycle map for routes three through five.</summary>
-    static public Int32 ExportRoutesThreeToFive
+    static internal Int32 ExportRoutesThreeToFive
         (
         String[] Args
         )
@@ -1518,7 +1473,7 @@ public static class GuidancePlanner
     }
 
     /// <summary>Writes one connected lifecycle map for an arbitrary ordered route range.</summary>
-    static public Int32 ExportRouteRange
+    static internal Int32 ExportRouteRange
         (
         String[] Args
         )
@@ -5907,13 +5862,13 @@ public static class GuidancePlanner
             true,
             0.8,
             Obstacles.EMPTY_OBSTACLES);
-        HaulBuilderOptions EdgePatchOptions = new HaulBuilderOptions
+        EdgePatchOmission.Settings EdgePatchOptions = new EdgePatchOmission.Settings
         {
-            OmitIsolatedEdgePatches = true,
-            MaxIsolatedEdgePatchCells = 1,
-            MaxIsolatedEdgePatchVolumeBcy = 0.6,
-            MaxTotalIsolatedEdgePatchOmissionBcy = 2.0,
-            MaxTotalIsolatedEdgePatchOmissionPercent = 1.0,
+            Enabled = true,
+            MaximumCells = 1,
+            MaximumPatchBcy = 0.6,
+            MaximumProjectBcy = 2.0,
+            MaximumProjectPercent = 1.0,
         };
         EdgePatchOmissionResult EdgeOmission = EdgePatchOmission.Apply(
             PassResult,
@@ -5926,7 +5881,7 @@ public static class GuidancePlanner
             1500,
             true,
             true,
-            Constants.DEFAULT_RETURN_SPEED_MPH,
+            Constants.DEFAULT_UNLOADED_TRAVEL_SPEED_MPH,
             Constants.DEFAULT_TURN_SPEED_MPH,
             Constants.DEFAULT_TURNING_CIRCLE_FT,
             Obstacles.EMPTY_OBSTACLES);
@@ -5938,7 +5893,7 @@ public static class GuidancePlanner
             50,
             true,
             true,
-            Constants.DEFAULT_RETURN_SPEED_MPH,
+            Constants.DEFAULT_UNLOADED_TRAVEL_SPEED_MPH,
             Constants.DEFAULT_TURN_SPEED_MPH,
             Constants.DEFAULT_TURNING_CIRCLE_FT,
             12,

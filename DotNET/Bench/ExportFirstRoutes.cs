@@ -94,7 +94,7 @@ internal static class ExportFirstRoutes
             1500,
             true,
             true,
-            Constants.DEFAULT_RETURN_SPEED_MPH,
+            Constants.DEFAULT_UNLOADED_TRAVEL_SPEED_MPH,
             Constants.DEFAULT_TURN_SPEED_MPH,
             Constants.DEFAULT_TURNING_CIRCLE_FT,
             Obstacles.EMPTY_OBSTACLES);
@@ -102,7 +102,7 @@ internal static class ExportFirstRoutes
         Swaths.ReprofileKnots(FullRoute, Grid, Constants.DEFAULT_BLADE_WIDTH_MM, 3, Heading, 0.0);
         Routing.RefineRouteOrder(
             FullRoute, 50, true, true,
-            Constants.DEFAULT_RETURN_SPEED_MPH, Constants.DEFAULT_TURN_SPEED_MPH,
+            Constants.DEFAULT_UNLOADED_TRAVEL_SPEED_MPH, Constants.DEFAULT_TURN_SPEED_MPH,
             Constants.DEFAULT_TURNING_CIRCLE_FT, 12, Obstacles.EMPTY_OBSTACLES);
 
         Int32 N = Math.Min(RouteCount, FullRoute.OrderedPasses.Count);

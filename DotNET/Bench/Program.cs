@@ -192,7 +192,7 @@ internal static class Program
             1500,
             true,
             true,
-            Constants.DEFAULT_RETURN_SPEED_MPH,
+            Constants.DEFAULT_UNLOADED_TRAVEL_SPEED_MPH,
             Constants.DEFAULT_TURN_SPEED_MPH,
             Constants.DEFAULT_TURNING_CIRCLE_FT,
             Obstacles.EMPTY_OBSTACLES);
@@ -212,12 +212,12 @@ internal static class Program
         }
 
         TimeParams Params = new TimeParams(
-            Constants.DEFAULT_LOADING_SPEED_MPH,
-            Constants.DEFAULT_HAUL_SPEED_MPH,
-            Constants.DEFAULT_DUMPING_SPEED_MPH,
-            Constants.DEFAULT_RETURN_SPEED_MPH,
-            Constants.DEFAULT_ACCEL_TIME_S,
-            Constants.DEFAULT_DECEL_TIME_S,
+            Constants.DEFAULT_CUT_SPEED_MPH,
+            Constants.DEFAULT_LOADED_TRAVEL_SPEED_MPH,
+            Constants.DEFAULT_FILL_SPEED_MPH,
+            Constants.DEFAULT_UNLOADED_TRAVEL_SPEED_MPH,
+            Constants.DEFAULT_ACCELERATION_TIME_S,
+            Constants.DEFAULT_DECELERATION_TIME_S,
             Constants.DEFAULT_FIELD_EFFICIENCY);
         TimeResult Time = Timemodel.EstimateTime(Grid, Route, Params);
         TimeSpan T7 = Sw.Elapsed;
@@ -278,7 +278,7 @@ internal static class Program
             1500,
             true,
             true,
-            Constants.DEFAULT_RETURN_SPEED_MPH,
+            Constants.DEFAULT_UNLOADED_TRAVEL_SPEED_MPH,
             Constants.DEFAULT_TURN_SPEED_MPH,
             Constants.DEFAULT_TURNING_CIRCLE_FT,
             Obstacles.EMPTY_OBSTACLES);
@@ -355,7 +355,7 @@ internal static class Program
             1500,
             true,
             true,
-            Constants.DEFAULT_RETURN_SPEED_MPH,
+            Constants.DEFAULT_UNLOADED_TRAVEL_SPEED_MPH,
             Constants.DEFAULT_TURN_SPEED_MPH,
             Constants.DEFAULT_TURNING_CIRCLE_FT,
             Obstacles.EMPTY_OBSTACLES);

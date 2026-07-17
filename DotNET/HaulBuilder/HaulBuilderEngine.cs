@@ -5,7 +5,7 @@ using System.Text;
 namespace HaulBuilder
 {
     /// <summary>
-    /// End-to-end in-memory pipeline mirroring <c>landlevel.cli.main</c>.
+    /// Production end-to-end in-memory haul-planning pipeline.
     /// </summary>
     public sealed class HaulBuilderEngine
     {
@@ -16,7 +16,7 @@ namespace HaulBuilder
         /// <summary>
         /// Executes a full haul-planning run and returns typed in-memory results.
         /// </summary>
-        /// <param name="options">Pipeline options equivalent to CLI flags.</param>
+        /// <param name="options">Validated production planning options.</param>
         /// <returns>Structured pipeline outputs and render payloads.</returns>
         /// <exception cref="ArgumentNullException">Thrown when options is null.</exception>
         /// <exception cref="ArgumentException">Thrown when required options are invalid.</exception>
@@ -29,9 +29,7 @@ namespace HaulBuilder
             if (options is null) throw new ArgumentNullException(nameof(options));
             if (String.IsNullOrWhiteSpace(options.AgdPath)) throw new ArgumentException("AGD path is required.", nameof(options));
             if (!File.Exists(options.AgdPath)) throw new ArgumentException($"AGD file not found: {options.AgdPath}", nameof(options));
-            if (options.PixelsPerBin <= 0) throw new ArgumentException("PixelsPerBin must be > 0.", nameof(options));
-            ValidateEdgePatchOptions(options);
-            ValidateHaulOptimizationOptions(options);
+            ValidateOptions(options);
 
             HaulBuilderOptions Opt = CloneOptions(options);
             HaulBuilderResult Result = new HaulBuilderResult
@@ -46,36 +44,26 @@ namespace HaulBuilder
 
             ObstacleField Obstacles = ResolveExclusions(Result, Field, Grid, Opt);
             Double BalanceThreshold = Obstacles.Active ? Double.PositiveInfinity : Balance.DEFAULT_IMBALANCE_THRESHOLD;
-            BalanceResult BalanceResult = Balance.Compute(Grid, Opt.BalanceMode, BalanceThreshold);
+            BalanceResult BalanceResult = Balance.Compute(Grid, "check", BalanceThreshold);
             Result.Balance = BalanceResult;
 
-            FlowField Flow = FlowFieldSolver.Compute(Grid, Opt.TransportMode);
+            FlowField Flow = FlowFieldSolver.Compute(Grid, "poisson");
             Result.Flow = Flow;
-            Result.PngBytesByName["main"] = Render.RenderPng(Grid, Flow, Opt.PixelsPerBin, Opt.ArrowStride);
+            Result.PngBytesByName["main"] = Render.RenderPng(
+                Grid, Flow, Opt.PixelsPerCell, Opt.FlowArrowStrideCells);
 
-            if (Opt.NoPlan)
+            if (Opt.SkipHaulPlan)
             {
-                Result.Messages.Add("Planning stages skipped because NoPlan was set.");
+                Result.Messages.Add("Planning stages skipped because SkipHaulPlan was set.");
                 return Result;
             }
 
-            List<Strip> StripList = Strips.TraceStrips(Grid, Flow, 400);
             Double HeadingDeg = HaulLaneBuilder.NormalizeAxisHeadingDeg(
-                Opt.HeadingDeg.HasValue
-                    ? Opt.HeadingDeg.Value
-                    : Passes.EstimateSlopeHeading(Grid));
-            Boolean FlowAligned = !Opt.NoFlowAligned;
+                Opt.LaneAxisHeadingDeg);
             Double ScraperBcy = (Opt.ScraperCapacityLcy / Opt.SwellFactor);
 
             PassResult PassResult;
-            EdgePatchOmissionResult? EdgePatchResult = null;
-            if (Opt.EnableHaulOptimization)
             {
-                if (Obstacles.Active)
-                {
-                    throw new NotSupportedException(
-                        "Global haul optimization does not yet support exclusion polygons.");
-                }
                 HaulWorkLedger Ledger = HaulWorkLedger.Build(
                     Grid, Opt.ToleranceMm);
                 HaulOptimizationResult Optimized =
@@ -83,56 +71,48 @@ namespace HaulBuilder
                         Grid,
                         Flow,
                         Ledger,
-                        Opt.HeadingDeg.HasValue
-                            ? HaulLaneBuilder.LaneAxis.UserHeading
-                            : Opt.HaulOptimizationAxis,
+                        HaulLaneBuilder.LaneAxis.UserHeading,
                         ScraperBcy,
-                        Opt.HaulOptimizationMaxRunsPerKind,
-                        Opt.HaulOptimizationDeferEdgeWork,
-                        Opt.HaulOptimizationFlowPenaltyWeight,
+                        Opt.Optimization.MaxLaneSlicesPerCycle,
+                        DeferEdgeWork: true,
+                        Opt.Optimization.FlowPenaltyWeight,
                         Obstacles,
-                        Opt.HeadingDeg.HasValue ? HeadingDeg : null);
+                        HeadingDeg);
                 List<Pass> OptimizedPasses = Optimized.PassResult.Passes;
                 HaulPairDistanceRefiner.Result? PairRefinement = null;
-                if (Opt.HaulOptimizationPairRefinementRounds > 0)
+                if (Opt.Optimization.PairRefinementRounds > 0)
                 {
                     PairRefinement = HaulPairDistanceRefiner.Refine(
                         OptimizedPasses,
                         Grid,
-                        Opt.HaulOptimizationPairRefinementRounds,
-                        Opt.HaulOptimizationPairMetric,
+                        Opt.Optimization.PairRefinementRounds,
+                        HaulPairDistanceRefiner.PairMetric.Centroid,
                         Seed: 0,
                         Obstacles: Obstacles);
                     OptimizedPasses = PairRefinement.Passes;
                 }
                 HaulResidualEdgeCompleter.Result? EdgeCompletion = null;
-                if (Opt.HaulOptimizationDeferEdgeWork
-                    && Opt.HaulOptimizationCompleteDeferredEdge)
-                {
-                    EdgeCompletion = HaulResidualEdgeCompleter.Complete(
+                EdgeCompletion = HaulResidualEdgeCompleter.Complete(
                         OptimizedPasses,
                         Grid,
                         Flow,
                         Ledger,
-                        Opt.HeadingDeg.HasValue
-                            ? HaulLaneBuilder.LaneAxis.UserHeading
-                            : Opt.HaulOptimizationAxis,
+                        HaulLaneBuilder.LaneAxis.UserHeading,
                         ScraperBcy,
-                        Opt.HaulOptimizationEdgeMaxRunsPerKind,
-                        Opt.HaulOptimizationFlowPenaltyWeight,
-                        Opt.HaulOptimizationPairRefinementRounds,
-                        Opt.HaulOptimizationPairMetric,
+                        Opt.Optimization.EdgeMaxLaneSlicesPerCycle,
+                        Opt.Optimization.FlowPenaltyWeight,
+                        Opt.Optimization.PairRefinementRounds,
+                        HaulPairDistanceRefiner.PairMetric.Centroid,
                         Opt.BladeWidthMm / 1000.0,
-                        !Opt.NoGradeReturn,
+                        GradeReturn: true,
                         Obstacles,
-                        Opt.HeadingDeg.HasValue ? HeadingDeg : null);
-                    OptimizedPasses = OptimizedPasses
-                        .Concat(EdgeCompletion.Passes)
-                        .ToList();
-                }
+                        HeadingDeg);
+                OptimizedPasses = OptimizedPasses
+                    .Concat(EdgeCompletion.Passes)
+                    .ToList();
                 HaulMultiRouteExchangeOptimizer.Result? MultiRouteExchange = null;
                 HaulRouteConsolidationOptimizer.Result? RouteConsolidation = null;
-                if (Opt.EnableHaulRouteConsolidation)
+                if (Opt.Optimization.EnableRouteConsolidation)
                 {
                     RouteConsolidation =
                         HaulRouteConsolidationOptimizer.Optimize(
@@ -141,42 +121,31 @@ namespace HaulBuilder
                             ScraperBcy,
                             Grid.MaxDepthMm / 1000.0,
                             Opt.BladeWidthMm / 1000.0,
-                            !Opt.NoGradeReturn,
-                            Opt.HaulOptimizationRouteConsolidationGroupRoutes,
-                            Opt.HaulOptimizationRouteConsolidationMaximumCycles,
+                            GradeReturn: true,
+                            Opt.Optimization.RouteConsolidationGroupSize,
+                            Opt.Optimization.RouteConsolidationMaximumCycles,
                             Obstacles);
                     OptimizedPasses = RouteConsolidation.Passes;
                     Result.HaulRouteConsolidation = RouteConsolidation;
                 }
-                if (Opt.EnableHaulMultiRouteExchange)
+                if (Opt.Optimization.EnableMultiRouteExchange)
                 {
                     MultiRouteExchange = HaulMultiRouteExchangeOptimizer.Optimize(
                         OptimizedPasses,
                         Grid,
                         Grid.MaxDepthMm / 1000.0,
-                        Opt.HaulOptimizationMultiRouteExchangeRounds,
-                        Opt.HaulOptimizationMultiRouteExchangeGroupRoutes,
-                        Opt.HaulOptimizationMultiRouteExchangeMaximumGroups,
+                        Opt.Optimization.MultiRouteExchangeRounds,
+                        Opt.Optimization.MultiRouteExchangeGroupSize,
+                        Opt.Optimization.MultiRouteExchangeMaximumGroups,
                         MinimumImprovementM:
-                            Opt.HaulOptimizationMultiRouteExchangeMinimumImprovementM,
+                            Opt.Optimization.MultiRouteExchangeMinimumImprovementM,
                         BladeWidthM: Opt.BladeWidthMm / 1000.0,
-                        GradeReturn: !Opt.NoGradeReturn,
+                        GradeReturn: true,
                         Obstacles: Obstacles);
                     OptimizedPasses = MultiRouteExchange.Passes;
                     Result.HaulMultiRouteExchange = MultiRouteExchange;
                 }
                 HaulDifficultCycleFilter.Result? DifficultFilter = null;
-                if (Opt.HaulOptimizationMaximumCompactOmissions > 0)
-                {
-                    DifficultFilter = HaulDifficultCycleFilter.Apply(
-                        OptimizedPasses,
-                        Grid,
-                        Opt.BladeWidthMm / 1000.0,
-                        !Opt.NoGradeReturn,
-                        Opt.HaulOptimizationMaximumCompactOmissions,
-                        Opt.HaulOptimizationCompactOmissionPriority);
-                    OptimizedPasses = DifficultFilter.Passes;
-                }
                 if ((PairRefinement != null)
                     || (EdgeCompletion != null)
                     || (RouteConsolidation != null)
@@ -302,105 +271,62 @@ namespace HaulBuilder
                         Optimized.CompactPreflightFailures));
                 }
             }
-            else
-            {
-                PassResult = Passes.GeneratePasses(
-                    Grid,
-                    StripList,
-                    Opt.ToleranceMm,
-                    ScraperBcy,
-                    0,
-                    FlowAligned ? null : HeadingDeg,
-                    Opt.HeadingStrength,
-                    Opt.StripBias,
-                    (Opt.MaxDropHopFt * Constants.FEET_TO_METERS),
-                    Flow,
-                    FlowAligned,
-                    (Opt.MinLoadFillPct / 100.0),
-                    Obstacles);
-                EdgePatchResult = EdgePatchOmission.Apply(
-                    PassResult,
-                    Grid,
-                    Opt,
-                    Obstacles);
-                PassResult = EdgePatchResult.PassResult;
-                Result.EdgePatchOmission = EdgePatchResult;
-            }
             Result.PassResult = PassResult;
-            if ((EdgePatchResult != null)
-                && (EdgePatchResult.OmittedComponentCount > 0))
-            {
-                Result.Messages.Add(String.Format(
-                    CultureInfo.InvariantCulture,
-                    "Omitted {0} isolated edge cut patch(es): {1:F2} BCY cut and {2:F2} BCY matching fill demand across {3} cut cell(s).",
-                    EdgePatchResult.OmittedComponentCount,
-                    EdgePatchResult.OmittedCutBcy,
-                    EdgePatchResult.OmittedFillBcy,
-                    EdgePatchResult.OmittedCutCells.Count));
-            }
 
             Route Route = Routing.SequencePasses(
                 PassResult.Passes,
                 1500,
-                !Opt.NoGradeReturn,
-                !Opt.NoDirectionAware,
-                Opt.ReturnSpeedMph,
+                GradeReturn: true,
+                DirectionAware: true,
+                Opt.UnloadedTravelSpeedMph,
                 Opt.TurnSpeedMph,
-                Opt.TurningCircleFt,
+                Opt.MinimumTurningDiameterFt,
                 Obstacles,
-                Opt.EnableHaulOptimization ? 8 : 1);
+                StartCandidateCount: 8);
             Result.Route = Route;
 
-            if (!Opt.NoKnotRepair && !Opt.EnableHaulOptimization)
-            {
-                Swaths.ReprofileKnots(Route, Grid, Opt.BladeWidthMm, 3, HeadingDeg, Opt.LaneOverlap);
-            }
-
-            Int32 ActiveReorderWindow = Opt.EnableHaulOptimization
-                ? Opt.HaulOptimizationReorderWindow
-                : Opt.ReorderWindow;
+            Int32 ActiveReorderWindow = Opt.Optimization.RouteReorderWindow;
             if (ActiveReorderWindow > 0)
             {
                 Routing.RefineRouteOrder(
                     Route,
                     ActiveReorderWindow,
-                    !Opt.NoGradeReturn,
-                    !Opt.NoDirectionAware,
-                    Opt.ReturnSpeedMph,
+                    GradeReturn: true,
+                    DirectionAware: true,
+                    Opt.UnloadedTravelSpeedMph,
                     Opt.TurnSpeedMph,
-                    Opt.TurningCircleFt,
+                    Opt.MinimumTurningDiameterFt,
                     12,
                     Obstacles);
             }
 
             GuidancePlanner.BuildResult? PrecomputedGuidancePlan = null;
-            if (Opt.EnableHaulOptimization
-                && Opt.EnableHaulCycleChainOptimization)
+            if (Opt.Optimization.EnableCycleChainOptimization)
             {
                 Route BaselineRoute = Route;
                 PassResult BaselinePassResult = PassResult;
                 TimeParams ChainTimeParameters = new TimeParams(
-                    Opt.LoadingSpeedMph,
-                    Opt.HaulSpeedMph,
-                    Opt.DumpingSpeedMph,
-                    Opt.ReturnSpeedMph,
-                    Opt.AccelTimeS,
-                    Opt.DecelTimeS,
+                    Opt.CutSpeedMph,
+                    Opt.LoadedTravelSpeedMph,
+                    Opt.FillSpeedMph,
+                    Opt.UnloadedTravelSpeedMph,
+                    Opt.AccelerationTimeS,
+                    Opt.DecelerationTimeS,
                     Opt.FieldEfficiency);
                 HaulCycleChainOptimizer.Result Chain =
                     HaulCycleChainOptimizer.Optimize(
                         Route.OrderedPasses,
                         Grid,
                         Opt.BladeWidthMm / 1000.0,
-                        !Opt.NoGradeReturn,
-                        !Opt.NoDirectionAware,
-                        Opt.ReturnSpeedMph,
+                        GradeReturn: true,
+                        DirectionAware: true,
+                        Opt.UnloadedTravelSpeedMph,
                         Opt.TurnSpeedMph,
-                        Opt.TurningCircleFt,
+                        Opt.MinimumTurningDiameterFt,
                         ChainTimeParameters,
-                        Opt.HaulOptimizationCycleChainRounds,
-                        Opt.HaulOptimizationCycleChainCandidatesPerRoute,
-                        Opt.HaulOptimizationCycleChainMinimumImprovementSeconds,
+                        Opt.Optimization.CycleChainRounds,
+                        Opt.Optimization.CycleChainCandidatesPerRoute,
+                        Opt.Optimization.CycleChainMinimumImprovementSeconds,
                         Obstacles);
                 PassResult CandidatePassResult = new PassResult(
                     Chain.Passes,
@@ -412,18 +338,18 @@ namespace HaulBuilder
                     Chain.Passes,
                     Routing.CalculateDeadhead(
                         Chain.Passes,
-                        !Opt.NoGradeReturn,
+                        GradeReturn: true,
                         Obstacles));
                 if (ActiveReorderWindow > 0)
                 {
                     Routing.RefineRouteOrder(
                         CandidateRoute,
                         ActiveReorderWindow,
-                        !Opt.NoGradeReturn,
-                        !Opt.NoDirectionAware,
-                        Opt.ReturnSpeedMph,
+                        GradeReturn: true,
+                        DirectionAware: true,
+                        Opt.UnloadedTravelSpeedMph,
                         Opt.TurnSpeedMph,
-                        Opt.TurningCircleFt,
+                        Opt.MinimumTurningDiameterFt,
                         12,
                         Obstacles);
                 }
@@ -481,11 +407,8 @@ namespace HaulBuilder
             BuildPivot(Result, Grid, Route, Obstacles, Opt);
             BuildGuidance(Result, Grid, Field, Route, Obstacles, HeadingDeg, Opt,
                 PrecomputedGuidancePlan);
-            BuildTimingAndMetrics(Result, Grid, PassResult, Route, HeadingDeg, FlowAligned, Opt);
+            BuildTimingAndMetrics(Result, Grid, PassResult, Route, HeadingDeg, Opt);
             BuildAnimations(Result, Grid, Route, Opt);
-
-            // TEMP: route-2 parity diagnostics — remove after host settings are aligned.
-            LogRoute2ParityDebug(Result, Opt, Grid, HeadingDeg, FlowAligned, ScraperBcy, StripList.Count);
 
             return Result;
         }
@@ -514,264 +437,6 @@ namespace HaulBuilder
                 Previous.CompactOmittedCycles,
                 Previous.EdgeCompletionCycles,
                 Previous.EdgeOmittedCycles);
-        }
-
-        /// <summary>
-        /// TEMP debug dump of effective settings and sequenced route-2 identity for host vs test parity.
-        /// </summary>
-        /// <param name="result">Pipeline result to annotate.</param>
-        /// <param name="opt">Effective options used for this run.</param>
-        /// <param name="grid">Built grid.</param>
-        /// <param name="headingDeg">Resolved heading degrees.</param>
-        /// <param name="flowAligned">Whether flow-aligned growth was used.</param>
-        /// <param name="scraperBcy">Bank load limit used by the matcher.</param>
-        /// <param name="stripCount">Number of traced strips.</param>
-        static private void LogRoute2ParityDebug
-            (
-            HaulBuilderResult result,
-            HaulBuilderOptions opt,
-            Grid grid,
-            Double headingDeg,
-            Boolean flowAligned,
-            Double scraperBcy,
-            Int32 stripCount
-            )
-        {
-            const String Prefix = "HAULBUILDER_DEBUG";
-            List<String> Lines = new List<String>();
-
-            void Add
-                (
-                String Line
-                )
-            {
-                String Text = Prefix + " " + Line;
-                Lines.Add(Text);
-                result.Messages.Add(Text);
-                Console.WriteLine(Text);
-                System.Diagnostics.Trace.WriteLine(Text);
-            }
-
-            Add("===== BEGIN route-2 parity dump (TEMP) =====");
-            Add(String.Format(CultureInfo.InvariantCulture, "agd={0}", opt.AgdPath));
-            Add(String.Format(
-                CultureInfo.InvariantCulture,
-                "grid={0}x{1} GridSizeFt={2} GridSizeM={3:F6}",
-                grid.Width,
-                grid.Height,
-                opt.GridSizeFt,
-                grid.GridSizeM));
-            Add(String.Format(
-                CultureInfo.InvariantCulture,
-                "settings: ToleranceMm={0} ScraperLCY={1} Swell={2} ScraperBCY={3:F6} CutFillRatio={4} MaxDepthMm={5} BladeWidthMm={6}",
-                opt.ToleranceMm,
-                opt.ScraperCapacityLcy,
-                opt.SwellFactor,
-                scraperBcy,
-                opt.CutFillRatio,
-                opt.MaxDepthMm,
-                opt.BladeWidthMm));
-            Add(String.Format(
-                CultureInfo.InvariantCulture,
-                "settings: FlowAligned={0} NoFlowAligned={1} HeadingDeg={2:F3} HeadingStrength={3} StripBias={4} MaxDropHopFt={5} MinLoadFillPct={6}",
-                flowAligned,
-                opt.NoFlowAligned,
-                headingDeg,
-                opt.HeadingStrength,
-                opt.StripBias,
-                opt.MaxDropHopFt,
-                opt.MinLoadFillPct));
-            Add(String.Format(
-                CultureInfo.InvariantCulture,
-                "settings: TransportMode={0} BalanceMode={1} NoGradeReturn={2} NoDirectionAware={3} NoKnotRepair={4} ReorderWindow={5} LaneOverlap={6} NoRouteSmoothing={7}",
-                opt.TransportMode,
-                opt.BalanceMode,
-                opt.NoGradeReturn,
-                opt.NoDirectionAware,
-                opt.NoKnotRepair,
-                opt.ReorderWindow,
-                opt.LaneOverlap,
-                opt.NoRouteSmoothing));
-            Add(String.Format(
-                CultureInfo.InvariantCulture,
-                "settings: ReturnMph={0} TurnMph={1} TurningCircleFt={2} ExcludePolygons={3} StripCount={4}",
-                opt.ReturnSpeedMph,
-                opt.TurnSpeedMph,
-                opt.TurningCircleFt,
-                opt.ExcludePolygonSpecs.Count,
-                stripCount));
-
-            // Expected TheShop2@7.5ft fingerprint from the parity suite.
-            Add("expected_theshop2_7p5ft: passes=3102 order1=2199 route2_haul_m~63.763 route2_ncut=5 route2_uniq=5 route2_first=(64,2) grid~177x173");
-            Add(String.Format(
-                CultureInfo.InvariantCulture,
-                "expected_defaults: ToleranceMm={0} MaxDepthMm={1} BladeWidthMm={2} CutFillRatio={3}",
-                Constants.DEFAULT_TOLERANCE_MM,
-                Constants.DEFAULT_MAX_DEPTH_MM,
-                Constants.DEFAULT_BLADE_WIDTH_MM,
-                Constants.DEFAULT_COMPACTION));
-            Add(String.Format(
-                CultureInfo.InvariantCulture,
-                "delta: ToleranceMm={0:F6} MaxDepthMm={1:F6} BladeWidthMm={2:F6} (host-expected)",
-                opt.ToleranceMm - Constants.DEFAULT_TOLERANCE_MM,
-                opt.MaxDepthMm - Constants.DEFAULT_MAX_DEPTH_MM,
-                opt.BladeWidthMm - Constants.DEFAULT_BLADE_WIDTH_MM));
-
-            if (result.PassResult is null || result.Route is null)
-            {
-                Add("plan missing (NoPlan or early exit)");
-                Add("===== END route-2 parity dump =====");
-                return;
-            }
-
-            PassResult PassResult = result.PassResult;
-            Route Route = result.Route;
-            Double TotalHaul = PassResult.Passes.Sum(Pass => Pass.HaulDistanceM);
-            Double TotalBcy = PassResult.Passes.Sum(Pass => Pass.LoadBcy);
-            Add(String.Format(
-                CultureInfo.InvariantCulture,
-                "plan: passes={0} moved_bcy={1:F2} total_haul_m={2:F1} deadhead_m={3:F1}",
-                PassResult.Passes.Count,
-                TotalBcy,
-                TotalHaul,
-                Route.TotalDeadheadM));
-
-            Int32 OrderTake = Math.Min(20, Route.Order.Count);
-            Add("order[:20]=" + String.Join(",", Route.Order.Take(OrderTake)));
-
-            for (Int32 Gen = 0; Gen < Math.Min(3, PassResult.Passes.Count); Gen += 1)
-            {
-                Pass GenPass = PassResult.Passes[Gen];
-                (Int32 Bx, Int32 By) First = GenPass.CutCells.Count > 0 ? GenPass.CutCells[0].Cell : (-1, -1);
-                Add(String.Format(
-                    CultureInfo.InvariantCulture,
-                    "gen[{0}]: ncut={1} nfill={2} haul_m={3:F6} load_bcy={4:F6} first_cut=({5},{6}) cut_h={7}",
-                    Gen,
-                    GenPass.CutCells.Count,
-                    GenPass.FillCells.Count,
-                    GenPass.HaulDistanceM,
-                    GenPass.LoadBcy,
-                    First.Bx,
-                    First.By,
-                    GenPass.CutHeadingDeg.HasValue ? GenPass.CutHeadingDeg.Value.ToString("F3", CultureInfo.InvariantCulture) : "null"));
-            }
-
-            if (Route.OrderedPasses.Count >= 2)
-            {
-                Pass Route2 = Route.OrderedPasses[1];
-                Int32 Uniq = Route2.CutCells.Select(Entry => (Entry.Cell.Bx, Entry.Cell.By)).Distinct().Count();
-                (Int32 Bx, Int32 By) First = Route2.CutCells.Count > 0 ? Route2.CutCells[0].Cell : (-1, -1);
-                (Int32 Bx, Int32 By) Last = Route2.CutCells.Count > 0 ? Route2.CutCells[Route2.CutCells.Count - 1].Cell : (-1, -1);
-                String FirstCuts = String.Join(",", Route2.CutCells.Take(8).Select(Entry =>
-                    String.Format(CultureInfo.InvariantCulture, "({0},{1},{2:F4})", Entry.Cell.Bx, Entry.Cell.By, Entry.DepthM)));
-                Add(String.Format(
-                    CultureInfo.InvariantCulture,
-                    "route2: order_index={0} ncut={1} uniq_cut={2} nfill={3} haul_m={4:F6} load_bcy={5:F6} first=({6},{7}) last=({8},{9}) cut_h={10}",
-                    Route.Order[1],
-                    Route2.CutCells.Count,
-                    Uniq,
-                    Route2.FillCells.Count,
-                    Route2.HaulDistanceM,
-                    Route2.LoadBcy,
-                    First.Bx,
-                    First.By,
-                    Last.Bx,
-                    Last.By,
-                    Route2.CutHeadingDeg.HasValue ? Route2.CutHeadingDeg.Value.ToString("F3", CultureInfo.InvariantCulture) : "null"));
-                Add(String.Format(
-                    CultureInfo.InvariantCulture,
-                    "route2: cut_start=({0:F3},{1:F3}) cut_end=({2:F3},{3:F3}) fill_start=({4:F3},{5:F3}) fill_end=({6:F3},{7:F3})",
-                    Route2.CutStartXy.X,
-                    Route2.CutStartXy.Y,
-                    Route2.CutEndXy.X,
-                    Route2.CutEndXy.Y,
-                    Route2.FillStartXy.X,
-                    Route2.FillStartXy.Y,
-                    Route2.FillEndXy.X,
-                    Route2.FillEndXy.Y));
-                Add("route2: first8_cuts=" + FirstCuts);
-
-                Boolean MatchFingerprint =
-                    (Route.Order[1] == 2199)
-                    && (Math.Abs(Route2.HaulDistanceM - 63.763) < 0.1)
-                    && (Route2.CutCells.Count == 5)
-                    && (Uniq == 5)
-                    && (First.Bx == 64)
-                    && (First.By == 2)
-                    && (grid.Width == 177)
-                    && (grid.Height == 173);
-                Boolean SettingsOk =
-                    (Math.Abs(opt.GridSizeFt - Constants.DEFAULT_GRID_SIZE_FT) < 1e-9)
-                    && (Math.Abs(opt.ToleranceMm - Constants.DEFAULT_TOLERANCE_MM) < 1e-9)
-                    && (Math.Abs(opt.MaxDepthMm - Constants.DEFAULT_MAX_DEPTH_MM) < 1e-9)
-                    && (Math.Abs(opt.BladeWidthMm - Constants.DEFAULT_BLADE_WIDTH_MM) < 1e-9);
-                if (MatchFingerprint)
-                {
-                    Add("COMPARE: MATCHES TheShop2@7.5ft parity fingerprint");
-                }
-                else if (!SettingsOk)
-                {
-                    Add("COMPARE: DOES NOT MATCH — set ToleranceMm=10, MaxDepthMm=61, BladeWidthMm=2271 (host still has converted inch values)");
-                }
-                else
-                {
-                    Add("COMPARE: DOES NOT MATCH TheShop2@7.5ft parity fingerprint — settings look right; check AGD identity / DLL build");
-                }
-            }
-            else
-            {
-                Add("route2: unavailable (fewer than 2 ordered passes)");
-            }
-
-            if ((result.Guidance is not null) && (result.Guidance.Points.Count > 0))
-            {
-                Int32 Route2Cuts = result.Guidance.Points.Count(Point => (Point.PassNo == 2) && (Point.Action == "CUT"));
-                Int32 Route2All = result.Guidance.Points.Count(Point => Point.PassNo == 2);
-                Add(String.Format(
-                    CultureInfo.InvariantCulture,
-                    "guidance: total_pts={0} route2_pts={1} route2_CUT={2}",
-                    result.Guidance.Points.Count,
-                    Route2All,
-                    Route2Cuts));
-            }
-
-            if (result.Metrics is not null)
-            {
-                Add(String.Format(
-                    CultureInfo.InvariantCulture,
-                    "metrics: hours={0:F3} haul_m={1:F1} moved_bcy={2:F2}",
-                    result.Metrics.TotalHours,
-                    result.TimeResult is not null ? result.TimeResult.HaulingDistM : 0.0,
-                    result.Metrics.MoveVolumeBcy));
-            }
-
-            Add("===== END route-2 parity dump =====");
-
-            try
-            {
-                String LogPath = Path.Combine(Path.GetTempPath(), "haulbuilder_route2_debug.log");
-                File.WriteAllLines(LogPath, Lines);
-                String PathMsg = Prefix + " wrote " + LogPath;
-                result.Messages.Add(PathMsg);
-                Console.WriteLine(PathMsg);
-            }
-            catch (Exception Ex)
-            {
-                Add("log_file_write_failed: " + Ex.Message);
-            }
-        }
-
-        /// <summary>
-        /// Executes a full run with Python-style naming.
-        /// </summary>
-        static public HaulBuilderResult run
-            (
-            HaulBuilderOptions options
-            )
-        {
-            // Python naming alias is provided for parity with the source module shape.
-            HaulBuilderEngine Engine = new HaulBuilderEngine();
-            return Engine.Run(options);
         }
 
         private static ObstacleField ResolveExclusions
@@ -812,18 +477,21 @@ namespace HaulBuilder
             )
         {
             // Zone sequencing condenses hundreds of passes into a coarse operational work order.
-            if (options.Zones <= 0)
+            if (options.ZoneCount <= 0)
             {
                 return;
             }
 
-            List<ZoneStep> Steps = Sequence.SequenceCutZones(grid, field, route, options.Zones, options.Seed);
+            List<ZoneStep> Steps = Sequence.SequenceCutZones(
+                grid, field, route, options.ZoneCount, options.RandomSeed);
             result.ZoneSteps.AddRange(Steps);
             if (Steps.Count > 0)
             {
                 String Csv = BuildZoneCsv(Steps);
                 result.CsvTextByName["zone_sequence"] = Csv;
-                Byte[] Overlay = Render.OverlayZoneWaypoints(result.PngBytesByName["main"], grid, Steps, options.PixelsPerBin);
+                Byte[] Overlay = Render.OverlayZoneWaypoints(
+                    result.PngBytesByName["main"], grid, Steps,
+                    options.PixelsPerCell);
                 result.PngBytesByName["main_with_zones"] = Overlay;
             }
         }
@@ -839,12 +507,12 @@ namespace HaulBuilder
         {
             // Pair rows are built explicitly so the engine never relies on file-backed CSV helpers.
             TimeParams TimeParams = new TimeParams(
-                options.LoadingSpeedMph,
-                options.HaulSpeedMph,
-                options.DumpingSpeedMph,
-                options.ReturnSpeedMph,
-                options.AccelTimeS,
-                options.DecelTimeS,
+                options.CutSpeedMph,
+                options.LoadedTravelSpeedMph,
+                options.FillSpeedMph,
+                options.UnloadedTravelSpeedMph,
+                options.AccelerationTimeS,
+                options.DecelerationTimeS,
                 options.FieldEfficiency);
             Double TotalCutBcyBefore = 0.0;
             Double TotalFillBcyBefore = 0.0;
@@ -868,17 +536,17 @@ namespace HaulBuilder
                 TotalFillBcyBefore += TimeModel.PassFillBcy(grid, Pass);
             }
 
-            if (options.PairsCsvPath is not null)
+            if (options.IncludeCutFillPairCsv)
             {
                 result.CsvTextByName["cut_fill_pairs"] = BuildPairsCsv(result.CutFillPairs, field);
             }
 
-            if (options.PairsPngPath is not null)
+            if (options.IncludeCutFillPairPng)
             {
                 result.PngBytesByName["cut_fill_pairs"] = Render.RenderPassPairsPng(
                     grid,
                     route.OrderedPasses,
-                    options.PixelsPerBin);
+                    options.PixelsPerCell);
             }
         }
 
@@ -894,15 +562,7 @@ namespace HaulBuilder
             GuidancePlanner.BuildResult? PrecomputedPlan = null
             )
         {
-            // Guidance stage is optional and only runs when one of its artifacts is requested.
-            Boolean NeedGuidance = options.EnableHaulOptimization
-                || (options.GuidanceCsvPath is not null)
-                || (options.GuidancePngPath is not null)
-                || (options.PairSampleCount > 0);
-            if (!NeedGuidance)
-            {
-                return;
-            }
+            // Exact production guidance is mandatory for every completed haul plan.
 
             GuidancePlanner.BuildResult Plan = PrecomputedPlan
                 ?? GuidancePlanner.Build(
@@ -963,14 +623,15 @@ namespace HaulBuilder
             GuidanceResult Guidance = Plan.Guidance;
             result.Guidance = Guidance;
             result.GuidancePoints.AddRange(Guidance.Points);
-            result.GuidanceTime = Plan.SummaryTime;
             result.LifecycleGuidance = Plan.Lifecycle;
             result.DetailedGuidanceTime = Plan.Timing;
 
             result.CsvTextByName["guidance"] = BuildGuidanceCsv(Guidance.Points);
-            if (options.GuidancePngPath is not null)
+            if (options.IncludeGuidancePng)
             {
-                result.PngBytesByName["guidance"] = Render.RenderGuidancePng(grid, Guidance.Points, options.PixelsPerBin, (options.BladeWidthMm / 1000.0));
+                result.PngBytesByName["guidance"] = Render.RenderGuidancePng(
+                    grid, Guidance.Points, options.PixelsPerCell,
+                    options.BladeWidthMm / 1000.0);
             }
 
             BuildPairSamples(result, grid, Guidance.Points, options);
@@ -1022,7 +683,7 @@ namespace HaulBuilder
             )
         {
             // Random single-pair PNGs mirror make_pair_images.py for operator-facing cut/haul/fill diagrams.
-            if (options.PairSampleCount <= 0)
+            if (options.RandomRouteImageCount <= 0)
             {
                 return;
             }
@@ -1056,8 +717,8 @@ namespace HaulBuilder
                 return;
             }
 
-            Int32 Take = Math.Min(options.PairSampleCount, Usable.Count);
-            Random Rng = new Random(options.Seed);
+            Int32 Take = Math.Min(options.RandomRouteImageCount, Usable.Count);
+            Random Rng = new Random(options.RandomSeed);
             List<Int32> Pool = new List<Int32>(Usable);
             for (Int32 Iter = 0; Iter < Pool.Count; Iter += 1)
             {
@@ -1082,18 +743,17 @@ namespace HaulBuilder
             PassResult passResult,
             Route route,
             Double headingDeg,
-            Boolean flowAligned,
             HaulBuilderOptions options
             )
         {
             // KPI calculations mirror CLI printouts so API and CLI users see identical operational metrics.
             TimeParams Params = new TimeParams(
-                options.LoadingSpeedMph,
-                options.HaulSpeedMph,
-                options.DumpingSpeedMph,
-                options.ReturnSpeedMph,
-                options.AccelTimeS,
-                options.DecelTimeS,
+                options.CutSpeedMph,
+                options.LoadedTravelSpeedMph,
+                options.FillSpeedMph,
+                options.UnloadedTravelSpeedMph,
+                options.AccelerationTimeS,
+                options.DecelerationTimeS,
                 options.FieldEfficiency);
             TimeResult Time = Timemodel.EstimateTime(grid, route, Params);
             result.TimeResult = Time;
@@ -1137,8 +797,6 @@ namespace HaulBuilder
                 ValidAreas = Valid,
                 FieldAreaAcres = AreaAc,
                 MoveVolumeBcy = MovedBcy,
-                TotalHours = ScheduledH,
-                MoveRateBcyPerHour = ScheduledMoveRate,
                 DeterministicHours = DeterministicH,
                 ScheduledHours = ScheduledH,
                 DeterministicMoveRateBcyPerHour = DeterministicMoveRate,
@@ -1155,8 +813,7 @@ namespace HaulBuilder
                     ? AreaAc / ScheduledH
                     : 0.0,
                 AverageMoveDistanceYards = AvgMoveYd,
-                HeadingDeg = flowAligned ? null : headingDeg,
-                FlowAligned = flowAligned,
+                LaneAxisHeadingDeg = headingDeg,
                 PivotExtraHaulM = result.PivotExtraHaulM,
                 PivotAddedTimeS = result.PivotAddedTimeS,
                 ManualCleanupBcy = result.DeferredWorkSummary?.ManualCleanupBcy
@@ -1185,10 +842,15 @@ namespace HaulBuilder
             )
         {
             // Base leveling animation can be emitted as per-frame PNGs and/or one GIF.
-            Boolean NeedAnimation = ((options.AnimateDirPath is not null) || (options.AnimateGifPath is not null));
+            Boolean NeedAnimation = options.IncludeAnimationGif
+                || options.IncludeAnimationFrames;
             if (!NeedAnimation) return;
-            Animate.AnimationPayload Payload = Animate.AnimateLeveling(grid, route.OrderedPasses, options.AnimateStride, options.AnimatePixelsPerBin, 80, options.AnimateMode);
-            if (Payload.GifBytes is not null) result.AnimationGifBytes = Payload.GifBytes;
+            Animate.AnimationPayload Payload = Animate.AnimateLeveling(
+                grid, route.OrderedPasses, options.AnimationStride,
+                options.AnimationPixelsPerCell, 80, options.AnimationMode);
+            if (options.IncludeAnimationGif && (Payload.GifBytes is not null))
+                result.AnimationGifBytes = Payload.GifBytes;
+            if (!options.IncludeAnimationFrames) return;
             for (Int32 Iter = 0; Iter < Payload.FramePngBytes.Count; Iter += 1)
             {
                 result.PngBytesByName[String.Format(CultureInfo.InvariantCulture, "animation_frame_{0:D5}", Iter)] = Payload.FramePngBytes[Iter];
@@ -1205,7 +867,7 @@ namespace HaulBuilder
             )
         {
             // Pivot stage is optional and includes both static schedule artifacts and optional animation.
-            if (!options.Pivot)
+            if (!options.EnablePivot)
             {
                 return;
             }
@@ -1242,7 +904,9 @@ namespace HaulBuilder
             Directory.CreateDirectory(PivotDir);
             try
             {
-                List<String> Paths = Pivot.RenderPivotPngs(PivotGrid, PivotPasses, Plan, PivotDir, options.PivotMode, options.PivotPixelsPerBin);
+                List<String> Paths = Pivot.RenderPivotPngs(
+                    PivotGrid, PivotPasses, Plan, PivotDir,
+                    options.PivotMode, options.PivotPixelsPerCell);
                 foreach (String PathItem in Paths)
                 {
                     String Name = Path.GetFileNameWithoutExtension(PathItem);
@@ -1265,16 +929,19 @@ namespace HaulBuilder
                 }
             }
 
-            if (!options.NoPivotGif || (options.PivotFramesPath is not null))
+            if (options.IncludePivotAnimationGif
+                || options.IncludePivotAnimationFrames)
             {
                 Animate.AnimationPayload Payload = Animate.AnimatePivotLeveling(
                     grid,
                     route.OrderedPasses,
                     Plan,
                     options.PivotAnimationStride,
-                    options.PivotPixelsPerBin,
+                    options.PivotPixelsPerCell,
                     options.PivotMode);
-                result.PivotAnimationGifBytes = Payload.GifBytes;
+                if (options.IncludePivotAnimationGif)
+                    result.PivotAnimationGifBytes = Payload.GifBytes;
+                if (!options.IncludePivotAnimationFrames) return;
                 for (Int32 Iter = 0; Iter < Payload.FramePngBytes.Count; Iter += 1)
                 {
                     result.PivotPngBytesByName[String.Format(CultureInfo.InvariantCulture, "pivot_animation_frame_{0:D5}", Iter)] = Payload.FramePngBytes[Iter];
@@ -1547,7 +1214,6 @@ namespace HaulBuilder
             HaulBuilderOptions Copy = new HaulBuilderOptions
             {
                 AgdPath = options.AgdPath,
-                OutputPngPath = options.OutputPngPath,
                 GridSizeFt = options.GridSizeFt,
                 ToleranceMm = options.ToleranceMm,
                 ScraperCapacityLcy = options.ScraperCapacityLcy,
@@ -1555,275 +1221,242 @@ namespace HaulBuilder
                 CutFillRatio = options.CutFillRatio,
                 MaxDepthMm = options.MaxDepthMm,
                 BladeWidthMm = options.BladeWidthMm,
-                HeadingDeg = options.HeadingDeg,
-                NoFlowAligned = options.NoFlowAligned,
-                HeadingStrength = options.HeadingStrength,
-                StripBias = options.StripBias,
-                MaxDropHopFt = options.MaxDropHopFt,
-                MinLoadFillPct = options.MinLoadFillPct,
-                NoKnotRepair = options.NoKnotRepair,
+                LaneAxisHeadingDeg = options.LaneAxisHeadingDeg,
                 FieldEfficiency = options.FieldEfficiency,
-                LoadingSpeedMph = options.LoadingSpeedMph,
-                HaulSpeedMph = options.HaulSpeedMph,
-                DumpingSpeedMph = options.DumpingSpeedMph,
-                ReturnSpeedMph = options.ReturnSpeedMph,
-                AccelTimeS = options.AccelTimeS,
-                DecelTimeS = options.DecelTimeS,
-                TransportMode = options.TransportMode,
-                BalanceMode = options.BalanceMode,
-                PixelsPerBin = options.PixelsPerBin,
-                ArrowStride = options.ArrowStride,
-                Zones = options.Zones,
-                SequenceCsvPath = options.SequenceCsvPath,
-                PairsCsvPath = options.PairsCsvPath,
-                PairsPngPath = options.PairsPngPath,
-                GuidanceCsvPath = options.GuidanceCsvPath,
-                GuidancePngPath = options.GuidancePngPath,
-                LaneOverlap = options.LaneOverlap,
+                CutSpeedMph = options.CutSpeedMph,
+                LoadedTravelSpeedMph = options.LoadedTravelSpeedMph,
+                FillSpeedMph = options.FillSpeedMph,
+                UnloadedTravelSpeedMph = options.UnloadedTravelSpeedMph,
+                AccelerationTimeS = options.AccelerationTimeS,
+                DecelerationTimeS = options.DecelerationTimeS,
+                PixelsPerCell = options.PixelsPerCell,
+                FlowArrowStrideCells = options.FlowArrowStrideCells,
+                ZoneCount = options.ZoneCount,
+                IncludeCutFillPairCsv = options.IncludeCutFillPairCsv,
+                IncludeCutFillPairPng = options.IncludeCutFillPairPng,
+                IncludeGuidancePng = options.IncludeGuidancePng,
                 TurnSpeedMph = options.TurnSpeedMph,
                 GradeSpeedMph = options.GradeSpeedMph,
-                TurningCircleFt = options.TurningCircleFt,
+                MinimumTurningDiameterFt = options.MinimumTurningDiameterFt,
                 EquipmentLengthFt = options.EquipmentLengthFt,
-                TurnThresholdDeg = options.TurnThresholdDeg,
-                NoGradeReturn = options.NoGradeReturn,
-                NoRouteSmoothing = options.NoRouteSmoothing,
-                ReorderWindow = options.ReorderWindow,
-                NoDirectionAware = options.NoDirectionAware,
-                AnimateDirPath = options.AnimateDirPath,
-                AnimateGifPath = options.AnimateGifPath,
-                AnimateStride = options.AnimateStride,
-                AnimatePixelsPerBin = options.AnimatePixelsPerBin,
-                AnimateMode = options.AnimateMode,
-                Pivot = options.Pivot,
+                WaypointTurnThresholdDeg = options.WaypointTurnThresholdDeg,
+                IncludeAnimationGif = options.IncludeAnimationGif,
+                IncludeAnimationFrames = options.IncludeAnimationFrames,
+                AnimationStride = options.AnimationStride,
+                AnimationPixelsPerCell = options.AnimationPixelsPerCell,
+                AnimationMode = options.AnimationMode,
+                EnablePivot = options.EnablePivot,
                 PivotCenter = options.PivotCenter,
                 PivotWheelbaseFt = options.PivotWheelbaseFt,
                 PivotClearanceFt = options.PivotClearanceFt,
                 PivotMoveCost = options.PivotMoveCost,
-                PivotDirPath = options.PivotDirPath,
-                PivotCsvPath = options.PivotCsvPath,
                 PivotMode = options.PivotMode,
-                PivotPixelsPerBin = options.PivotPixelsPerBin,
-                PivotGifPath = options.PivotGifPath,
-                NoPivotGif = options.NoPivotGif,
-                PivotFramesPath = options.PivotFramesPath,
+                PivotPixelsPerCell = options.PivotPixelsPerCell,
+                IncludePivotAnimationGif = options.IncludePivotAnimationGif,
+                IncludePivotAnimationFrames = options.IncludePivotAnimationFrames,
                 PivotAnimationStride = options.PivotAnimationStride,
                 EquipmentWidthFt = options.EquipmentWidthFt,
-                EnableHaulOptimization = options.EnableHaulOptimization,
-                HaulOptimizationAxis = options.HaulOptimizationAxis,
-                HaulOptimizationMaxRunsPerKind = options.HaulOptimizationMaxRunsPerKind,
-                HaulOptimizationFlowPenaltyWeight = options.HaulOptimizationFlowPenaltyWeight,
-                HaulOptimizationDeferEdgeWork = options.HaulOptimizationDeferEdgeWork,
-                HaulOptimizationCompleteDeferredEdge = options.HaulOptimizationCompleteDeferredEdge,
-                HaulOptimizationEdgeMaxRunsPerKind = options.HaulOptimizationEdgeMaxRunsPerKind,
-                EnableHaulRouteConsolidation = options.EnableHaulRouteConsolidation,
-                HaulOptimizationRouteConsolidationGroupRoutes = options.HaulOptimizationRouteConsolidationGroupRoutes,
-                HaulOptimizationRouteConsolidationMaximumCycles = options.HaulOptimizationRouteConsolidationMaximumCycles,
-                HaulOptimizationPairRefinementRounds = options.HaulOptimizationPairRefinementRounds,
-                HaulOptimizationPairMetric = options.HaulOptimizationPairMetric,
-                EnableHaulMultiRouteExchange = options.EnableHaulMultiRouteExchange,
-                HaulOptimizationMultiRouteExchangeRounds = options.HaulOptimizationMultiRouteExchangeRounds,
-                HaulOptimizationMultiRouteExchangeGroupRoutes = options.HaulOptimizationMultiRouteExchangeGroupRoutes,
-                HaulOptimizationMultiRouteExchangeMaximumGroups = options.HaulOptimizationMultiRouteExchangeMaximumGroups,
-                HaulOptimizationMultiRouteExchangeMinimumImprovementM = options.HaulOptimizationMultiRouteExchangeMinimumImprovementM,
-                EnableHaulCycleChainOptimization = options.EnableHaulCycleChainOptimization,
-                HaulOptimizationCycleChainRounds = options.HaulOptimizationCycleChainRounds,
-                HaulOptimizationCycleChainCandidatesPerRoute = options.HaulOptimizationCycleChainCandidatesPerRoute,
-                HaulOptimizationCycleChainMinimumImprovementSeconds = options.HaulOptimizationCycleChainMinimumImprovementSeconds,
-                HaulOptimizationReorderWindow = options.HaulOptimizationReorderWindow,
-                HaulOptimizationMaximumCompactOmissions = options.HaulOptimizationMaximumCompactOmissions,
-                HaulOptimizationCompactOmissionPriority = options.HaulOptimizationCompactOmissionPriority,
-                OmitIsolatedEdgePatches = options.OmitIsolatedEdgePatches,
-                MaxIsolatedEdgePatchCells = options.MaxIsolatedEdgePatchCells,
-                MaxIsolatedEdgePatchVolumeBcy = options.MaxIsolatedEdgePatchVolumeBcy,
-                MaxTotalIsolatedEdgePatchOmissionBcy = options.MaxTotalIsolatedEdgePatchOmissionBcy,
-                MaxTotalIsolatedEdgePatchOmissionPercent = options.MaxTotalIsolatedEdgePatchOmissionPercent,
-                NoPlan = options.NoPlan,
-                PairSampleCount = options.PairSampleCount,
-                Seed = options.Seed,
+                SkipHaulPlan = options.SkipHaulPlan,
+                RandomRouteImageCount = options.RandomRouteImageCount,
+                RandomSeed = options.RandomSeed,
             };
+            CopyOptimization(options.Optimization, Copy.Optimization);
             Copy.ExcludePolygonSpecs.AddRange(options.ExcludePolygonSpecs);
             return Copy;
         }
 
-        private static void ValidateEdgePatchOptions
-            (
-            HaulBuilderOptions options
-            )
+        private static void CopyOptimization(
+            HaulOptimizationOptions source,
+            HaulOptimizationOptions destination)
         {
-            if (!options.OmitIsolatedEdgePatches) return;
-            if (options.MaxIsolatedEdgePatchCells < 1)
-            {
-                throw new ArgumentException(
-                    "MaxIsolatedEdgePatchCells must be at least 1 when edge-patch omission is enabled.",
-                    nameof(options));
-            }
-            if (!Double.IsFinite(options.MaxIsolatedEdgePatchVolumeBcy)
-                || (options.MaxIsolatedEdgePatchVolumeBcy < 0.0))
-            {
-                throw new ArgumentException(
-                    "MaxIsolatedEdgePatchVolumeBcy must be finite and non-negative.",
-                    nameof(options));
-            }
-            if (!Double.IsFinite(options.MaxTotalIsolatedEdgePatchOmissionBcy)
-                || (options.MaxTotalIsolatedEdgePatchOmissionBcy < 0.0))
-            {
-                throw new ArgumentException(
-                    "MaxTotalIsolatedEdgePatchOmissionBcy must be finite and non-negative.",
-                    nameof(options));
-            }
-            if (!Double.IsFinite(options.MaxTotalIsolatedEdgePatchOmissionPercent)
-                || (options.MaxTotalIsolatedEdgePatchOmissionPercent < 0.0)
-                || (options.MaxTotalIsolatedEdgePatchOmissionPercent > 100.0))
-            {
-                throw new ArgumentException(
-                    "MaxTotalIsolatedEdgePatchOmissionPercent must be between 0 and 100.",
-                    nameof(options));
-            }
+            destination.MaxLaneSlicesPerCycle = source.MaxLaneSlicesPerCycle;
+            destination.FlowPenaltyWeight = source.FlowPenaltyWeight;
+            destination.EdgeMaxLaneSlicesPerCycle = source.EdgeMaxLaneSlicesPerCycle;
+            destination.EnableRouteConsolidation = source.EnableRouteConsolidation;
+            destination.RouteConsolidationGroupSize = source.RouteConsolidationGroupSize;
+            destination.RouteConsolidationMaximumCycles = source.RouteConsolidationMaximumCycles;
+            destination.PairRefinementRounds = source.PairRefinementRounds;
+            destination.EnableMultiRouteExchange = source.EnableMultiRouteExchange;
+            destination.MultiRouteExchangeRounds = source.MultiRouteExchangeRounds;
+            destination.MultiRouteExchangeGroupSize = source.MultiRouteExchangeGroupSize;
+            destination.MultiRouteExchangeMaximumGroups = source.MultiRouteExchangeMaximumGroups;
+            destination.MultiRouteExchangeMinimumImprovementM = source.MultiRouteExchangeMinimumImprovementM;
+            destination.EnableCycleChainOptimization = source.EnableCycleChainOptimization;
+            destination.CycleChainRounds = source.CycleChainRounds;
+            destination.CycleChainCandidatesPerRoute = source.CycleChainCandidatesPerRoute;
+            destination.CycleChainMinimumImprovementSeconds = source.CycleChainMinimumImprovementSeconds;
+            destination.RouteReorderWindow = source.RouteReorderWindow;
         }
 
-        private static void ValidateHaulOptimizationOptions
+        private static void ValidateOptions
             (
             HaulBuilderOptions options
             )
         {
-            if (options.HeadingDeg.HasValue
-                && !Double.IsFinite(options.HeadingDeg.Value))
+            static void Positive(Double value, String name)
             {
-                throw new ArgumentException(
-                    "HeadingDeg must be finite when supplied.",
-                    nameof(options));
+                if (!Double.IsFinite(value) || (value <= 0.0))
+                    throw new ArgumentOutOfRangeException(
+                        name, "Value must be finite and greater than zero.");
             }
-            if (!options.EnableHaulOptimization) return;
-            if (!Enum.IsDefined(options.HaulOptimizationAxis))
-            {
-                throw new ArgumentException(
-                    "HaulOptimizationAxis is invalid.",
-                    nameof(options));
-            }
-            if ((options.HaulOptimizationAxis
-                    == HaulLaneBuilder.LaneAxis.UserHeading)
-                && !options.HeadingDeg.HasValue)
-            {
-                throw new ArgumentException(
-                    "HeadingDeg is required when HaulOptimizationAxis is UserHeading.",
-                    nameof(options));
-            }
-            if (options.HaulOptimizationMaxRunsPerKind <= 0)
-            {
-                throw new ArgumentException(
-                    "HaulOptimizationMaxRunsPerKind must be positive.",
-                    nameof(options));
-            }
-            if (options.HaulOptimizationEdgeMaxRunsPerKind <= 0)
-            {
+
+            Positive(options.GridSizeFt, nameof(options.GridSizeFt));
+            if (!Double.IsFinite(options.ToleranceMm)
+                || (options.ToleranceMm < 0.0))
                 throw new ArgumentOutOfRangeException(
-                    nameof(options.HaulOptimizationEdgeMaxRunsPerKind),
-                    "HaulOptimizationEdgeMaxRunsPerKind must be positive.");
-            }
-            if (options.EnableHaulRouteConsolidation
-                && (options.HaulOptimizationRouteConsolidationGroupRoutes < 3))
-            {
+                    nameof(options.ToleranceMm));
+            Positive(options.ScraperCapacityLcy,
+                nameof(options.ScraperCapacityLcy));
+            Positive(options.SwellFactor, nameof(options.SwellFactor));
+            Positive(options.CutFillRatio, nameof(options.CutFillRatio));
+            Positive(options.MaxDepthMm, nameof(options.MaxDepthMm));
+            Positive(options.BladeWidthMm, nameof(options.BladeWidthMm));
+            if (!Double.IsFinite(options.LaneAxisHeadingDeg))
                 throw new ArgumentOutOfRangeException(
-                    nameof(options.HaulOptimizationRouteConsolidationGroupRoutes),
-                    "HaulOptimizationRouteConsolidationGroupRoutes must be at least 3.");
-            }
-            if (options.EnableHaulRouteConsolidation
-                && (options.HaulOptimizationRouteConsolidationMaximumCycles <= 0))
-            {
+                    nameof(options.LaneAxisHeadingDeg));
+            if (!Double.IsFinite(options.FieldEfficiency)
+                || (options.FieldEfficiency <= 0.0)
+                || (options.FieldEfficiency > 1.0))
                 throw new ArgumentOutOfRangeException(
-                    nameof(options.HaulOptimizationRouteConsolidationMaximumCycles),
-                    "HaulOptimizationRouteConsolidationMaximumCycles must be positive.");
-            }
-            if (!Double.IsFinite(options.HaulOptimizationFlowPenaltyWeight)
-                || (options.HaulOptimizationFlowPenaltyWeight < 0.0))
-            {
+                    nameof(options.FieldEfficiency));
+            Positive(options.CutSpeedMph, nameof(options.CutSpeedMph));
+            Positive(options.LoadedTravelSpeedMph,
+                nameof(options.LoadedTravelSpeedMph));
+            Positive(options.FillSpeedMph, nameof(options.FillSpeedMph));
+            Positive(options.UnloadedTravelSpeedMph,
+                nameof(options.UnloadedTravelSpeedMph));
+            Positive(options.TurnSpeedMph, nameof(options.TurnSpeedMph));
+            Positive(options.GradeSpeedMph, nameof(options.GradeSpeedMph));
+            Positive(options.AccelerationTimeS,
+                nameof(options.AccelerationTimeS));
+            Positive(options.DecelerationTimeS,
+                nameof(options.DecelerationTimeS));
+            Positive(options.MinimumTurningDiameterFt,
+                nameof(options.MinimumTurningDiameterFt));
+            Positive(options.EquipmentLengthFt,
+                nameof(options.EquipmentLengthFt));
+            Positive(options.EquipmentWidthFt,
+                nameof(options.EquipmentWidthFt));
+            if (!Double.IsFinite(options.WaypointTurnThresholdDeg)
+                || (options.WaypointTurnThresholdDeg < 0.0)
+                || (options.WaypointTurnThresholdDeg > 180.0))
+                throw new ArgumentOutOfRangeException(
+                    nameof(options.WaypointTurnThresholdDeg));
+            if (options.PixelsPerCell <= 0)
+                throw new ArgumentOutOfRangeException(
+                    nameof(options.PixelsPerCell));
+            if (options.FlowArrowStrideCells < 0)
+                throw new ArgumentOutOfRangeException(
+                    nameof(options.FlowArrowStrideCells));
+            if (options.ZoneCount < 0)
+                throw new ArgumentOutOfRangeException(
+                    nameof(options.ZoneCount));
+            if (options.RandomRouteImageCount < 0)
+                throw new ArgumentOutOfRangeException(
+                    nameof(options.RandomRouteImageCount));
+            if (options.AnimationStride <= 0)
+                throw new ArgumentOutOfRangeException(
+                    nameof(options.AnimationStride));
+            if (options.AnimationPixelsPerCell <= 0)
+                throw new ArgumentOutOfRangeException(
+                    nameof(options.AnimationPixelsPerCell));
+            if (!String.Equals(options.AnimationMode, "cutfill",
+                    StringComparison.OrdinalIgnoreCase)
+                && !String.Equals(options.AnimationMode, "topology",
+                    StringComparison.OrdinalIgnoreCase))
                 throw new ArgumentException(
-                    "HaulOptimizationFlowPenaltyWeight must be finite and non-negative.",
-                    nameof(options));
-            }
-            if (options.HaulOptimizationPairRefinementRounds < 0)
+                    "AnimationMode must be 'cutfill' or 'topology'.",
+                    nameof(options.AnimationMode));
+            if (options.EnablePivot)
             {
-                throw new ArgumentException(
-                    "HaulOptimizationPairRefinementRounds must be non-negative.",
-                    nameof(options));
+                Positive(options.PivotWheelbaseFt,
+                    nameof(options.PivotWheelbaseFt));
+                if (!Double.IsFinite(options.PivotClearanceFt)
+                    || (options.PivotClearanceFt < 0.0))
+                    throw new ArgumentOutOfRangeException(
+                        nameof(options.PivotClearanceFt));
+                if (!Double.IsFinite(options.PivotMoveCost)
+                    || (options.PivotMoveCost < 0.0))
+                    throw new ArgumentOutOfRangeException(
+                        nameof(options.PivotMoveCost));
+                if (options.PivotPixelsPerCell <= 0)
+                    throw new ArgumentOutOfRangeException(
+                        nameof(options.PivotPixelsPerCell));
+                if (options.PivotAnimationStride <= 0)
+                    throw new ArgumentOutOfRangeException(
+                        nameof(options.PivotAnimationStride));
+                if (!String.Equals(options.PivotMode, "cutfill",
+                        StringComparison.OrdinalIgnoreCase)
+                    && !String.Equals(options.PivotMode, "topology",
+                        StringComparison.OrdinalIgnoreCase))
+                    throw new ArgumentException(
+                        "PivotMode must be 'cutfill' or 'topology'.",
+                        nameof(options.PivotMode));
             }
-            if (!Enum.IsDefined(options.HaulOptimizationPairMetric))
+
+            ValidateOptimizationOptions(options);
+        }
+
+        private static void ValidateOptimizationOptions
+            (
+            HaulBuilderOptions options
+            )
+        {
+            HaulOptimizationOptions optimization = options.Optimization;
+            if (optimization.MaxLaneSlicesPerCycle <= 0)
+                throw new ArgumentOutOfRangeException(
+                    nameof(optimization.MaxLaneSlicesPerCycle));
+            if (optimization.EdgeMaxLaneSlicesPerCycle <= 0)
+                throw new ArgumentOutOfRangeException(
+                    nameof(optimization.EdgeMaxLaneSlicesPerCycle));
+            if (!Double.IsFinite(optimization.FlowPenaltyWeight)
+                || (optimization.FlowPenaltyWeight < 0.0))
+                throw new ArgumentOutOfRangeException(
+                    nameof(optimization.FlowPenaltyWeight));
+            if (optimization.PairRefinementRounds < 0)
+                throw new ArgumentOutOfRangeException(
+                    nameof(optimization.PairRefinementRounds));
+            if (optimization.RouteReorderWindow < 0)
+                throw new ArgumentOutOfRangeException(
+                    nameof(optimization.RouteReorderWindow));
+            if (optimization.EnableRouteConsolidation
+                && (optimization.RouteConsolidationGroupSize < 3))
+                throw new ArgumentOutOfRangeException(
+                    nameof(optimization.RouteConsolidationGroupSize));
+            if (optimization.EnableRouteConsolidation
+                && (optimization.RouteConsolidationMaximumCycles <= 0))
+                throw new ArgumentOutOfRangeException(
+                    nameof(optimization.RouteConsolidationMaximumCycles));
+            if (optimization.EnableMultiRouteExchange)
             {
-                throw new ArgumentException(
-                    "HaulOptimizationPairMetric is invalid.",
-                    nameof(options));
-            }
-            if (options.EnableHaulMultiRouteExchange)
-            {
-                if (options.HaulOptimizationMultiRouteExchangeRounds <= 0)
-                {
-                    throw new ArgumentException(
-                        "HaulOptimizationMultiRouteExchangeRounds must be positive when multi-route exchange is enabled.",
-                        nameof(options));
-                }
-                if (options.HaulOptimizationMultiRouteExchangeGroupRoutes < 3)
-                {
-                    throw new ArgumentException(
-                        "HaulOptimizationMultiRouteExchangeGroupRoutes must be at least 3.",
-                        nameof(options));
-                }
-                if (options.HaulOptimizationMultiRouteExchangeMaximumGroups <= 0)
-                {
-                    throw new ArgumentException(
-                        "HaulOptimizationMultiRouteExchangeMaximumGroups must be positive.",
-                        nameof(options));
-                }
+                if (optimization.MultiRouteExchangeRounds <= 0)
+                    throw new ArgumentOutOfRangeException(
+                        nameof(optimization.MultiRouteExchangeRounds));
+                if (optimization.MultiRouteExchangeGroupSize < 3)
+                    throw new ArgumentOutOfRangeException(
+                        nameof(optimization.MultiRouteExchangeGroupSize));
+                if (optimization.MultiRouteExchangeMaximumGroups <= 0)
+                    throw new ArgumentOutOfRangeException(
+                        nameof(optimization.MultiRouteExchangeMaximumGroups));
                 if (!Double.IsFinite(
-                        options.HaulOptimizationMultiRouteExchangeMinimumImprovementM)
-                    || (options.HaulOptimizationMultiRouteExchangeMinimumImprovementM < 0.0))
-                {
-                    throw new ArgumentException(
-                        "HaulOptimizationMultiRouteExchangeMinimumImprovementM must be finite and non-negative.",
-                        nameof(options));
-                }
+                        optimization.MultiRouteExchangeMinimumImprovementM)
+                    || (optimization.MultiRouteExchangeMinimumImprovementM < 0.0))
+                    throw new ArgumentOutOfRangeException(
+                        nameof(optimization.MultiRouteExchangeMinimumImprovementM));
             }
-            if (options.EnableHaulCycleChainOptimization)
+            if (optimization.EnableCycleChainOptimization)
             {
-                if (options.HaulOptimizationCycleChainRounds <= 0)
-                {
-                    throw new ArgumentException(
-                        "HaulOptimizationCycleChainRounds must be positive when cycle-chain optimization is enabled.",
-                        nameof(options));
-                }
-                if (options.HaulOptimizationCycleChainCandidatesPerRoute <= 0)
-                {
-                    throw new ArgumentException(
-                        "HaulOptimizationCycleChainCandidatesPerRoute must be positive.",
-                        nameof(options));
-                }
+                if (optimization.CycleChainRounds <= 0)
+                    throw new ArgumentOutOfRangeException(
+                        nameof(optimization.CycleChainRounds));
+                if (optimization.CycleChainCandidatesPerRoute <= 0)
+                    throw new ArgumentOutOfRangeException(
+                        nameof(optimization.CycleChainCandidatesPerRoute));
                 if (!Double.IsFinite(
-                        options.HaulOptimizationCycleChainMinimumImprovementSeconds)
-                    || (options.HaulOptimizationCycleChainMinimumImprovementSeconds
-                        < 0.0))
-                {
-                    throw new ArgumentException(
-                        "HaulOptimizationCycleChainMinimumImprovementSeconds must be finite and non-negative.",
-                        nameof(options));
-                }
-            }
-            if (options.HaulOptimizationReorderWindow < 0)
-            {
-                throw new ArgumentException(
-                    "HaulOptimizationReorderWindow must be non-negative.",
-                    nameof(options));
-            }
-            if (options.HaulOptimizationMaximumCompactOmissions < 0)
-            {
-                throw new ArgumentException(
-                    "HaulOptimizationMaximumCompactOmissions must be non-negative.",
-                    nameof(options));
-            }
-            if (!Enum.IsDefined(
-                options.HaulOptimizationCompactOmissionPriority))
-            {
-                throw new ArgumentException(
-                    "HaulOptimizationCompactOmissionPriority is invalid.",
-                    nameof(options));
+                        optimization.CycleChainMinimumImprovementSeconds)
+                    || (optimization.CycleChainMinimumImprovementSeconds < 0.0))
+                    throw new ArgumentOutOfRangeException(
+                        nameof(optimization.CycleChainMinimumImprovementSeconds));
             }
         }
 

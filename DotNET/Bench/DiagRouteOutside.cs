@@ -54,7 +54,7 @@ internal static class DiagRouteOutside
             1500,
             true,
             true,
-            Constants.DEFAULT_RETURN_SPEED_MPH,
+            Constants.DEFAULT_UNLOADED_TRAVEL_SPEED_MPH,
             Constants.DEFAULT_TURN_SPEED_MPH,
             Constants.DEFAULT_TURNING_CIRCLE_FT,
             Obstacles.EMPTY_OBSTACLES);

@@ -1,20 +1,16 @@
 namespace HaulBuilder
 {
     /// <summary>
-    /// In-memory equivalent of all <c>landlevel.cli</c> arguments.
+    /// User-facing inputs for the production haul planner. The current lane-first
+    /// optimizer and mandatory production guidance are always used; this type does
+    /// not expose the retired greedy allocation mode.
     /// </summary>
     public sealed class HaulBuilderOptions
     {
-        /// <summary>
-        /// Initializes a new instance of the <see cref="HaulBuilderOptions"/> class.
-        /// </summary>
-        public HaulBuilderOptions
-            (
-            )
+        /// <summary>Initializes production options with measured defaults.</summary>
+        public HaulBuilderOptions()
         {
-            // Defaults mirror Python argparse defaults so CLI parity remains deterministic.
             AgdPath = String.Empty;
-            OutputPngPath = "haulbuilder.png";
             GridSizeFt = Constants.DEFAULT_GRID_SIZE_FT;
             ToleranceMm = Constants.DEFAULT_TOLERANCE_MM;
             ScraperCapacityLcy = Constants.DEFAULT_SCRAPER_CAPACITY_LCY;
@@ -22,518 +18,188 @@ namespace HaulBuilder
             CutFillRatio = Constants.DEFAULT_COMPACTION;
             MaxDepthMm = Constants.DEFAULT_MAX_DEPTH_MM;
             BladeWidthMm = Constants.DEFAULT_BLADE_WIDTH_MM;
-            HeadingStrength = 0.5;
-            StripBias = 50.0;
-            MaxDropHopFt = Constants.DEFAULT_MAX_DROP_HOP_FT;
-            MinLoadFillPct = 80.0;
+            LaneAxisHeadingDeg = 0.0;
             FieldEfficiency = Constants.DEFAULT_FIELD_EFFICIENCY;
-            LoadingSpeedMph = Constants.DEFAULT_LOADING_SPEED_MPH;
-            HaulSpeedMph = Constants.DEFAULT_HAUL_SPEED_MPH;
-            DumpingSpeedMph = Constants.DEFAULT_DUMPING_SPEED_MPH;
-            ReturnSpeedMph = Constants.DEFAULT_RETURN_SPEED_MPH;
-            AccelTimeS = Constants.DEFAULT_ACCEL_TIME_S;
-            DecelTimeS = Constants.DEFAULT_DECEL_TIME_S;
-            TransportMode = "poisson";
-            BalanceMode = "check";
-            PixelsPerBin = Constants.DEFAULT_PIXELS_PER_BIN;
-            ArrowStride = 2;
-            Zones = 8;
-            LaneOverlap = 0.0;
+            CutSpeedMph = Constants.DEFAULT_CUT_SPEED_MPH;
+            LoadedTravelSpeedMph = Constants.DEFAULT_LOADED_TRAVEL_SPEED_MPH;
+            FillSpeedMph = Constants.DEFAULT_FILL_SPEED_MPH;
+            UnloadedTravelSpeedMph = Constants.DEFAULT_UNLOADED_TRAVEL_SPEED_MPH;
+            AccelerationTimeS = Constants.DEFAULT_ACCELERATION_TIME_S;
+            DecelerationTimeS = Constants.DEFAULT_DECELERATION_TIME_S;
+            PixelsPerCell = Constants.DEFAULT_PIXELS_PER_BIN;
+            FlowArrowStrideCells = 2;
+            ZoneCount = 8;
             TurnSpeedMph = Constants.DEFAULT_TURN_SPEED_MPH;
             GradeSpeedMph = Constants.DEFAULT_GRADE_SPEED_MPH;
-            TurningCircleFt = Constants.DEFAULT_TURNING_CIRCLE_FT;
+            MinimumTurningDiameterFt = Constants.DEFAULT_TURNING_CIRCLE_FT;
             EquipmentLengthFt = Constants.DEFAULT_EQUIPMENT_LENGTH_FT;
-            TurnThresholdDeg = Constants.DEFAULT_TURN_THRESHOLD_DEG;
-            ReorderWindow = 50;
-            AnimateStride = 10;
-            AnimatePixelsPerBin = 8;
-            AnimateMode = "cutfill";
+            WaypointTurnThresholdDeg = Constants.DEFAULT_TURN_THRESHOLD_DEG;
+            AnimationStride = 10;
+            AnimationPixelsPerCell = 8;
+            AnimationMode = "cutfill";
             PivotCenter = null;
             PivotWheelbaseFt = Constants.DEFAULT_PIVOT_WHEELBASE_FT;
             PivotClearanceFt = Constants.DEFAULT_PIVOT_CLEARANCE_FT;
             PivotMoveCost = 25.0;
             PivotMode = "cutfill";
-            PivotPixelsPerBin = 6;
+            PivotPixelsPerCell = 6;
             PivotAnimationStride = 15;
             EquipmentWidthFt = 14.0;
-            HaulOptimizationAxis = HaulLaneBuilder.LaneAxis.NorthSouth;
-            // Exact TheShop2 guidance testing found ten same-kind slices to be
-            // the best packing point: it completes more work with fewer cycles
-            // while retaining zero guidance-sequence failures.  The value is a
-            // packing bound, not a commanded number of physical work runs.
-            HaulOptimizationMaxRunsPerKind = 10;
-            HaulOptimizationFlowPenaltyWeight = 1.0;
-            HaulOptimizationDeferEdgeWork = true;
-            HaulOptimizationCompleteDeferredEdge = true;
-            HaulOptimizationEdgeMaxRunsPerKind = 12;
-            EnableHaulRouteConsolidation = true;
-            HaulOptimizationRouteConsolidationGroupRoutes = 8;
-            HaulOptimizationRouteConsolidationMaximumCycles = 50;
-            HaulOptimizationPairRefinementRounds = 8;
-            HaulOptimizationPairMetric =
-                HaulPairDistanceRefiner.PairMetric.Centroid;
-            HaulOptimizationMultiRouteExchangeRounds = 2;
-            HaulOptimizationMultiRouteExchangeGroupRoutes = 8;
-            HaulOptimizationMultiRouteExchangeMaximumGroups = 100;
-            HaulOptimizationMultiRouteExchangeMinimumImprovementM = 1.0;
-            EnableHaulCycleChainOptimization = false;
-            HaulOptimizationCycleChainRounds = 1;
-            HaulOptimizationCycleChainCandidatesPerRoute = 1;
-            HaulOptimizationCycleChainMinimumImprovementSeconds = 0.25;
-            HaulOptimizationReorderWindow = 200;
-            HaulOptimizationCompactOmissionPriority =
-                HaulDifficultCycleFilter.OmissionPriority
-                    .MostFragmentedFirst;
-            OmitIsolatedEdgePatches = true;
-            MaxIsolatedEdgePatchCells = 1;
-            MaxIsolatedEdgePatchVolumeBcy = 0.6;
-            MaxTotalIsolatedEdgePatchOmissionBcy = 2.0;
-            MaxTotalIsolatedEdgePatchOmissionPercent = 1.0;
+            Optimization = new HaulOptimizationOptions();
             ExcludePolygonSpecs = new List<String>();
-            Seed = Constants.DEFAULT_SEED;
+            RandomSeed = Constants.DEFAULT_SEED;
         }
 
-        /// <summary>
-        /// Gets or sets AGD input file path.
-        /// </summary>
+        /// <summary>Gets or sets the required AGD input file path.</summary>
         public String AgdPath { get; set; }
 
-        /// <summary>
-        /// Gets or sets primary cut/fill PNG output path.
-        /// </summary>
-        public String OutputPngPath { get; set; }
-
-        /// <summary>
-        /// Gets or sets grid spacing in feet.
-        /// </summary>
+        /// <summary>Gets or sets grid spacing in feet.</summary>
         public Double GridSizeFt { get; set; }
 
-        /// <summary>
-        /// Gets or sets finishing tolerance in millimetres.
-        /// </summary>
+        /// <summary>Gets or sets finishing tolerance in millimetres.</summary>
         public Double ToleranceMm { get; set; }
 
-        /// <summary>
-        /// Gets or sets scraper capacity in loose cubic yards.
-        /// </summary>
+        /// <summary>Gets or sets scraper capacity in loose cubic yards.</summary>
         public Double ScraperCapacityLcy { get; set; }
 
-        /// <summary>
-        /// Gets or sets swell factor used for LCY/BCY conversion.
-        /// </summary>
+        /// <summary>Gets or sets the LCY/BCY swell factor.</summary>
         public Double SwellFactor { get; set; }
 
-        /// <summary>
-        /// Gets or sets cut/fill compaction ratio.
-        /// </summary>
+        /// <summary>Gets or sets bank cut required per bank fill.</summary>
         public Double CutFillRatio { get; set; }
 
-        /// <summary>
-        /// Gets or sets maximum cut or fill depth per pass in millimetres.
-        /// </summary>
+        /// <summary>Gets or sets maximum cut or fill depth per cycle in millimetres.</summary>
         public Double MaxDepthMm { get; set; }
 
-        /// <summary>
-        /// Gets or sets blade width in millimetres.
-        /// </summary>
+        /// <summary>Gets or sets blade width in millimetres.</summary>
         public Double BladeWidthMm { get; set; }
 
         /// <summary>
-        /// Gets or sets the optional undirected work-lane axis in compass
-        /// degrees. Values are normalized into [0, 180), so 0 equals 180 and
-        /// 90 equals 270. Guidance chooses either travel bearing per run.
+        /// Gets or sets the undirected work-lane axis in compass degrees. Values
+        /// normalize into [0, 180), so 0 and 180 describe the same north-south
+        /// axis. Production guidance independently chooses either bearing for
+        /// every cut and fill.
         /// </summary>
-        public Double? HeadingDeg { get; set; }
+        public Double LaneAxisHeadingDeg { get; set; }
 
-        /// <summary>
-        /// Gets or sets a value indicating whether flow-aligned strip growth is disabled.
-        /// </summary>
-        public Boolean NoFlowAligned { get; set; }
-
-        /// <summary>
-        /// Gets or sets heading-following strength for non-flow strip growth.
-        /// </summary>
-        public Double HeadingStrength { get; set; }
-
-        /// <summary>
-        /// Gets or sets strip-bias length in grid cells.
-        /// </summary>
-        public Double StripBias { get; set; }
-
-        /// <summary>
-        /// Gets or sets maximum multi-drop hop distance in feet.
-        /// </summary>
-        public Double MaxDropHopFt { get; set; }
-
-        /// <summary>
-        /// Gets or sets minimum load fill percentage before stopping extra hops.
-        /// </summary>
-        public Double MinLoadFillPct { get; set; }
-
-        /// <summary>
-        /// Gets or sets a value indicating whether knot re-profiling is disabled.
-        /// </summary>
-        public Boolean NoKnotRepair { get; set; }
-
-        /// <summary>
-        /// Gets or sets field efficiency fraction in [0, 1].
-        /// </summary>
+        /// <summary>Gets or sets operational availability in [0, 1].</summary>
         public Double FieldEfficiency { get; set; }
 
-        /// <summary>
-        /// Gets or sets loading speed in miles per hour.
-        /// </summary>
-        public Double LoadingSpeedMph { get; set; }
+        /// <summary>Gets or sets cut speed in miles per hour.</summary>
+        public Double CutSpeedMph { get; set; }
 
-        /// <summary>
-        /// Gets or sets haul speed in miles per hour.
-        /// </summary>
-        public Double HaulSpeedMph { get; set; }
+        /// <summary>Gets or sets loaded travel speed in miles per hour.</summary>
+        public Double LoadedTravelSpeedMph { get; set; }
 
-        /// <summary>
-        /// Gets or sets dumping speed in miles per hour.
-        /// </summary>
-        public Double DumpingSpeedMph { get; set; }
+        /// <summary>Gets or sets fill speed in miles per hour.</summary>
+        public Double FillSpeedMph { get; set; }
 
-        /// <summary>
-        /// Gets or sets return speed in miles per hour.
-        /// </summary>
-        public Double ReturnSpeedMph { get; set; }
+        /// <summary>Gets or sets unloaded travel speed in miles per hour.</summary>
+        public Double UnloadedTravelSpeedMph { get; set; }
 
-        /// <summary>
-        /// Gets or sets acceleration phase duration in seconds.
-        /// </summary>
-        public Double AccelTimeS { get; set; }
+        /// <summary>Gets or sets acceleration time in seconds.</summary>
+        public Double AccelerationTimeS { get; set; }
 
-        /// <summary>
-        /// Gets or sets deceleration phase duration in seconds.
-        /// </summary>
-        public Double DecelTimeS { get; set; }
+        /// <summary>Gets or sets deceleration time in seconds.</summary>
+        public Double DecelerationTimeS { get; set; }
 
-        /// <summary>
-        /// Gets or sets transport mode (<c>poisson</c> or <c>mincostflow</c>).
-        /// </summary>
-        public String TransportMode { get; set; }
+        /// <summary>Gets or sets pixels per grid cell for static maps.</summary>
+        public Int32 PixelsPerCell { get; set; }
 
-        /// <summary>
-        /// Gets or sets balance mode (<c>check</c> or <c>adjust</c>).
-        /// </summary>
-        public String BalanceMode { get; set; }
+        /// <summary>Gets or sets flow-arrow spacing in cells; zero disables arrows.</summary>
+        public Int32 FlowArrowStrideCells { get; set; }
 
-        /// <summary>
-        /// Gets or sets rendered pixels per grid cell.
-        /// </summary>
-        public Int32 PixelsPerBin { get; set; }
+        /// <summary>Gets or sets coarse operational zone count; zero disables zones.</summary>
+        public Int32 ZoneCount { get; set; }
 
-        /// <summary>
-        /// Gets or sets arrow subsampling stride in grid cells.
-        /// </summary>
-        public Int32 ArrowStride { get; set; }
+        /// <summary>Gets or sets whether cut/fill pair CSV text is included.</summary>
+        public Boolean IncludeCutFillPairCsv { get; set; }
 
-        /// <summary>
-        /// Gets or sets number of rough cut zones for sequencing.
-        /// </summary>
-        public Int32 Zones { get; set; }
+        /// <summary>Gets or sets whether a cut/fill pair PNG is included.</summary>
+        public Boolean IncludeCutFillPairPng { get; set; }
 
-        /// <summary>
-        /// Gets or sets optional zone-sequence CSV output path.
-        /// </summary>
-        public String? SequenceCsvPath { get; set; }
+        /// <summary>Gets or sets whether a full guidance PNG is included.</summary>
+        public Boolean IncludeGuidancePng { get; set; }
 
-        /// <summary>
-        /// Gets or sets optional cut/fill pair CSV output path.
-        /// </summary>
-        public String? PairsCsvPath { get; set; }
-
-        /// <summary>
-        /// Gets or sets optional cut/fill pair PNG output path.
-        /// </summary>
-        public String? PairsPngPath { get; set; }
-
-        /// <summary>
-        /// Gets or sets optional blade-scale guidance CSV output path.
-        /// </summary>
-        public String? GuidanceCsvPath { get; set; }
-
-        /// <summary>
-        /// Gets or sets optional blade-scale guidance PNG output path.
-        /// </summary>
-        public String? GuidancePngPath { get; set; }
-
-        /// <summary>
-        /// Gets or sets lane overlap fraction in [0, 0.9].
-        /// </summary>
-        public Double LaneOverlap { get; set; }
-
-        /// <summary>
-        /// Gets or sets turn speed in miles per hour.
-        /// </summary>
+        /// <summary>Gets or sets turn speed in miles per hour.</summary>
         public Double TurnSpeedMph { get; set; }
 
-        /// <summary>
-        /// Gets or sets grade-return speed in miles per hour.
-        /// </summary>
+        /// <summary>Gets or sets mandatory grade-return speed in miles per hour.</summary>
         public Double GradeSpeedMph { get; set; }
 
-        /// <summary>
-        /// Gets or sets turning circle diameter in feet.
-        /// </summary>
-        public Double TurningCircleFt { get; set; }
+        /// <summary>Gets or sets minimum tractor turning diameter in feet.</summary>
+        public Double MinimumTurningDiameterFt { get; set; }
 
-        /// <summary>
-        /// Gets or sets tractor+scraper overall length in feet (straight lineup before/after CUT/FILL).
-        /// </summary>
+        /// <summary>Gets or sets tractor and scraper overall length in feet.</summary>
         public Double EquipmentLengthFt { get; set; }
 
-        /// <summary>
-        /// Gets or sets turn threshold in degrees.
-        /// </summary>
-        public Double TurnThresholdDeg { get; set; }
+        /// <summary>Gets or sets the waypoint heading-change threshold counted as a turn.</summary>
+        public Double WaypointTurnThresholdDeg { get; set; }
 
-        /// <summary>
-        /// Gets or sets a value indicating whether grade-return passes are disabled.
-        /// </summary>
-        public Boolean NoGradeReturn { get; set; }
+        /// <summary>Gets or sets whether leveling animation GIF bytes are included.</summary>
+        public Boolean IncludeAnimationGif { get; set; }
 
-        /// <summary>
-        /// Gets or sets a value indicating whether route smoothing is disabled.
-        /// </summary>
-        public Boolean NoRouteSmoothing { get; set; }
+        /// <summary>Gets or sets whether leveling animation frame PNGs are included.</summary>
+        public Boolean IncludeAnimationFrames { get; set; }
 
-        /// <summary>
-        /// Gets or sets local reorder search window (0 disables).
-        /// </summary>
-        public Int32 ReorderWindow { get; set; }
+        /// <summary>Gets or sets the number of completed routes between animation frames.</summary>
+        public Int32 AnimationStride { get; set; }
 
-        /// <summary>
-        /// Gets or sets a value indicating whether direction-aware sequencing is disabled.
-        /// </summary>
-        public Boolean NoDirectionAware { get; set; }
+        /// <summary>Gets or sets animation pixels per grid cell.</summary>
+        public Int32 AnimationPixelsPerCell { get; set; }
 
-        /// <summary>
-        /// Gets or sets optional animation frame output directory.
-        /// </summary>
-        public String? AnimateDirPath { get; set; }
+        /// <summary>Gets or sets animation mode: <c>cutfill</c> or <c>topology</c>.</summary>
+        public String AnimationMode { get; set; }
 
-        /// <summary>
-        /// Gets or sets optional leveling animation GIF output path.
-        /// </summary>
-        public String? AnimateGifPath { get; set; }
+        /// <summary>Gets or sets whether center-pivot scheduling is enabled.</summary>
+        public Boolean EnablePivot { get; set; }
 
-        /// <summary>
-        /// Gets or sets pass stride for leveling animation frames.
-        /// </summary>
-        public Int32 AnimateStride { get; set; }
-
-        /// <summary>
-        /// Gets or sets pixels per bin for animation rendering.
-        /// </summary>
-        public Int32 AnimatePixelsPerBin { get; set; }
-
-        /// <summary>
-        /// Gets or sets animation render mode (<c>cutfill</c> or <c>topology</c>).
-        /// </summary>
-        public String AnimateMode { get; set; }
-
-        /// <summary>
-        /// Gets or sets a value indicating whether center-pivot analysis is enabled.
-        /// </summary>
-        public Boolean Pivot { get; set; }
-
-        /// <summary>
-        /// Gets or sets optional explicit pivot center in <c>lat,lon</c>.
-        /// </summary>
+        /// <summary>Gets or sets an optional explicit pivot center as <c>lat,lon</c>.</summary>
         public String? PivotCenter { get; set; }
 
-        /// <summary>
-        /// Gets or sets pivot arm wheelbase in feet.
-        /// </summary>
+        /// <summary>Gets or sets pivot arm wheelbase in feet.</summary>
         public Double PivotWheelbaseFt { get; set; }
 
-        /// <summary>
-        /// Gets or sets extra pivot arm clearance per side in feet.
-        /// </summary>
+        /// <summary>Gets or sets extra pivot arm clearance per side in feet.</summary>
         public Double PivotClearanceFt { get; set; }
 
         /// <summary>
-        /// Gets or sets the pivot reposition penalty used after the scheduler has
-        /// minimized guidance conflicts. Field guidance clearance has priority.
+        /// Gets or sets pivot reposition cost after guidance conflicts have been
+        /// minimized. Guidance clearance always has priority.
         /// </summary>
         public Double PivotMoveCost { get; set; }
 
-        /// <summary>
-        /// Gets or sets optional pivot PNG output directory.
-        /// </summary>
-        public String? PivotDirPath { get; set; }
-
-        /// <summary>
-        /// Gets or sets optional pivot schedule CSV output path.
-        /// </summary>
-        public String? PivotCsvPath { get; set; }
-
-        /// <summary>
-        /// Gets or sets pivot render mode (<c>cutfill</c> or <c>topology</c>).
-        /// </summary>
+        /// <summary>Gets or sets pivot render mode: <c>cutfill</c> or <c>topology</c>.</summary>
         public String PivotMode { get; set; }
 
-        /// <summary>
-        /// Gets or sets pivot render pixels per bin.
-        /// </summary>
-        public Int32 PivotPixelsPerBin { get; set; }
+        /// <summary>Gets or sets pivot render pixels per grid cell.</summary>
+        public Int32 PivotPixelsPerCell { get; set; }
 
-        /// <summary>
-        /// Gets or sets optional pivot leveling GIF output path.
-        /// </summary>
-        public String? PivotGifPath { get; set; }
+        /// <summary>Gets or sets whether pivot animation GIF bytes are included.</summary>
+        public Boolean IncludePivotAnimationGif { get; set; }
 
-        /// <summary>
-        /// Gets or sets a value indicating whether pivot GIF generation is disabled.
-        /// </summary>
-        public Boolean NoPivotGif { get; set; }
+        /// <summary>Gets or sets whether pivot animation frame PNGs are included.</summary>
+        public Boolean IncludePivotAnimationFrames { get; set; }
 
-        /// <summary>
-        /// Gets or sets optional pivot frame output directory.
-        /// </summary>
-        public String? PivotFramesPath { get; set; }
-
-        /// <summary>
-        /// Gets or sets pass stride for pivot animation.
-        /// </summary>
+        /// <summary>Gets or sets pass stride for pivot animation.</summary>
         public Int32 PivotAnimationStride { get; set; }
 
-        /// <summary>
-        /// Gets or sets machine width in feet for obstacle buffering.
-        /// </summary>
+        /// <summary>Gets or sets machine width in feet for obstacle buffering.</summary>
         public Double EquipmentWidthFt { get; set; }
 
-        /// <summary>Gets or sets whether the experimental global lane optimizer is enabled.</summary>
-        public Boolean EnableHaulOptimization { get; set; }
+        /// <summary>Gets current optimizer tuning. Production defaults are measured.</summary>
+        public HaulOptimizationOptions Optimization { get; }
 
-        /// <summary>
-        /// Gets or sets the fallback optimizer lane-cover profile used when
-        /// <see cref="HeadingDeg"/> is not supplied.
-        /// </summary>
-        public HaulLaneBuilder.LaneAxis HaulOptimizationAxis { get; set; }
-
-        /// <summary>Gets or sets the maximum same-kind lane runs packed in one cycle.</summary>
-        public Int32 HaulOptimizationMaxRunsPerKind { get; set; }
-
-        /// <summary>Gets or sets the weight applied to unchanged Poisson-flow deviation.</summary>
-        public Double HaulOptimizationFlowPenaltyWeight { get; set; }
-
-        /// <summary>Gets or sets whether field-edge work is explicitly deferred for later analysis.</summary>
-        public Boolean HaulOptimizationDeferEdgeWork { get; set; }
-
-        /// <summary>
-        /// Gets or sets whether deferred edge work is completed in an independent
-        /// residual batch, leaving only compact-infeasible cleanup work.
-        /// </summary>
-        public Boolean HaulOptimizationCompleteDeferredEdge { get; set; }
-
-        /// <summary>Gets or sets the same-kind slice bound for residual edge cycles.</summary>
-        public Int32 HaulOptimizationEdgeMaxRunsPerKind { get; set; }
-
-        /// <summary>Gets or sets whether capacity-flexible route consolidation is enabled.</summary>
-        public Boolean EnableHaulRouteConsolidation { get; set; }
-
-        /// <summary>Gets or sets the maximum nearby routes in a consolidation transaction.</summary>
-        public Int32 HaulOptimizationRouteConsolidationGroupRoutes { get; set; }
-
-        /// <summary>Gets or sets the maximum cycles removed by consolidation.</summary>
-        public Int32 HaulOptimizationRouteConsolidationMaximumCycles { get; set; }
-
-        /// <summary>Gets or sets equal-load fill-pair refinement rounds; zero disables refinement.</summary>
-        public Int32 HaulOptimizationPairRefinementRounds { get; set; }
-
-        /// <summary>Gets or sets the geometry proxy used for equal-load pair refinement.</summary>
-        public HaulPairDistanceRefiner.PairMetric HaulOptimizationPairMetric { get; set; }
-
-        /// <summary>
-        /// Gets or sets whether the optional, slower multi-route fragment
-        /// exchange pass is enabled.
-        /// </summary>
-        public Boolean EnableHaulMultiRouteExchange { get; set; }
-
-        /// <summary>Gets or sets bounded multi-route exchange rounds.</summary>
-        public Int32 HaulOptimizationMultiRouteExchangeRounds { get; set; }
-
-        /// <summary>Gets or sets the maximum routes pooled in one transaction.</summary>
-        public Int32 HaulOptimizationMultiRouteExchangeGroupRoutes { get; set; }
-
-        /// <summary>Gets or sets the maximum committed route-group transactions.</summary>
-        public Int32 HaulOptimizationMultiRouteExchangeMaximumGroups { get; set; }
-
-        /// <summary>
-        /// Gets or sets the minimum compactness/connection improvement required
-        /// to commit one route-group transaction, in metres.
-        /// </summary>
-        public Double HaulOptimizationMultiRouteExchangeMinimumImprovementM { get; set; }
-
-        /// <summary>
-        /// Gets or sets whether the optional field-wide whole-fill chain pass is
-        /// enabled. This pass is deliberately opt-in because it performs compact
-        /// guidance preflight for candidate exchanges across the complete field.
-        /// </summary>
-        public Boolean EnableHaulCycleChainOptimization { get; set; }
-
-        /// <summary>Gets or sets field-wide chain refinement rounds.</summary>
-        public Int32 HaulOptimizationCycleChainRounds { get; set; }
-
-        /// <summary>Gets or sets exact candidates checked for each route.</summary>
-        public Int32 HaulOptimizationCycleChainCandidatesPerRoute { get; set; }
-
-        /// <summary>Gets or sets minimum production-objective saving per exchange.</summary>
-        public Double HaulOptimizationCycleChainMinimumImprovementSeconds { get; set; }
-
-        /// <summary>Gets or sets the route-refinement window used by optimized plans.</summary>
-        public Int32 HaulOptimizationReorderWindow { get; set; }
-
-        /// <summary>
-        /// Gets or sets the maximum compact-preflight-failing cycles explicitly
-        /// deferred for later analysis; zero keeps every optimized cycle.
-        /// </summary>
-        public Int32 HaulOptimizationMaximumCompactOmissions { get; set; }
-
-        /// <summary>Gets or sets how compact-preflight failures are ranked for omission.</summary>
-        public HaulDifficultCycleFilter.OmissionPriority
-            HaulOptimizationCompactOmissionPriority { get; set; }
-
-        /// <summary>
-        /// Gets or sets a value indicating whether isolated, uneconomic edge patches
-        /// may be omitted before route sequencing.
-        /// </summary>
-        public Boolean OmitIsolatedEdgePatches { get; set; }
-
-        /// <summary>Gets or sets the largest connected edge patch eligible for omission.</summary>
-        public Int32 MaxIsolatedEdgePatchCells { get; set; }
-
-        /// <summary>Gets or sets the maximum bank cubic yards in one eligible cut patch.</summary>
-        public Double MaxIsolatedEdgePatchVolumeBcy { get; set; }
-
-        /// <summary>Gets or sets the absolute project-wide omission cap in bank cubic yards.</summary>
-        public Double MaxTotalIsolatedEdgePatchOmissionBcy { get; set; }
-
-        /// <summary>Gets or sets the project-wide omission cap as a percentage of planned cut volume.</summary>
-        public Double MaxTotalIsolatedEdgePatchOmissionPercent { get; set; }
-
-        /// <summary>
-        /// Gets exclusion polygon specs as <c>lat,lon;lat,lon;...</c>.
-        /// </summary>
+        /// <summary>Gets exclusion polygons as <c>lat,lon;lat,lon;...</c>.</summary>
         public List<String> ExcludePolygonSpecs { get; }
 
-        /// <summary>
-        /// Gets or sets a value indicating whether planning stages are skipped.
-        /// </summary>
-        public Boolean NoPlan { get; set; }
+        /// <summary>Gets or sets whether only field parsing, balance, flow, and map rendering run.</summary>
+        public Boolean SkipHaulPlan { get; set; }
 
-        /// <summary>
-        /// Gets or sets number of random single-pair PNGs to render (0 disables).
-        /// </summary>
-        public Int32 PairSampleCount { get; set; }
+        /// <summary>Gets or sets random individual route image count; zero disables it.</summary>
+        public Int32 RandomRouteImageCount { get; set; }
 
-        /// <summary>
-        /// Gets or sets deterministic random seed for zone clustering.
-        /// </summary>
-        public Int32 Seed { get; set; }
+        /// <summary>Gets or sets the deterministic seed for zones and random renders.</summary>
+        public Int32 RandomSeed { get; set; }
     }
 }

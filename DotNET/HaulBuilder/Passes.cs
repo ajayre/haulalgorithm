@@ -158,7 +158,7 @@ namespace HaulBuilder
     /// <summary>
     /// Pass generation utilities ported from landlevel.passes.
     /// </summary>
-    public static class Passes
+    internal static class Passes
     {
         private const Double DEFAULT_MAX_DROP_HOP_FT = 100.0;
 

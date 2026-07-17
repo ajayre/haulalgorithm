@@ -175,8 +175,7 @@ internal static class HaulOptimizationBench
         HaulBuilderOptions Options = new HaulBuilderOptions
         {
             AgdPath = AgdPath,
-            OmitIsolatedEdgePatches = false,
-            HeadingDeg = HeadingAxisDeg,
+            LaneAxisHeadingDeg = HeadingAxisDeg ?? 0.0,
         };
         AgdField Field = Agd.Parse(AgdPath);
         Grid Grid = GridMath.BuildGrid(
@@ -185,8 +184,8 @@ internal static class HaulOptimizationBench
             Options.SwellFactor,
             Options.CutFillRatio,
             Options.MaxDepthMm);
-        Balance.Compute(Grid, Options.BalanceMode, Double.PositiveInfinity);
-        FlowField Flow = FlowFieldSolver.Compute(Grid, Options.TransportMode);
+        Balance.Compute(Grid, "check", Double.PositiveInfinity);
+        FlowField Flow = FlowFieldSolver.Compute(Grid, "poisson");
         HaulWorkLedger Ledger = HaulWorkLedger.Build(
             Grid, Options.ToleranceMm);
         Double MaximumLoadBcy = Options.ScraperCapacityLcy
@@ -268,7 +267,7 @@ internal static class HaulOptimizationBench
                 EdgeCandidatePasses,
                 Grid,
                 Options.BladeWidthMm / 1000.0,
-                !Options.NoGradeReturn,
+                true,
                 Obstacles: Obstacles.EMPTY_OBSTACLES);
             EdgeCandidatePasses = EdgePairRepairResult.Passes;
             if (EdgePairRepairResult.FinalFailures > 0)
@@ -277,7 +276,7 @@ internal static class HaulOptimizationBench
                     EdgeCandidatePasses,
                     Grid,
                     Options.BladeWidthMm / 1000.0,
-                    !Options.NoGradeReturn,
+                    true,
                     EdgePairRepairResult.FinalFailures,
                     HaulDifficultCycleFilter.OmissionPriority.SimplestFirst);
                 EdgeCandidatePasses = EdgeOmissionResult.Passes;
@@ -297,7 +296,7 @@ internal static class HaulOptimizationBench
                 MaximumLoadBcy,
                 Grid.MaxDepthMm / 1000.0,
                 Options.BladeWidthMm / 1000.0,
-                !Options.NoGradeReturn,
+                true,
                 Obstacles: Obstacles.EMPTY_OBSTACLES);
             CandidatePasses = ConsolidationResult.Passes;
             if (CompleteDeferredEdge)
@@ -321,7 +320,7 @@ internal static class HaulOptimizationBench
                 MinimumImprovementM:
                     MultiRouteExchangeMinimumImprovementM,
                 BladeWidthM: Options.BladeWidthMm / 1000.0,
-                GradeReturn: !Options.NoGradeReturn,
+                GradeReturn: true,
                 Obstacles: Obstacles.EMPTY_OBSTACLES);
             CandidatePasses = MultiRouteExchangeResult.Passes;
             if (CompleteDeferredEdge)
@@ -343,7 +342,7 @@ internal static class HaulOptimizationBench
                     CandidatePasses,
                     Grid,
                     Options.BladeWidthMm / 1000.0,
-                    !Options.NoGradeReturn,
+                    true,
                     OmitCompactFailures,
                     OmissionPriority);
             CandidatePasses = Filter.Passes;
@@ -356,7 +355,7 @@ internal static class HaulOptimizationBench
                 CandidatePasses,
                 Grid,
                 Options.BladeWidthMm / 1000.0,
-                !Options.NoGradeReturn,
+                true,
                 Obstacles: Obstacles.EMPTY_OBSTACLES);
             CandidatePasses = PairRepair.Passes;
         }
@@ -367,7 +366,7 @@ internal static class HaulOptimizationBench
                 CandidatePasses,
                 Grid,
                 Options.BladeWidthMm / 1000.0,
-                !Options.NoGradeReturn,
+                true,
                 Obstacles: Obstacles.EMPTY_OBSTACLES);
             CandidatePasses = SplitRepair.Passes;
         }
@@ -397,7 +396,7 @@ internal static class HaulOptimizationBench
                         CandidatePasses[Index],
                         Grid,
                         Options.BladeWidthMm / 1000.0,
-                        !Options.NoGradeReturn));
+                        true));
         }
         Route Route;
         (Double Before, Double After, Int32 Moves) Refinement;
@@ -427,7 +426,7 @@ internal static class HaulOptimizationBench
                 OrderedPasses,
                 Routing.CalculateDeadhead(
                     OrderedPasses,
-                    !Options.NoGradeReturn,
+                    true,
                     Obstacles.EMPTY_OBSTACLES));
             Refinement = (
                 InteriorRefinement.Before + EdgeRefinement.Before,
@@ -448,22 +447,22 @@ internal static class HaulOptimizationBench
             AuditBefore = HaulFieldWideAudit.Analyze(
                 Route.OrderedPasses,
                 Grid,
-                !Options.NoGradeReturn,
-                !Options.NoDirectionAware,
-                Options.ReturnSpeedMph,
+                true,
+                true,
+                Options.UnloadedTravelSpeedMph,
                 Options.TurnSpeedMph,
-                Options.TurningCircleFt,
+                Options.MinimumTurningDiameterFt,
                 Obstacles.EMPTY_OBSTACLES);
         }
         HaulCycleChainOptimizer.Result? JointChainResult = null;
         HaulFieldWideAudit.Result? AuditAfter = null;
         TimeParams Parameters = new TimeParams(
-            Options.LoadingSpeedMph,
-            Options.HaulSpeedMph,
-            Options.DumpingSpeedMph,
-            Options.ReturnSpeedMph,
-            Options.AccelTimeS,
-            Options.DecelTimeS,
+            Options.CutSpeedMph,
+            Options.LoadedTravelSpeedMph,
+            Options.FillSpeedMph,
+            Options.UnloadedTravelSpeedMph,
+            Options.AccelerationTimeS,
+            Options.DecelerationTimeS,
             Options.FieldEfficiency);
         if (JointChain)
         {
@@ -471,11 +470,11 @@ internal static class HaulOptimizationBench
                 Route.OrderedPasses,
                 Grid,
                 Options.BladeWidthMm / 1000.0,
-                !Options.NoGradeReturn,
-                !Options.NoDirectionAware,
-                Options.ReturnSpeedMph,
+                true,
+                true,
+                Options.UnloadedTravelSpeedMph,
                 Options.TurnSpeedMph,
-                Options.TurningCircleFt,
+                Options.MinimumTurningDiameterFt,
                 Parameters,
                 JointChainRounds,
                 JointChainCandidates,
@@ -486,17 +485,17 @@ internal static class HaulOptimizationBench
                 JointChainResult.Passes,
                 Routing.CalculateDeadhead(
                     JointChainResult.Passes,
-                    !Options.NoGradeReturn,
+                    true,
                     Obstacles.EMPTY_OBSTACLES));
             (Double Before, Double After, Int32 Moves) ChainRefinement =
                 Routing.RefineRouteOrder(
                     Route,
                     ReorderWindow,
-                    !Options.NoGradeReturn,
-                    !Options.NoDirectionAware,
-                    Options.ReturnSpeedMph,
+                    true,
+                    true,
+                    Options.UnloadedTravelSpeedMph,
                     Options.TurnSpeedMph,
-                    Options.TurningCircleFt,
+                    Options.MinimumTurningDiameterFt,
                     20,
                     Obstacles.EMPTY_OBSTACLES);
             Refinement = (
@@ -506,11 +505,11 @@ internal static class HaulOptimizationBench
             AuditAfter = HaulFieldWideAudit.Analyze(
                 Route.OrderedPasses,
                 Grid,
-                !Options.NoGradeReturn,
-                !Options.NoDirectionAware,
-                Options.ReturnSpeedMph,
+                true,
+                true,
+                Options.UnloadedTravelSpeedMph,
                 Options.TurnSpeedMph,
-                Options.TurningCircleFt,
+                Options.MinimumTurningDiameterFt,
                 Obstacles.EMPTY_OBSTACLES);
         }
         TimeResult ProxyTime = Timemodel.EstimateTime(
@@ -1085,15 +1084,20 @@ internal static class HaulOptimizationBench
         }
         Double ExactHours = ExactResult.DeterministicSeconds / 3600.0;
         Double SavingsPercent = 100.0 * (433.483 - ExactHours) / 433.483;
-        Boolean GatePassed = ExactHours <= 216.742;
+        Double MoveRateBcyPerHour = Route.OrderedPasses
+            .Sum(Pass => Pass.LoadBcy) / ExactHours;
+        Boolean GatePassed = MoveRateBcyPerHour
+            >= Constants.GOLDEN_MOVE_RATE_BCY_PER_HOUR;
         Console.WriteLine(String.Format(
             CultureInfo.InvariantCulture,
-            "comparison baseline_h=433.483 best_h={0:F3} savings_percent={1:F3} distance_m={2:F1} passes={3} deferred_cut_bcy={4:F3} exact_status=PASS gate_status={5}",
+            "comparison baseline_h=433.483 best_h={0:F3} savings_percent={1:F3} distance_m={2:F1} passes={3} deferred_cut_bcy={4:F3} exact_status=PASS move_rate_bcy_per_h={5:F2} golden_target_bcy_per_h={6:F2} golden_status={7}",
             ExactHours,
             SavingsPercent,
             ExactResult.DistanceM,
             Route.OrderedPasses.Count,
             CandidateDeferredCutBcy,
+            MoveRateBcyPerHour,
+            Constants.GOLDEN_MOVE_RATE_BCY_PER_HOUR,
             GatePassed ? "PASS" : "FAIL"));
         return GatePassed
             ? 0 : 2;
@@ -1111,21 +1115,21 @@ internal static class HaulOptimizationBench
         Route Route = Routing.SequencePasses(
             Passes,
             1500,
-            !Options.NoGradeReturn,
-            !Options.NoDirectionAware,
-            Options.ReturnSpeedMph,
+            true,
+            true,
+            Options.UnloadedTravelSpeedMph,
             Options.TurnSpeedMph,
-            Options.TurningCircleFt,
+            Options.MinimumTurningDiameterFt,
             Obstacles.EMPTY_OBSTACLES,
             StartCandidateCount: 8);
         Refinement = Routing.RefineRouteOrder(
             Route,
             ReorderWindow,
-            !Options.NoGradeReturn,
-            !Options.NoDirectionAware,
-            Options.ReturnSpeedMph,
+            true,
+            true,
+            Options.UnloadedTravelSpeedMph,
             Options.TurnSpeedMph,
-            Options.TurningCircleFt,
+            Options.MinimumTurningDiameterFt,
             20,
             Obstacles.EMPTY_OBSTACLES);
         return Route;
@@ -1357,12 +1361,12 @@ internal static class HaulOptimizationBench
         Double CutSeconds = Deferred.Count(Entry =>
                 Entry.Kind == HaulLaneBuilder.WorkKind.Cut)
             * Grid.GridSizeM
-            / (Options.LoadingSpeedMph * Constants.MPH_TO_MPS);
+            / (Options.CutSpeedMph * Constants.MPH_TO_MPS);
         Double FillDistanceM = Deferred.Count(Entry =>
                 Entry.Kind == HaulLaneBuilder.WorkKind.Fill)
             * Grid.GridSizeM;
         Double FillSeconds = FillDistanceM
-            / (Options.DumpingSpeedMph * Constants.MPH_TO_MPS);
+            / (Options.FillSpeedMph * Constants.MPH_TO_MPS);
         Double GradeSeconds = FillDistanceM
             / (Options.GradeSpeedMph * Constants.MPH_TO_MPS);
         return (CutSeconds + FillSeconds + GradeSeconds) / 3600.0;

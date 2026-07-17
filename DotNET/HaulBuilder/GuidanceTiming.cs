@@ -91,35 +91,35 @@ namespace HaulBuilder
                 )
             {
                 if (Source == null) throw new ArgumentNullException(nameof(Source));
-                CutSpeedMph = Source.LoadingSpeedMph;
-                FillSpeedMph = Source.DumpingSpeedMph;
+                CutSpeedMph = Source.CutSpeedMph;
+                FillSpeedMph = Source.FillSpeedMph;
                 GradeSpeedMph = Source.GradeSpeedMph;
-                LoadedTravelSpeedMph = Source.HaulSpeedMph;
-                UnloadedTravelSpeedMph = Source.ReturnSpeedMph;
+                LoadedTravelSpeedMph = Source.LoadedTravelSpeedMph;
+                UnloadedTravelSpeedMph = Source.UnloadedTravelSpeedMph;
                 TurnSpeedMph = Source.TurnSpeedMph;
-                MinimumTurningRadiusM = Source.TurningCircleFt
+                MinimumTurningRadiusM = Source.MinimumTurningDiameterFt
                     * DIAMETER_TO_RADIUS * Constants.FEET_TO_METERS;
-                AccelerationMps2 = Source.ReturnSpeedMph * Constants.MPH_TO_MPS
-                    / Source.AccelTimeS;
-                DecelerationMps2 = Source.ReturnSpeedMph * Constants.MPH_TO_MPS
-                    / Source.DecelTimeS;
+                AccelerationMps2 = Source.UnloadedTravelSpeedMph * Constants.MPH_TO_MPS
+                    / Source.AccelerationTimeS;
+                DecelerationMps2 = Source.UnloadedTravelSpeedMph * Constants.MPH_TO_MPS
+                    / Source.DecelerationTimeS;
                 FieldEfficiency = Source.FieldEfficiency;
             }
 
             /// <summary>Gets or sets cut speed in miles per hour.</summary>
-            public Double CutSpeedMph { get; set; } = Constants.DEFAULT_LOADING_SPEED_MPH;
+            public Double CutSpeedMph { get; set; } = Constants.DEFAULT_CUT_SPEED_MPH;
 
             /// <summary>Gets or sets fill speed in miles per hour.</summary>
-            public Double FillSpeedMph { get; set; } = Constants.DEFAULT_DUMPING_SPEED_MPH;
+            public Double FillSpeedMph { get; set; } = Constants.DEFAULT_FILL_SPEED_MPH;
 
             /// <summary>Gets or sets grade speed in miles per hour.</summary>
             public Double GradeSpeedMph { get; set; } = Constants.DEFAULT_GRADE_SPEED_MPH;
 
             /// <summary>Gets or sets loaded full travel speed in miles per hour.</summary>
-            public Double LoadedTravelSpeedMph { get; set; } = Constants.DEFAULT_HAUL_SPEED_MPH;
+            public Double LoadedTravelSpeedMph { get; set; } = Constants.DEFAULT_LOADED_TRAVEL_SPEED_MPH;
 
             /// <summary>Gets or sets unloaded full travel speed in miles per hour.</summary>
-            public Double UnloadedTravelSpeedMph { get; set; } = Constants.DEFAULT_RETURN_SPEED_MPH;
+            public Double UnloadedTravelSpeedMph { get; set; } = Constants.DEFAULT_UNLOADED_TRAVEL_SPEED_MPH;
 
             /// <summary>Gets or sets speed at maximum steering in miles per hour.</summary>
             public Double TurnSpeedMph { get; set; } = Constants.DEFAULT_TURN_SPEED_MPH;
@@ -145,11 +145,11 @@ namespace HaulBuilder
 
             /// <summary>Gets or sets longitudinal acceleration in metres per second squared.</summary>
             public Double AccelerationMps2 { get; set; } =
-                Constants.DEFAULT_RETURN_SPEED_MPH * Constants.MPH_TO_MPS / Constants.DEFAULT_ACCEL_TIME_S;
+                Constants.DEFAULT_UNLOADED_TRAVEL_SPEED_MPH * Constants.MPH_TO_MPS / Constants.DEFAULT_ACCELERATION_TIME_S;
 
             /// <summary>Gets or sets longitudinal deceleration in metres per second squared.</summary>
             public Double DecelerationMps2 { get; set; } =
-                Constants.DEFAULT_RETURN_SPEED_MPH * Constants.MPH_TO_MPS / Constants.DEFAULT_DECEL_TIME_S;
+                Constants.DEFAULT_UNLOADED_TRAVEL_SPEED_MPH * Constants.MPH_TO_MPS / Constants.DEFAULT_DECELERATION_TIME_S;
 
             /// <summary>Gets or sets fixed operator takeover overhead per assist.</summary>
             public Double ManualAssistOverheadS { get; set; }

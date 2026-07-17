@@ -45,13 +45,6 @@ namespace HaulBuilder
             return DARKRED;
         }
 
-        /// <summary>
-        /// Snake-case alias for Python naming parity.
-        /// </summary>
-        static public Rgba32 cutfill_color
-            (
-            Double diff
-            ) => CutFillColor(diff);
 
         private static readonly Rgba32[] CutFillPalette =
         {
@@ -155,15 +148,6 @@ namespace HaulBuilder
             return 8;
         }
 
-        /// <summary>
-        /// Snake-case alias for Python naming parity.
-        /// </summary>
-        static public Image<Rgba32> diff_to_image
-            (
-            Double[,] diff,
-            Boolean[,] valid,
-            Int32 ppb
-            ) => DiffToImageDigitize(diff, valid, ppb);
 
         /// <summary>
         /// Terrain-ramp elevation render for topology animations.
@@ -220,17 +204,6 @@ namespace HaulBuilder
             return Image;
         }
 
-        /// <summary>
-        /// Snake-case alias for Python naming parity.
-        /// </summary>
-        static public Image<Rgba32> elevation_to_image
-            (
-            Double[,] elev,
-            Boolean[,] valid,
-            Int32 ppb,
-            Double vmin,
-            Double vmax
-            ) => ElevationToImage(elev, valid, ppb, vmin, vmax);
 
         /// <summary>
         /// Renders the cut/fill map with optional flow arrows and returns PNG bytes.
@@ -259,16 +232,6 @@ namespace HaulBuilder
             return ToPng(Image);
         }
 
-        /// <summary>
-        /// Snake-case alias for Python naming parity.
-        /// </summary>
-        static public Byte[] render_png
-            (
-            Grid grid,
-            FlowField? flow,
-            Int32 pixels_per_bin = 50,
-            Int32 arrow_stride = 2
-            ) => RenderPng(grid, flow, pixels_per_bin, arrow_stride);
 
         /// <summary>
         /// Renders cut/fill base plus one weighted line per cut/fill pair.
@@ -374,15 +337,6 @@ namespace HaulBuilder
             return ToPng(Base);
         }
 
-        /// <summary>
-        /// Snake-case alias for Python naming parity.
-        /// </summary>
-        static public Byte[] render_pass_pairs_png
-            (
-            Grid grid,
-            IReadOnlyList<Pass> passes,
-            Int32 pixels_per_bin = 50
-            ) => RenderPassPairsPng(grid, passes, pixels_per_bin);
 
         /// <summary>
         /// Renders guidance track over a faded cut/fill map.
@@ -424,16 +378,6 @@ namespace HaulBuilder
             return ToPng(Base);
         }
 
-        /// <summary>
-        /// Snake-case alias for Python naming parity.
-        /// </summary>
-        static public Byte[] render_guidance_png
-            (
-            Grid grid,
-            IReadOnlyList<GuidancePoint> points,
-            Int32 pixels_per_bin = 50,
-            Double blade_width_m = 2.271
-            ) => RenderGuidancePng(grid, points, pixels_per_bin, blade_width_m);
 
         /// <summary>
         /// Renders one pass guidance pair and returns cropped PNG bytes.
@@ -571,15 +515,6 @@ namespace HaulBuilder
             return ToPng(Base);
         }
 
-        /// <summary>
-        /// Snake-case alias for Python naming parity.
-        /// </summary>
-        static public Byte[] render_single_pair_png
-            (
-            Grid grid,
-            IReadOnlyList<GuidancePoint> pts,
-            Int32 pixels_per_bin = 26
-            ) => RenderSinglePairPng(grid, pts, 2.271, pixels_per_bin);
 
         /// <summary>
         /// Renders explicitly separated coverage runs for diagnostic comparison.
@@ -766,15 +701,6 @@ namespace HaulBuilder
             return RenderGuidancePng(grid, points, pixelsPerBin, bladeWidthM);
         }
 
-        /// <summary>
-        /// Snake-case alias for Python naming parity.
-        /// </summary>
-        static public Byte[] render_pair_sequence_png
-            (
-            Grid grid,
-            IReadOnlyList<GuidancePoint> pts,
-            Int32 pixels_per_bin = 26
-            ) => RenderPairSequencePng(grid, pts, 2.271, pixels_per_bin);
 
         /// <summary>
         /// Overlays numbered zone waypoints onto an existing PNG buffer.
@@ -820,16 +746,6 @@ namespace HaulBuilder
             return ToPng(OverlayImage);
         }
 
-        /// <summary>
-        /// Snake-case alias for Python naming parity.
-        /// </summary>
-        static public Byte[] overlay_zone_waypoints
-            (
-            Byte[] in_out_png,
-            Grid grid,
-            IReadOnlyList<ZoneStep> steps,
-            Int32 pixels_per_bin = 50
-            ) => OverlayZoneWaypoints(in_out_png, grid, steps, pixels_per_bin);
 
         private static Rgba32 TerrainColor
             (

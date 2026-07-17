@@ -50,13 +50,13 @@ internal static class DiagRouteLoops
             Constants.DEFAULT_MAX_DROP_HOP_FT * Constants.FEET_TO_METERS, Flow, true, 0.8, Obstacles.EMPTY_OBSTACLES);
         Route FullRoute = Routing.SequencePasses(
             PassResult.Passes, 1500, true, true,
-            Constants.DEFAULT_RETURN_SPEED_MPH, Constants.DEFAULT_TURN_SPEED_MPH,
+            Constants.DEFAULT_UNLOADED_TRAVEL_SPEED_MPH, Constants.DEFAULT_TURN_SPEED_MPH,
             Constants.DEFAULT_TURNING_CIRCLE_FT, Obstacles.EMPTY_OBSTACLES);
         Double Heading = Passes.EstimateSlopeHeading(Grid);
         Swaths.ReprofileKnots(FullRoute, Grid, Constants.DEFAULT_BLADE_WIDTH_MM, 3, Heading, 0.0);
         Routing.RefineRouteOrder(
             FullRoute, 50, true, true,
-            Constants.DEFAULT_RETURN_SPEED_MPH, Constants.DEFAULT_TURN_SPEED_MPH,
+            Constants.DEFAULT_UNLOADED_TRAVEL_SPEED_MPH, Constants.DEFAULT_TURN_SPEED_MPH,
             Constants.DEFAULT_TURNING_CIRCLE_FT, 12, Obstacles.EMPTY_OBSTACLES);
         Double R = Constants.DEFAULT_TURNING_CIRCLE_FT * 0.5 * Constants.FEET_TO_METERS;
         Double Circ = 2.0 * Math.PI * R;

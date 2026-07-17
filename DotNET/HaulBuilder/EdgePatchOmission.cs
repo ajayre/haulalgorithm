@@ -9,7 +9,7 @@ namespace HaulBuilder
     /// <summary>
     /// One physical grid cell omitted from the cut or fill allocation.
     /// </summary>
-    public sealed class EdgePatchOmissionCell
+    internal sealed class EdgePatchOmissionCell
     {
         /// <summary>Initializes an omitted-cell summary.</summary>
         public EdgePatchOmissionCell
@@ -37,7 +37,7 @@ namespace HaulBuilder
     /// <summary>
     /// Result of applying the configurable isolated-edge-patch policy.
     /// </summary>
-    public sealed class EdgePatchOmissionResult
+    internal sealed class EdgePatchOmissionResult
     {
         /// <summary>Initializes an omission result.</summary>
         public EdgePatchOmissionResult
@@ -95,9 +95,18 @@ namespace HaulBuilder
     /// Removes isolated, low-volume edge cut components before route sequencing and
     /// reduces the paired fill demand by exactly the same bank volume.
     /// </summary>
-    public static class EdgePatchOmission
+    internal static class EdgePatchOmission
     {
         private const Double VOLUME_TOLERANCE_BCY = 1e-8;
+
+        internal sealed class Settings
+        {
+            public Boolean Enabled { get; set; } = true;
+            public Int32 MaximumCells { get; set; } = 1;
+            public Double MaximumPatchBcy { get; set; } = 0.6;
+            public Double MaximumProjectBcy { get; set; } = 2.0;
+            public Double MaximumProjectPercent { get; set; } = 1.0;
+        }
 
         /// <summary>
         /// Applies the edge-patch policy without mutating the supplied passes.
@@ -111,7 +120,7 @@ namespace HaulBuilder
             (
             PassResult Source,
             Grid Grid,
-            HaulBuilderOptions Options,
+            Settings Options,
             ObstacleField? Obstacles = null
             )
         {
@@ -119,7 +128,7 @@ namespace HaulBuilder
             if (Grid is null) throw new ArgumentNullException(nameof(Grid));
             if (Options is null) throw new ArgumentNullException(nameof(Options));
 
-            if (!Options.OmitIsolatedEdgePatches || (Source.Passes.Count == 0))
+            if (!Options.Enabled || (Source.Passes.Count == 0))
             {
                 return EmptyResult(Source);
             }
@@ -130,9 +139,9 @@ namespace HaulBuilder
                 Pass.CutCells.Sum(Entry => Entry.DepthM * CutPerM));
 
             Double PercentageCapBcy = TotalCutBcy
-                * Options.MaxTotalIsolatedEdgePatchOmissionPercent / 100.0;
+                * Options.MaximumProjectPercent / 100.0;
             Double EffectiveCapBcy = Math.Min(
-                Options.MaxTotalIsolatedEdgePatchOmissionBcy,
+                Options.MaximumProjectBcy,
                 PercentageCapBcy);
             if (EffectiveCapBcy <= VOLUME_TOLERANCE_BCY)
             {
@@ -300,7 +309,7 @@ namespace HaulBuilder
             IReadOnlyList<Pass> Passes,
             Double CutPerM,
             FieldEdgePolicy EdgePolicy,
-            HaulBuilderOptions Options
+            Settings Options
             )
         {
             List<Candidate> Output = new List<Candidate>();
@@ -337,8 +346,8 @@ namespace HaulBuilder
                     }
 
                     Double VolumeBcy = Component.Sum(Cell => CutDepthByCell[Cell] * CutPerM);
-                    if ((Component.Count > Options.MaxIsolatedEdgePatchCells)
-                        || (VolumeBcy > Options.MaxIsolatedEdgePatchVolumeBcy + VOLUME_TOLERANCE_BCY)
+                    if ((Component.Count > Options.MaximumCells)
+                        || (VolumeBcy > Options.MaximumPatchBcy + VOLUME_TOLERANCE_BCY)
                         || Component.Any(Cell => !EdgePolicy.IsEdgeWorkCell(Cell)))
                     {
                         continue;

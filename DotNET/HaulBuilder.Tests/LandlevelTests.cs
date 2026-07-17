@@ -501,15 +501,14 @@ namespace HaulBuilder.Tests
             {
                 AgdPath = FixturePath,
                 GridSizeFt = 7.5,
-                PixelsPerBin = 8,
-                NoPlan = false,
-                Zones = 4,
-                GuidanceCsvPath = "__IN_MEMORY__",
-                GuidancePngPath = "__IN_MEMORY__",
-                PairsCsvPath = "__IN_MEMORY__",
-                PairsPngPath = "__IN_MEMORY__",
-                PairSampleCount = 1,
-                Seed = 1234,
+                PixelsPerCell = 8,
+                SkipHaulPlan = false,
+                ZoneCount = 4,
+                IncludeGuidancePng = true,
+                IncludeCutFillPairCsv = true,
+                IncludeCutFillPairPng = true,
+                RandomRouteImageCount = 1,
+                RandomSeed = 1234,
             };
             HaulBuilderResult Result = Engine.Run(Options);
             Assert.NotNull(Result.Grid);
@@ -525,10 +524,6 @@ namespace HaulBuilder.Tests
             Assert.NotNull(Result.LifecycleGuidance);
             Assert.True(Result.LifecycleGuidance!.Success);
             Assert.NotNull(Result.DetailedGuidanceTime);
-            Assert.Equal(
-                Result.DetailedGuidanceTime!.TotalSeconds,
-                Result.GuidanceTime!.TotalS,
-                6);
         }
 
         /// <summary>
@@ -548,9 +543,9 @@ namespace HaulBuilder.Tests
             {
                 AgdPath = FixturePath,
                 GridSizeFt = 7.5,
-                PixelsPerBin = 8,
-                NoPlan = false,
-                PairsCsvPath = "__IN_MEMORY__",
+                PixelsPerCell = 8,
+                SkipHaulPlan = false,
+                IncludeCutFillPairCsv = true,
             };
             HaulBuilderResult Result = Engine.Run(Options);
             Assert.NotNull(Result.Route);

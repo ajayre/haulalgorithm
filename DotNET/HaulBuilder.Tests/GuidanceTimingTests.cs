@@ -19,8 +19,8 @@ namespace HaulBuilder.Tests
         {
             HaulBuilderOptions Source = new HaulBuilderOptions
             {
-                HaulSpeedMph = 9.0,
-                ReturnSpeedMph = 12.0,
+                LoadedTravelSpeedMph = 9.0,
+                UnloadedTravelSpeedMph = 12.0,
                 TurnSpeedMph = 3.0,
             };
 

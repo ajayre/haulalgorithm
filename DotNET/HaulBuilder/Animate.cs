@@ -103,18 +103,6 @@ namespace HaulBuilder
             return Payload;
         }
 
-        /// <summary>
-        /// Snake-case alias for Python naming parity.
-        /// </summary>
-        static public AnimationPayload animate_leveling
-            (
-            Grid grid,
-            IReadOnlyList<Pass> ordered_passes,
-            Int32 stride = 10,
-            Int32 pixels_per_bin = 8,
-            Int32 gif_ms = 80,
-            String mode = "cutfill"
-            ) => AnimateLeveling(grid, ordered_passes, stride, pixels_per_bin, gif_ms, mode);
 
         /// <summary>
         /// Options for the side-by-side cut/fill + topology leveling animation.
@@ -245,15 +233,6 @@ namespace HaulBuilder
             return Payload;
         }
 
-        /// <summary>
-        /// Snake-case alias for Python naming parity.
-        /// </summary>
-        static public AnimationPayload animate_leveling_split_view
-            (
-            Grid grid,
-            IReadOnlyList<Pass> ordered_passes,
-            SplitLevelingOptions? options = null
-            ) => AnimateLevelingSplitView(grid, ordered_passes, options);
 
         /// <summary>
         /// Pivot-animation hook that forwards to the dedicated pivot module.
@@ -327,18 +306,6 @@ namespace HaulBuilder
             return Payload;
         }
 
-        /// <summary>
-        /// Snake-case alias for Python naming parity.
-        /// </summary>
-        static public AnimationPayload animate_pivot_leveling
-            (
-            Grid grid,
-            IReadOnlyList<Pass> ordered_passes,
-            Pivot.PivotPlan plan,
-            Int32 stride = 15,
-            Int32 pixels_per_bin = 6,
-            String mode = "cutfill"
-            ) => AnimatePivotLeveling(grid, ordered_passes, plan, stride, pixels_per_bin, mode);
 
         private static HashSet<Int32> ComputeEmitPasses
             (

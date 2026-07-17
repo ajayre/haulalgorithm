@@ -12,12 +12,12 @@ namespace HaulBuilder.Tests
             Grid Grid = MakeGrid(70);
             Double Load = 0.10 * Grid.AreaM2 * Constants.M3_TO_CY;
             TimeParams Parameters = new TimeParams(
-                LoadingSpeedMph: 3.0,
-                HaulSpeedMph: 6.0,
-                DumpingSpeedMph: 3.0,
-                ReturnSpeedMph: 10.0,
-                AccelTimeS: 2.0,
-                DecelTimeS: 2.0,
+                CutSpeedMph: 3.0,
+                LoadedTravelSpeedMph: 6.0,
+                FillSpeedMph: 3.0,
+                UnloadedTravelSpeedMph: 10.0,
+                AccelerationTimeS: 2.0,
+                DecelerationTimeS: 2.0,
                 FieldEfficiency: 1.0);
             List<Pass> Source = FindImprovingPair(Grid, Load, Parameters);
             (Int32 Bx, Int32 By) ExpectedFirstFill =
@@ -32,7 +32,7 @@ namespace HaulBuilder.Tests
                     BladeWidthM: 1.0,
                     GradeReturn: false,
                     DirectionAware: false,
-                    ReturnSpeedMph: 10.0,
+                    UnloadedTravelSpeedMph: 10.0,
                     TurnSpeedMph: 5.0,
                     TurningCircleFt: 20.0,
                     Parameters,
@@ -69,7 +69,7 @@ namespace HaulBuilder.Tests
                 Grid,
                 GradeReturn: false,
                 DirectionAware: false,
-                ReturnSpeedMph: 10.0,
+                UnloadedTravelSpeedMph: 10.0,
                 TurnSpeedMph: 5.0,
                 TurningCircleFt: 20.0);
 
@@ -111,7 +111,7 @@ namespace HaulBuilder.Tests
                 new Routing.TransitionCostEvaluator(
                     GradeReturn: false,
                     DirectionAware: false,
-                    ReturnSpeedMph: 10.0,
+                    UnloadedTravelSpeedMph: 10.0,
                     TurnSpeedMph: 5.0,
                     TurningCircleFt: 20.0);
             for (Int32 FirstFillY = 5; FirstFillY <= 60; FirstFillY += 5)

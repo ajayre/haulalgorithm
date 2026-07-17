@@ -51,7 +51,7 @@ namespace HaulBuilder
     /// </summary>
     public static class Routing
     {
-        private const Double DEFAULT_RETURN_SPEED_MPH = 13.0;
+        private const Double DEFAULT_UNLOADED_TRAVEL_SPEED_MPH = 13.0;
         private const Double DEFAULT_TURN_SPEED_MPH = 4.0;
         private const Double DEFAULT_TURNING_CIRCLE_FT = 50.0;
 
@@ -68,7 +68,7 @@ namespace HaulBuilder
                 (
                 Boolean GradeReturn = true,
                 Boolean DirectionAware = true,
-                Double ReturnSpeedMph = DEFAULT_RETURN_SPEED_MPH,
+                Double UnloadedTravelSpeedMph = DEFAULT_UNLOADED_TRAVEL_SPEED_MPH,
                 Double TurnSpeedMph = DEFAULT_TURN_SPEED_MPH,
                 Double TurningCircleFt = DEFAULT_TURNING_CIRCLE_FT,
                 ObstacleField? Obstacles = null
@@ -77,7 +77,7 @@ namespace HaulBuilder
                 Model = new _TransitionModel(
                     GradeReturn,
                     DirectionAware,
-                    ReturnSpeedMph * Constants.MPH_TO_MPS,
+                    UnloadedTravelSpeedMph * Constants.MPH_TO_MPS,
                     TurnSpeedMph * Constants.MPH_TO_MPS,
                     (TurningCircleFt * Constants.FEET_TO_METERS) / 2.0,
                     Obstacles ?? EMPTY_OBSTACLES);
@@ -95,7 +95,7 @@ namespace HaulBuilder
         /// <param name="TwoOptCap">Maximum pass count for 2-opt.</param>
         /// <param name="GradeReturn">Whether grade-return is enabled.</param>
         /// <param name="DirectionAware">Whether transition cost is heading-aware.</param>
-        /// <param name="ReturnSpeedMph">Return speed mph.</param>
+        /// <param name="UnloadedTravelSpeedMph">Unloaded travel speed in mph.</param>
         /// <param name="TurnSpeedMph">Turn speed mph.</param>
         /// <param name="TurningCircleFt">Turning circle diameter feet.</param>
         /// <param name="Obstacles">Obstacle field.</param>
@@ -109,7 +109,7 @@ namespace HaulBuilder
             Int32 TwoOptCap = 1500,
             Boolean GradeReturn = true,
             Boolean DirectionAware = true,
-            Double ReturnSpeedMph = DEFAULT_RETURN_SPEED_MPH,
+            Double UnloadedTravelSpeedMph = DEFAULT_UNLOADED_TRAVEL_SPEED_MPH,
             Double TurnSpeedMph = DEFAULT_TURN_SPEED_MPH,
             Double TurningCircleFt = DEFAULT_TURNING_CIRCLE_FT,
             ObstacleField? Obstacles = null,
@@ -133,7 +133,7 @@ namespace HaulBuilder
                 (
                 GradeReturn,
                 DirectionAware,
-                ReturnSpeedMph * Constants.MPH_TO_MPS,
+                UnloadedTravelSpeedMph * Constants.MPH_TO_MPS,
                 TurnSpeedMph * Constants.MPH_TO_MPS,
                 (TurningCircleFt * Constants.FEET_TO_METERS) / 2.0,
                 ActiveObstacles
@@ -309,7 +309,7 @@ namespace HaulBuilder
         /// <param name="Window">Search window.</param>
         /// <param name="GradeReturn">Grade-return flag.</param>
         /// <param name="DirectionAware">Direction-aware cost flag.</param>
-        /// <param name="ReturnSpeedMph">Return speed mph.</param>
+        /// <param name="UnloadedTravelSpeedMph">Unloaded travel speed in mph.</param>
         /// <param name="TurnSpeedMph">Turn speed mph.</param>
         /// <param name="TurningCircleFt">Turning circle diameter.</param>
         /// <param name="MaxRounds">Max refinement rounds.</param>
@@ -321,7 +321,7 @@ namespace HaulBuilder
             Int32 Window = 50,
             Boolean GradeReturn = true,
             Boolean DirectionAware = true,
-            Double ReturnSpeedMph = DEFAULT_RETURN_SPEED_MPH,
+            Double UnloadedTravelSpeedMph = DEFAULT_UNLOADED_TRAVEL_SPEED_MPH,
             Double TurnSpeedMph = DEFAULT_TURN_SPEED_MPH,
             Double TurningCircleFt = DEFAULT_TURNING_CIRCLE_FT,
             Int32 MaxRounds = 12,
@@ -334,7 +334,7 @@ namespace HaulBuilder
                 (
                 GradeReturn,
                 DirectionAware,
-                ReturnSpeedMph * Constants.MPH_TO_MPS,
+                UnloadedTravelSpeedMph * Constants.MPH_TO_MPS,
                 TurnSpeedMph * Constants.MPH_TO_MPS,
                 (TurningCircleFt * Constants.FEET_TO_METERS) / 2.0,
                 ActiveObstacles

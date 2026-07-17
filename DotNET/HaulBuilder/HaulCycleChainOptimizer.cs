@@ -90,7 +90,7 @@ namespace HaulBuilder
             Double BladeWidthM,
             Boolean GradeReturn,
             Boolean DirectionAware,
-            Double ReturnSpeedMph,
+            Double UnloadedTravelSpeedMph,
             Double TurnSpeedMph,
             Double TurningCircleFt,
             TimeParams TimeParameters,
@@ -124,7 +124,7 @@ namespace HaulBuilder
                 new Routing.TransitionCostEvaluator(
                     GradeReturn,
                     DirectionAware,
-                    ReturnSpeedMph,
+                    UnloadedTravelSpeedMph,
                     TurnSpeedMph,
                     TurningCircleFt,
                     ActiveObstacles);

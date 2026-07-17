@@ -58,7 +58,7 @@ namespace HaulBuilder
         /// <summary>
         /// Multi-drop hop limit in feet (blade-up reposition between pockets).
         /// </summary>
-        public const Double DEFAULT_MAX_DROP_HOP_FT = 100.0;
+        internal const Double DEFAULT_MAX_DROP_HOP_FT = 100.0;
 
         /// <summary>
         /// Default scraper blade width in millimetres (8.5 ft tandem effective width).
@@ -77,34 +77,34 @@ namespace HaulBuilder
         public const Double GOLDEN_MOVE_RATE_BCY_PER_HOUR = 200.0;
 
         /// <summary>
-        /// Default loading speed in miles per hour.
+        /// Default cut speed in miles per hour.
         /// </summary>
-        public const Double DEFAULT_LOADING_SPEED_MPH = 4.0;
+        public const Double DEFAULT_CUT_SPEED_MPH = 4.0;
 
         /// <summary>
         /// Default loaded haul speed in miles per hour.
         /// </summary>
-        public const Double DEFAULT_HAUL_SPEED_MPH = 10.0;
+        public const Double DEFAULT_LOADED_TRAVEL_SPEED_MPH = 10.0;
 
         /// <summary>
-        /// Default dumping speed in miles per hour.
+        /// Default fill speed in miles per hour.
         /// </summary>
-        public const Double DEFAULT_DUMPING_SPEED_MPH = 5.0;
+        public const Double DEFAULT_FILL_SPEED_MPH = 5.0;
 
         /// <summary>
-        /// Default deadhead return speed in miles per hour.
+        /// Default unloaded travel speed in miles per hour.
         /// </summary>
-        public const Double DEFAULT_RETURN_SPEED_MPH = 13.0;
+        public const Double DEFAULT_UNLOADED_TRAVEL_SPEED_MPH = 13.0;
 
         /// <summary>
         /// Default acceleration phase duration in seconds.
         /// </summary>
-        public const Double DEFAULT_ACCEL_TIME_S = 12.0;
+        public const Double DEFAULT_ACCELERATION_TIME_S = 12.0;
 
         /// <summary>
         /// Default deceleration phase duration in seconds.
         /// </summary>
-        public const Double DEFAULT_DECEL_TIME_S = 12.0;
+        public const Double DEFAULT_DECELERATION_TIME_S = 12.0;
 
         /// <summary>
         /// Default turn speed in miles per hour.

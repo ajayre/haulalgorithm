@@ -7,11 +7,11 @@ namespace HaulBuilder.Tests
     public sealed class EdgePatchOmissionTests
     {
         [Fact]
-        public void PolicyIsEnabledByDefault
+        public void InternalLegacyPolicyDefaultsRemainDeterministic
             (
             )
         {
-            Assert.True(new HaulBuilderOptions().OmitIsolatedEdgePatches);
+            Assert.True(new EdgePatchOmission.Settings().Enabled);
         }
 
         [Fact]
@@ -22,9 +22,9 @@ namespace HaulBuilder.Tests
             Grid Grid = MakeInsetGrid();
             PassResult Source = MakeMixedPassResult(Grid, 0.10);
 
-            HaulBuilderOptions Options = new HaulBuilderOptions
+            EdgePatchOmission.Settings Options = new EdgePatchOmission.Settings
             {
-                OmitIsolatedEdgePatches = false,
+                Enabled = false,
             };
             EdgePatchOmissionResult Result = EdgePatchOmission.Apply(
                 Source,
@@ -122,8 +122,8 @@ namespace HaulBuilder.Tests
         {
             Grid Grid = MakeInsetGrid();
             PassResult Source = MakeMixedPassResult(Grid, 0.80);
-            HaulBuilderOptions Options = EnabledOptions();
-            Options.MaxIsolatedEdgePatchVolumeBcy = 0.6;
+            EdgePatchOmission.Settings Options = EnabledOptions();
+            Options.MaximumPatchBcy = 0.6;
 
             EdgePatchOmissionResult Result = EdgePatchOmission.Apply(
                 Source,
@@ -142,8 +142,8 @@ namespace HaulBuilder.Tests
         {
             Grid Grid = MakeInsetGrid();
             PassResult Source = MakeMixedPassResult(Grid, 0.10);
-            HaulBuilderOptions Options = EnabledOptions();
-            Options.MaxTotalIsolatedEdgePatchOmissionPercent = 0.01;
+            EdgePatchOmission.Settings Options = EnabledOptions();
+            Options.MaximumProjectPercent = 0.01;
 
             EdgePatchOmissionResult Result = EdgePatchOmission.Apply(
                 Source,
@@ -184,15 +184,15 @@ namespace HaulBuilder.Tests
             return new PassResult(new List<Pass> { Pass }, 1, 0.0, 0.0);
         }
 
-        private static HaulBuilderOptions EnabledOptions
+        private static EdgePatchOmission.Settings EnabledOptions
             (
-            ) => new HaulBuilderOptions
+            ) => new EdgePatchOmission.Settings
             {
-                OmitIsolatedEdgePatches = true,
-                MaxIsolatedEdgePatchCells = 1,
-                MaxIsolatedEdgePatchVolumeBcy = 2.0,
-                MaxTotalIsolatedEdgePatchOmissionBcy = 10.0,
-                MaxTotalIsolatedEdgePatchOmissionPercent = 100.0,
+                Enabled = true,
+                MaximumCells = 1,
+                MaximumPatchBcy = 2.0,
+                MaximumProjectBcy = 10.0,
+                MaximumProjectPercent = 100.0,
             };
 
         private static Double CutBcy

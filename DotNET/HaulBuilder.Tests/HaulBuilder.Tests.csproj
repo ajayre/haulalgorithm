@@ -31,7 +31,6 @@
 
   <ItemGroup>
     <Content Include="..\TheShop2_2ft.agd" Link="Fixtures\TheShop2_2ft.agd" CopyToOutputDirectory="PreserveNewest" />
-    <Content Include="parity_render.py" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

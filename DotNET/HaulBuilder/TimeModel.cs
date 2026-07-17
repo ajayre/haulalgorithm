@@ -11,63 +11,63 @@ namespace HaulBuilder
         /// <summary>
         /// Initializes a new instance of the <see cref="TimeParams"/> class.
         /// </summary>
-        /// <param name="LoadingSpeedMph">Loading speed.</param>
-        /// <param name="HaulSpeedMph">Max haul speed.</param>
-        /// <param name="DumpingSpeedMph">Dumping speed.</param>
-        /// <param name="ReturnSpeedMph">Max return speed.</param>
-        /// <param name="AccelTimeS">Acceleration time.</param>
-        /// <param name="DecelTimeS">Deceleration time.</param>
+        /// <param name="CutSpeedMph">Cut speed.</param>
+        /// <param name="LoadedTravelSpeedMph">Maximum loaded travel speed.</param>
+        /// <param name="FillSpeedMph">Fill speed.</param>
+        /// <param name="UnloadedTravelSpeedMph">Maximum unloaded travel speed.</param>
+        /// <param name="AccelerationTimeS">Acceleration time.</param>
+        /// <param name="DecelerationTimeS">Deceleration time.</param>
         /// <param name="FieldEfficiency">Field efficiency fraction.</param>
         public TimeParams
             (
-            Double LoadingSpeedMph,
-            Double HaulSpeedMph,
-            Double DumpingSpeedMph,
-            Double ReturnSpeedMph,
-            Double AccelTimeS,
-            Double DecelTimeS,
+            Double CutSpeedMph,
+            Double LoadedTravelSpeedMph,
+            Double FillSpeedMph,
+            Double UnloadedTravelSpeedMph,
+            Double AccelerationTimeS,
+            Double DecelerationTimeS,
             Double FieldEfficiency = 0.8
             )
         {
             // Preserve all machine speed and timing parameters.
-            this.LoadingSpeedMph = LoadingSpeedMph;
-            this.HaulSpeedMph = HaulSpeedMph;
-            this.DumpingSpeedMph = DumpingSpeedMph;
-            this.ReturnSpeedMph = ReturnSpeedMph;
-            this.AccelTimeS = AccelTimeS;
-            this.DecelTimeS = DecelTimeS;
+            this.CutSpeedMph = CutSpeedMph;
+            this.LoadedTravelSpeedMph = LoadedTravelSpeedMph;
+            this.FillSpeedMph = FillSpeedMph;
+            this.UnloadedTravelSpeedMph = UnloadedTravelSpeedMph;
+            this.AccelerationTimeS = AccelerationTimeS;
+            this.DecelerationTimeS = DecelerationTimeS;
             this.FieldEfficiency = FieldEfficiency;
         }
 
         /// <summary>
         /// Gets loading speed mph.
         /// </summary>
-        public Double LoadingSpeedMph { get; }
+        public Double CutSpeedMph { get; }
 
         /// <summary>
         /// Gets haul speed mph.
         /// </summary>
-        public Double HaulSpeedMph { get; }
+        public Double LoadedTravelSpeedMph { get; }
 
         /// <summary>
         /// Gets dumping speed mph.
         /// </summary>
-        public Double DumpingSpeedMph { get; }
+        public Double FillSpeedMph { get; }
 
         /// <summary>
         /// Gets return speed mph.
         /// </summary>
-        public Double ReturnSpeedMph { get; }
+        public Double UnloadedTravelSpeedMph { get; }
 
         /// <summary>
         /// Gets acceleration time seconds.
         /// </summary>
-        public Double AccelTimeS { get; }
+        public Double AccelerationTimeS { get; }
 
         /// <summary>
         /// Gets deceleration time seconds.
         /// </summary>
-        public Double DecelTimeS { get; }
+        public Double DecelerationTimeS { get; }
 
         /// <summary>
         /// Gets field efficiency fraction.
@@ -217,12 +217,12 @@ namespace HaulBuilder
             )
         {
             // Convert configured mph speeds once.
-            Double LoadV = Params.LoadingSpeedMph * Constants.MPH_TO_MPS;
-            Double HaulVMax = Params.HaulSpeedMph * Constants.MPH_TO_MPS;
-            Double DumpV = Params.DumpingSpeedMph * Constants.MPH_TO_MPS;
-            Double ReturnVMax = Params.ReturnSpeedMph * Constants.MPH_TO_MPS;
-            Double Ta = Params.AccelTimeS;
-            Double Td = Params.DecelTimeS;
+            Double LoadV = Params.CutSpeedMph * Constants.MPH_TO_MPS;
+            Double HaulVMax = Params.LoadedTravelSpeedMph * Constants.MPH_TO_MPS;
+            Double DumpV = Params.FillSpeedMph * Constants.MPH_TO_MPS;
+            Double ReturnVMax = Params.UnloadedTravelSpeedMph * Constants.MPH_TO_MPS;
+            Double Ta = Params.AccelerationTimeS;
+            Double Td = Params.DecelerationTimeS;
 
             Double DLoad = 0.0;
             Double DHaul = 0.0;
@@ -248,8 +248,8 @@ namespace HaulBuilder
             Double Eff = ((Params.FieldEfficiency > 0.0) && (Params.FieldEfficiency <= 1.0)) ? Params.FieldEfficiency : 1.0;
             Double Total = Productive / Eff;
             Double Other = Total - Productive;
-            Double AvgHaul = (THaul > 0.0) ? (DHaul / THaul / Constants.MPH_TO_MPS) : Params.HaulSpeedMph;
-            Double AvgReturn = (TReturn > 0.0) ? (DReturn / TReturn / Constants.MPH_TO_MPS) : Params.ReturnSpeedMph;
+            Double AvgHaul = (THaul > 0.0) ? (DHaul / THaul / Constants.MPH_TO_MPS) : Params.LoadedTravelSpeedMph;
+            Double AvgReturn = (TReturn > 0.0) ? (DReturn / TReturn / Constants.MPH_TO_MPS) : Params.UnloadedTravelSpeedMph;
 
             return new TimeResult(Total, DLoad, DHaul, DDump, DReturn, AvgHaul, AvgReturn, TLoad, THaul, TDump, TReturn, Other);
         }
@@ -269,10 +269,10 @@ namespace HaulBuilder
             )
         {
             // Per-route time uses the same productive segments as the job total, scaled by efficiency.
-            Double LoadV = Params.LoadingSpeedMph * Constants.MPH_TO_MPS;
-            Double HaulVMax = Params.HaulSpeedMph * Constants.MPH_TO_MPS;
-            Double DumpV = Params.DumpingSpeedMph * Constants.MPH_TO_MPS;
-            Double ReturnVMax = Params.ReturnSpeedMph * Constants.MPH_TO_MPS;
+            Double LoadV = Params.CutSpeedMph * Constants.MPH_TO_MPS;
+            Double HaulVMax = Params.LoadedTravelSpeedMph * Constants.MPH_TO_MPS;
+            Double DumpV = Params.FillSpeedMph * Constants.MPH_TO_MPS;
+            Double ReturnVMax = Params.UnloadedTravelSpeedMph * Constants.MPH_TO_MPS;
             PassTimeBreakdown Breakdown = EstimatePassBreakdown(
                 Grid,
                 Pass,
@@ -280,8 +280,8 @@ namespace HaulBuilder
                 HaulVMax,
                 DumpV,
                 ReturnVMax,
-                Params.AccelTimeS,
-                Params.DecelTimeS);
+                Params.AccelerationTimeS,
+                Params.DecelerationTimeS);
             Double Productive = Breakdown.LoadingTimeS
                 + Breakdown.HaulingTimeS
                 + Breakdown.DumpingTimeS

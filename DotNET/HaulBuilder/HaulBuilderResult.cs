@@ -83,11 +83,6 @@ namespace HaulBuilder
         public Boolean HaulCycleChainPromoted { get; set; }
 
         /// <summary>
-        /// Gets or sets the isolated-edge-patch omission audit applied before routing.
-        /// </summary>
-        public EdgePatchOmissionResult? EdgePatchOmission { get; set; }
-
-        /// <summary>
         /// Gets or sets route sequencing result.
         /// </summary>
         public Route? Route { get; set; }
@@ -111,11 +106,6 @@ namespace HaulBuilder
         /// Gets or sets full guidance result.
         /// </summary>
         public GuidanceResult? Guidance { get; set; }
-
-        /// <summary>
-        /// Gets or sets guidance time estimate.
-        /// </summary>
-        public GuidanceTime? GuidanceTime { get; set; }
 
         /// <summary>
         /// Gets or sets the final connected forward-only guidance lifecycle.
@@ -305,17 +295,6 @@ namespace HaulBuilder
         /// </summary>
         public Double FieldAreaAcres { get; set; }
 
-        /// <summary>
-        /// Gets or sets total run time in hours.
-        /// </summary>
-        public Double TotalHours { get; set; }
-
-        /// <summary>
-        /// Gets or sets scheduled move rate in BCY per hour. Retained as the
-        /// backward-compatible alias for <see cref="ScheduledMoveRateBcyPerHour"/>.
-        /// </summary>
-        public Double MoveRateBcyPerHour { get; set; }
-
         /// <summary>Gets or sets deterministic production-guidance hours.</summary>
         public Double DeterministicHours { get; set; }
 
@@ -351,14 +330,9 @@ namespace HaulBuilder
         public Double AverageMoveDistanceYards { get; set; }
 
         /// <summary>
-        /// Gets or sets applied heading in degrees when not flow-aligned.
+        /// Gets or sets the normalized undirected work-lane axis in degrees.
         /// </summary>
-        public Double? HeadingDeg { get; set; }
-
-        /// <summary>
-        /// Gets or sets a value indicating whether flow-aligned passes were enabled.
-        /// </summary>
-        public Boolean FlowAligned { get; set; }
+        public Double LaneAxisHeadingDeg { get; set; }
 
         /// <summary>
         /// Gets or sets pivot detour extra haul in metres.

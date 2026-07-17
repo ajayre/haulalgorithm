@@ -61,7 +61,7 @@ namespace HaulBuilder
             Grid Grid,
             Boolean GradeReturn,
             Boolean DirectionAware,
-            Double ReturnSpeedMph,
+            Double UnloadedTravelSpeedMph,
             Double TurnSpeedMph,
             Double TurningCircleFt,
             ObstacleField? Obstacles = null)
@@ -93,7 +93,7 @@ namespace HaulBuilder
                 new Routing.TransitionCostEvaluator(
                     GradeReturn,
                     DirectionAware,
-                    ReturnSpeedMph,
+                    UnloadedTravelSpeedMph,
                     TurnSpeedMph,
                     TurningCircleFt,
                     Obstacles ?? EMPTY_OBSTACLES);
@@ -143,7 +143,7 @@ namespace HaulBuilder
             Double CutFillLowerBoundM = 0.0;
             Double JointLowerBoundM = 0.0;
             Double LargestTerminalSavingM = 0.0;
-            Double ReturnSpeedMps = ReturnSpeedMph * Constants.MPH_TO_MPS;
+            Double ReturnSpeedMps = UnloadedTravelSpeedMph * Constants.MPH_TO_MPS;
             for (Int32 CutIndex = 0; CutIndex < Count; CutIndex += 1)
             {
                 CurrentCutFillM += Distance(Cuts[CutIndex], Fills[CutIndex]);

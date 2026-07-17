@@ -296,7 +296,7 @@ namespace HaulBuilder
     /// <summary>
     /// Realistic time estimate built from the drivable guidance track.
     /// </summary>
-    public sealed class GuidanceTime
+    internal sealed class GuidanceTime
     {
         /// <summary>
         /// Initializes a new instance of the <see cref="GuidanceTime"/> class.
@@ -1006,7 +1006,7 @@ namespace HaulBuilder
         /// <param name="decelTimeS">Deceleration phase time in seconds.</param>
         /// <param name="fieldEfficiency">Field efficiency fraction in (0, 1].</param>
         /// <returns>Detailed timing breakdown for the track.</returns>
-        static public GuidanceTime EstimateGuidanceTime
+        static internal GuidanceTime EstimateGuidanceTime
             (
             GuidanceResult result,
             Double loadingSpeedMph,

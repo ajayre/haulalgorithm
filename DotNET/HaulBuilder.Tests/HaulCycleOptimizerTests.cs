@@ -7,35 +7,26 @@ namespace HaulBuilder.Tests
     public sealed class HaulCycleOptimizerTests
     {
         [Fact]
-        public void ProductionDefaultRemainsLegacyUntilExactGatePasses
+        public void ProductionDefaultsSelectMeasuredOptimizerProfile
             (
             )
         {
             HaulBuilderOptions Options = new HaulBuilderOptions();
 
-            Assert.False(Options.EnableHaulOptimization);
             Assert.Equal(200.0,
                 Constants.GOLDEN_MOVE_RATE_BCY_PER_HOUR);
-            Assert.True(Options.HaulOptimizationDeferEdgeWork);
-            Assert.True(Options.HaulOptimizationCompleteDeferredEdge);
-            Assert.Equal(12, Options.HaulOptimizationEdgeMaxRunsPerKind);
-            Assert.True(Options.EnableHaulRouteConsolidation);
-            Assert.Equal(8, Options.HaulOptimizationRouteConsolidationGroupRoutes);
-            Assert.Equal(50, Options.HaulOptimizationRouteConsolidationMaximumCycles);
-            Assert.Equal(10, Options.HaulOptimizationMaxRunsPerKind);
-            Assert.Equal(8, Options.HaulOptimizationPairRefinementRounds);
-            Assert.False(Options.EnableHaulCycleChainOptimization);
-            Assert.Equal(1, Options.HaulOptimizationCycleChainRounds);
+            Assert.Equal(0.0, Options.LaneAxisHeadingDeg);
+            Assert.Equal(12, Options.Optimization.EdgeMaxLaneSlicesPerCycle);
+            Assert.True(Options.Optimization.EnableRouteConsolidation);
+            Assert.Equal(8, Options.Optimization.RouteConsolidationGroupSize);
+            Assert.Equal(50, Options.Optimization.RouteConsolidationMaximumCycles);
+            Assert.Equal(10, Options.Optimization.MaxLaneSlicesPerCycle);
+            Assert.Equal(8, Options.Optimization.PairRefinementRounds);
+            Assert.True(Options.Optimization.EnableCycleChainOptimization);
+            Assert.Equal(1, Options.Optimization.CycleChainRounds);
             Assert.Equal(1,
-                Options.HaulOptimizationCycleChainCandidatesPerRoute);
-            Assert.Equal(200, Options.HaulOptimizationReorderWindow);
-            Assert.Equal(0, Options.HaulOptimizationMaximumCompactOmissions);
-            Assert.Equal(
-                HaulDifficultCycleFilter.OmissionPriority.MostFragmentedFirst,
-                Options.HaulOptimizationCompactOmissionPriority);
-            Assert.Equal(
-                HaulLaneBuilder.LaneAxis.NorthSouth,
-                Options.HaulOptimizationAxis);
+                Options.Optimization.CycleChainCandidatesPerRoute);
+            Assert.Equal(200, Options.Optimization.RouteReorderWindow);
         }
 
         [Fact]
