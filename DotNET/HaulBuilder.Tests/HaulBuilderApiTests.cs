@@ -132,6 +132,7 @@ namespace HaulBuilder.Tests
                 nameof(PondingOptions.IncludeMap),
                 nameof(PondingOptions.MapPixelsPerCell),
                 nameof(PondingOptions.NoImplicitAudit),
+                nameof(PondingOptions.ObjectiveMode),
                 nameof(PondingOptions.Optimize),
                 nameof(PondingOptions.OutletPolygonSpecs),
                 nameof(PondingOptions.OutletSpecs),
@@ -150,6 +151,7 @@ namespace HaulBuilder.Tests
                 PublicProperties(typeof(PondingOptions)));
             Assert.False(Options.Audit);
             Assert.False(Options.Optimize);
+            Assert.Equal(PondingObjectiveMode.PeakVolume, Options.ObjectiveMode);
             Assert.True(Options.TargetSpillOutlets);
             Assert.Equal(3600.0, Options.Weight);
         }

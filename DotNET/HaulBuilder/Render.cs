@@ -1713,13 +1713,30 @@ namespace HaulBuilder
         }
 
         /// <summary>
-        /// Renders text digit.
+        /// Draws small bitmap text for map banners and labels.
         /// </summary>
-        /// <param name="Image">The image used by the operation.</param>
-        /// <param name="CenterX">Horizontal coordinate in field units.</param>
-        /// <param name="CenterY">Vertical coordinate in field units.</param>
-        /// <param name="Text">The text used by the operation.</param>
+        /// <param name="Image">Destination image.</param>
+        /// <param name="CenterX">Horizontal centre of the text block.</param>
+        /// <param name="CenterY">Vertical centre of the text block.</param>
+        /// <param name="Text">Text to render.</param>
+        /// <param name="Color">Optional glyph colour; defaults to white.</param>
+        static public void DrawBannerText
+            (
+            Image<Rgba32> Image,
+            Int32 CenterX,
+            Int32 CenterY,
+            String Text,
+            Rgba32? Color = null
+            )
+        {
+            DrawTextDigit(Image, CenterX, CenterY, Text, Color ?? new Rgba32(255, 255, 255, 255));
+        }
 
+        /// <summary>Renders one bitmap glyph for banner text.</summary>
+        /// <param name="Image">Destination image.</param>
+        /// <param name="CenterX">Horizontal centre of the text block.</param>
+        /// <param name="CenterY">Vertical centre of the text block.</param>
+        /// <param name="Text">Text to render.</param>
         private static void DrawTextDigit
             (
             Image<Rgba32> Image,
@@ -1728,13 +1745,32 @@ namespace HaulBuilder
             String Text
             )
         {
+            DrawTextDigit(Image, CenterX, CenterY, Text,
+                new Rgba32(0, 0, 0, Constants.MAX_COLOR_CHANNEL));
+        }
+
+        /// <summary>Renders one bitmap glyph for banner text.</summary>
+        /// <param name="Image">Destination image.</param>
+        /// <param name="CenterX">Horizontal centre of the text block.</param>
+        /// <param name="CenterY">Vertical centre of the text block.</param>
+        /// <param name="Text">Text to render.</param>
+        /// <param name="Color">Glyph colour.</param>
+        private static void DrawTextDigit
+            (
+            Image<Rgba32> Image,
+            Int32 CenterX,
+            Int32 CenterY,
+            String Text,
+            Rgba32 Color
+            )
+        {
             // Small bitmap digits avoid adding a font rasterizer dependency just for waypoint labels.
             if (String.IsNullOrWhiteSpace(Text)) return;
             String Value = Text.Trim();
             Int32 OffsetX = CenterX - (Value.Length * 4);
             for (Int32 Iter = 0; Iter < Value.Length; Iter += 1)
             {
-                DrawGlyph(Image, Value[Iter], (OffsetX + (Iter * 8)), (CenterY - 4), new Rgba32(0, 0, 0, Constants.MAX_COLOR_CHANNEL));
+                DrawGlyph(Image, Value[Iter], (OffsetX + (Iter * 8)), (CenterY - 4), Color);
             }
         }
 

@@ -4,11 +4,26 @@ using System.Text;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.Formats.Png;
 using SixLabors.ImageSharp.PixelFormats;
-
-#pragma warning disable CS1591
+using SixLabors.ImageSharp.Processing;
 
 namespace HaulBuilder
 {
+    /// <summary>
+    /// Selects which ponding scalar the reorder search minimizes.
+    /// </summary>
+    public enum PondingObjectiveMode
+    {
+        /// <summary>
+        /// Minimize peak closed-depression volume (BCY) across checkpoints.
+        /// </summary>
+        PeakVolume,
+
+        /// <summary>
+        /// Minimize the mean per-checkpoint average pond depth (metres).
+        /// </summary>
+        AverageDepth,
+    }
+
     /// <summary>
     /// Options for the optional ponding-aware post-routing stage.
     /// The in-process analyser implements the fill-until-spill equivalent allowed
@@ -33,37 +48,69 @@ namespace HaulBuilder
             OutletPolygonSpecs = new List<String>();
         }
 
+        /// <summary>Gets or sets whether drainage-aware pass reordering runs.</summary>
         public Boolean Optimize { get; set; }
+        /// <summary>
+        /// Gets or sets the ponding penalty minimized during reorder search.
+        /// <see cref="PondingObjectiveMode.PeakVolume"/> uses <see cref="Weight"/>
+        /// as seconds per BCY; <see cref="PondingObjectiveMode.AverageDepth"/> uses
+        /// seconds per metre of mean checkpoint average depth.
+        /// </summary>
+        public PondingObjectiveMode ObjectiveMode { get; set; }
+        /// <summary>Gets or sets whether ponding metrics are collected without reordering.</summary>
         public Boolean Audit { get; set; }
+        /// <summary>Gets or sets whether optimisation skips the implicit pre-audit pass.</summary>
         public Boolean NoImplicitAudit { get; set; }
+        /// <summary>Gets or sets whether target-spill cells are marked as outlets.</summary>
         public Boolean TargetSpillOutlets { get; set; }
+        /// <summary>Gets or sets the target-spill outlet tolerance in feet.</summary>
         public Double SpillToleranceFt { get; set; }
+        /// <summary>Gets or sets the transition-time weight applied to the ponding penalty.</summary>
         public Double Weight { get; set; }
+        /// <summary>Gets or sets the maximum pass gap between optimisation checkpoints.</summary>
         public Int32? CheckpointInterval { get; set; }
+        /// <summary>Gets or sets the WhiteBoxTools executable or install directory.</summary>
         public String? WhiteBoxToolsPath { get; set; }
+        /// <summary>Gets or sets the scratch directory for external ponding rasters.</summary>
         public String? WhiteBoxToolsWorkDirectory { get; set; }
+        /// <summary>Gets or sets the warning threshold for max pond depth in feet.</summary>
         public Double WarnDepthFt { get; set; }
+        /// <summary>Gets or sets the warning threshold for trapped volume in BCY.</summary>
         public Double WarnVolumeBcy { get; set; }
+        /// <summary>Gets or sets the design rainfall depth in inches for auto volume warnings.</summary>
         public Double DesignRainfallIn { get; set; }
+        /// <summary>Gets or sets whether warnings should fail the run.</summary>
         public Boolean FailOnWarn { get; set; }
+        /// <summary>Gets or sets whether a worst-checkpoint PNG is emitted.</summary>
         public Boolean IncludeMap { get; set; }
+        /// <summary>Gets or sets the raster scale for ponding map output.</summary>
         public Int32 MapPixelsPerCell { get; set; }
+        /// <summary>Gets manual culvert outlet point specifications.</summary>
         public List<String> OutletSpecs { get; }
+        /// <summary>Gets manual culvert outlet polygon specifications.</summary>
         public List<String> OutletPolygonSpecs { get; }
     }
 
+    /// <summary>Provenance flags describing how an outlet cell was declared.</summary>
     [Flags]
     public enum PondingOutletSource
     {
+        /// <summary>No outlet source assigned.</summary>
         None = 0,
+        /// <summary>Field perimeter cell adjacent to invalid grid cells.</summary>
         Boundary = 1,
+        /// <summary>Manual culvert point or polygon.</summary>
         Culvert = 2,
+        /// <summary>Target-spill daylight cell reachable to the boundary.</summary>
         TargetSpill = 4,
     }
 
     /// <summary>Outlet mask and provenance derived once from the planning grid.</summary>
     public sealed class PondingOutlets
     {
+        /// <summary>Initializes outlet mask and provenance arrays.</summary>
+        /// <param name="Mask">Outlet membership mask.</param>
+        /// <param name="Source">Per-cell outlet provenance flags.</param>
         public PondingOutlets(Boolean[,] Mask, PondingOutletSource[,] Source)
         {
             this.Mask = Mask;
@@ -71,21 +118,33 @@ namespace HaulBuilder
             Count = Mask.Cast<Boolean>().Count(Value => Value);
         }
 
+        /// <summary>Gets the outlet membership mask.</summary>
         public Boolean[,] Mask { get; }
+        /// <summary>Gets per-cell outlet provenance flags.</summary>
         public PondingOutletSource[,] Source { get; }
+        /// <summary>Gets the number of declared outlet cells.</summary>
         public Int32 Count { get; }
     }
 
     /// <summary>Fill-to-spill metrics for one intermediate surface.</summary>
     public sealed class PondingMetrics
     {
+        /// <summary>Initializes fill-to-spill metrics for one scored surface.</summary>
+        /// <param name="ClosedDepressionVolumeBcy">Total trapped volume in BCY.</param>
+        /// <param name="MaxPondDepthM">Deepest pond depth in metres.</param>
+        /// <param name="ClosedDepressionCount">Number of contiguous pond components.</param>
+        /// <param name="AnalyserOk">Whether every valid cell reached an outlet.</param>
+        /// <param name="DepressionDepthM">Optional per-cell pond depth raster.</param>
+        /// <param name="PondingCatchmentAreaM2">Area of ponded cells in square metres.</param>
+        /// <param name="AveragePondDepthM">Mean pond depth over ponded cells in metres.</param>
         public PondingMetrics(
             Double ClosedDepressionVolumeBcy,
             Double MaxPondDepthM,
             Int32 ClosedDepressionCount,
             Boolean AnalyserOk,
             Double[,]? DepressionDepthM = null,
-            Double PondingCatchmentAreaM2 = 0.0)
+            Double PondingCatchmentAreaM2 = 0.0,
+            Double AveragePondDepthM = 0.0)
         {
             this.ClosedDepressionVolumeBcy = ClosedDepressionVolumeBcy;
             this.MaxPondDepthM = MaxPondDepthM;
@@ -93,18 +152,34 @@ namespace HaulBuilder
             this.AnalyserOk = AnalyserOk;
             this.DepressionDepthM = DepressionDepthM;
             this.PondingCatchmentAreaM2 = PondingCatchmentAreaM2;
+            this.AveragePondDepthM = AveragePondDepthM;
         }
 
+        /// <summary>Gets total trapped closed-depression volume in BCY.</summary>
         public Double ClosedDepressionVolumeBcy { get; }
+        /// <summary>Gets the deepest pond depth in metres.</summary>
         public Double MaxPondDepthM { get; }
+        /// <summary>Gets mean pond depth over cells with positive depression depth.</summary>
+        public Double AveragePondDepthM { get; }
+        /// <summary>Gets the number of contiguous closed-depression components.</summary>
         public Int32 ClosedDepressionCount { get; }
+        /// <summary>Gets whether every valid cell could drain to an outlet.</summary>
         public Boolean AnalyserOk { get; }
+        /// <summary>Gets optional per-cell pond depth values in metres.</summary>
         public Double[,]? DepressionDepthM { get; }
+        /// <summary>Gets the ponded cell area in square metres.</summary>
         public Double PondingCatchmentAreaM2 { get; }
     }
 
+    /// <summary>Scores one intermediate surface for closed-depression ponding risk.</summary>
     public interface IPondingAnalyser
     {
+        /// <summary>Scores ponding on one intermediate surface raster.</summary>
+        /// <param name="Surface">Intermediate elevation surface in metres.</param>
+        /// <param name="ValidMask">Valid planning cells.</param>
+        /// <param name="OutletMask">Declared outlet cells.</param>
+        /// <param name="CellAreaM2">Plan cell area in square metres.</param>
+        /// <returns>Fill-to-spill ponding metrics.</returns>
         PondingMetrics Score(Double[,] Surface, Boolean[,] ValidMask,
             Boolean[,] OutletMask, Double CellAreaM2);
     }
@@ -115,6 +190,7 @@ namespace HaulBuilder
     /// </summary>
     public sealed class InProcessPondingAnalyser : IPondingAnalyser
     {
+        /// <inheritdoc />
         public PondingMetrics Score(Double[,] Surface, Boolean[,] ValidMask,
             Boolean[,] OutletMask, Double CellAreaM2)
         {
@@ -186,15 +262,21 @@ namespace HaulBuilder
                 PondCells += 1;
             }
             Int32 Components = CountComponents(Pond);
+            // Average depth is volume-normalised over pond cells only, not the whole field.
+            Double AverageDepth = PondCells > 0 ? VolumeM3 / (PondCells * CellAreaM2) : 0.0;
             return new PondingMetrics(
                 VolumeM3 * Constants.M3_TO_CY,
                 MaxDepth,
                 Components,
                 AllReached,
                 Depth,
-                PondCells * CellAreaM2);
+                PondCells * CellAreaM2,
+                AverageDepth);
         }
 
+        /// <summary>Counts eight-connected pond components.</summary>
+        /// <param name="Mask">Pond membership mask.</param>
+        /// <returns>Component count.</returns>
         static private Int32 CountComponents(Boolean[,] Mask)
         {
             Int32 Height = Mask.GetLength(0);
@@ -229,8 +311,14 @@ namespace HaulBuilder
         }
     }
 
+    /// <summary>One scored drainage checkpoint along a route prefix.</summary>
     public sealed class PondingCheckpoint
     {
+        /// <summary>Initializes one checkpoint row.</summary>
+        /// <param name="PassIndex">Number of passes applied in the prefix.</param>
+        /// <param name="Metrics">Ponding metrics on the intermediate surface.</param>
+        /// <param name="TransitionCostCumulativeS">Cumulative transition cost through the prefix.</param>
+        /// <param name="Surface">Optional retained intermediate surface.</param>
         public PondingCheckpoint(Int32 PassIndex, PondingMetrics Metrics,
             Double TransitionCostCumulativeS, Double[,]? Surface = null)
         {
@@ -239,39 +327,107 @@ namespace HaulBuilder
             this.TransitionCostCumulativeS = TransitionCostCumulativeS;
             this.Surface = Surface;
         }
+        /// <summary>Gets the number of passes applied in this prefix.</summary>
         public Int32 PassIndex { get; }
+        /// <summary>Gets ponding metrics on the intermediate surface.</summary>
         public PondingMetrics Metrics { get; }
+        /// <summary>Gets cumulative transition cost through the prefix in seconds.</summary>
         public Double TransitionCostCumulativeS { get; }
+        /// <summary>Gets or sets the retained intermediate surface, when kept for maps.</summary>
         public Double[,]? Surface { get; internal set; }
     }
 
+    /// <summary>Aggregated ponding audit for one route order.</summary>
     public sealed class PondingAuditResult
     {
-        public PondingAuditResult(IReadOnlyList<PondingCheckpoint> Checkpoints)
+        /// <summary>Builds audit aggregates for the requested objective mode.</summary>
+        /// <param name="Checkpoints">Scored checkpoints along the route.</param>
+        /// <param name="ObjectiveMode">Penalty definition used by optimisation.</param>
+        public PondingAuditResult(IReadOnlyList<PondingCheckpoint> Checkpoints,
+            PondingObjectiveMode ObjectiveMode = PondingObjectiveMode.PeakVolume)
         {
             this.Checkpoints = Checkpoints;
-            WorstCheckpoint = Checkpoints.OrderByDescending(C =>
-                    C.Metrics.ClosedDepressionVolumeBcy)
-                .ThenByDescending(C => C.Metrics.MaxPondDepthM)
-                .First();
+            this.ObjectiveMode = ObjectiveMode;
+            WorstCheckpoint = SelectWorstCheckpoint(Checkpoints, ObjectiveMode);
+            Penalty = ComputePenalty(Checkpoints, ObjectiveMode);
             AnalyserFailures = Checkpoints.Count(C => !C.Metrics.AnalyserOk);
         }
+
+        /// <summary>Gets scored checkpoints along the route.</summary>
         public IReadOnlyList<PondingCheckpoint> Checkpoints { get; }
+        /// <summary>Gets the objective mode used to compute <see cref="Penalty"/>.</summary>
+        public PondingObjectiveMode ObjectiveMode { get; }
+        /// <summary>Gets the checkpoint selected for map retention and reporting.</summary>
         public PondingCheckpoint WorstCheckpoint { get; }
+        /// <summary>Gets the route penalty P(route) for the active objective mode.</summary>
+        public Double Penalty { get; }
+        /// <summary>Gets peak trapped volume at <see cref="WorstCheckpoint"/> in BCY.</summary>
         public Double PeakVolumeBcy => WorstCheckpoint.Metrics.ClosedDepressionVolumeBcy;
+        /// <summary>Gets the mean checkpoint average pond depth (metres).</summary>
+        public Double MeanAveragePondDepthM => Checkpoints.Count == 0
+            ? 0.0
+            : Checkpoints.Average(C => C.Metrics.AveragePondDepthM);
+        /// <summary>Gets the number of checkpoints where the analyser did not complete.</summary>
         public Int32 AnalyserFailures { get; }
+
+        /// <summary>Computes P(route) for the requested objective mode.</summary>
+        /// <param name="Checkpoints">Scored checkpoints.</param>
+        /// <param name="ObjectiveMode">Active penalty definition.</param>
+        /// <returns>Scalar route ponding penalty.</returns>
+        static public Double ComputePenalty(IReadOnlyList<PondingCheckpoint> Checkpoints,
+            PondingObjectiveMode ObjectiveMode)
+        {
+            if (Checkpoints.Count == 0) return 0.0;
+            return ObjectiveMode switch
+            {
+                PondingObjectiveMode.AverageDepth => Checkpoints
+                    .Average(C => C.Metrics.AveragePondDepthM),
+                _ => Checkpoints.Max(C => C.Metrics.ClosedDepressionVolumeBcy),
+            };
+        }
+
+        /// <summary>Selects the checkpoint used for map retention and reporting.</summary>
+        /// <param name="Checkpoints">Scored checkpoints.</param>
+        /// <param name="ObjectiveMode">Active objective mode.</param>
+        /// <returns>Worst checkpoint under the active objective.</returns>
+        static private PondingCheckpoint SelectWorstCheckpoint(
+            IReadOnlyList<PondingCheckpoint> Checkpoints,
+            PondingObjectiveMode ObjectiveMode)
+        {
+            if (ObjectiveMode == PondingObjectiveMode.AverageDepth)
+            {
+                return Checkpoints
+                    .OrderByDescending(C => C.Metrics.AveragePondDepthM)
+                    .ThenByDescending(C => C.Metrics.MaxPondDepthM)
+                    .First();
+            }
+            return Checkpoints
+                .OrderByDescending(C => C.Metrics.ClosedDepressionVolumeBcy)
+                .ThenByDescending(C => C.Metrics.MaxPondDepthM)
+                .First();
+        }
     }
 
+    /// <summary>Result of one optional ponding audit or optimisation run.</summary>
     public sealed class PondingRunResult
     {
+        /// <summary>Gets or sets declared outlets for the run.</summary>
         public PondingOutlets? Outlets { get; internal set; }
+        /// <summary>Gets or sets audit metrics before optimisation, when collected.</summary>
         public PondingAuditResult? Before { get; internal set; }
+        /// <summary>Gets or sets audit metrics after optimisation, when collected.</summary>
         public PondingAuditResult? After { get; internal set; }
+        /// <summary>Gets or sets transition cost before ponding reordering.</summary>
         public Double TransitionCostBeforeS { get; internal set; }
+        /// <summary>Gets or sets transition cost after ponding reordering.</summary>
         public Double TransitionCostAfterS { get; internal set; }
+        /// <summary>Gets or sets the number of accepted relocation moves.</summary>
         public Int32 RelocationsAccepted { get; internal set; }
+        /// <summary>Gets warning messages emitted during the run.</summary>
         public List<String> Warnings { get; } = new();
+        /// <summary>Gets or sets whether a configured warning triggered failure.</summary>
         public Boolean FailOnWarnTriggered { get; internal set; }
+        /// <summary>Gets the final audit, preferring the post-optimisation result.</summary>
         public PondingAuditResult? FinalAudit => After ?? Before;
     }
 
@@ -285,6 +441,9 @@ namespace HaulBuilder
         }
 
         /// <summary>Builds boundary, target-spill, and manual culvert outlets.</summary>
+        /// <param name="Grid">Planning grid.</param>
+        /// <param name="Options">Outlet construction options.</param>
+        /// <returns>Outlet mask and provenance arrays.</returns>
         static public PondingOutlets BuildOutlets(Grid Grid, PondingOptions Options)
         {
             Int32 H = Grid.Height;
@@ -338,6 +497,10 @@ namespace HaulBuilder
         }
 
         /// <summary>Replays exactly the stored cut and fill depths through prefix K.</summary>
+        /// <param name="Grid">Planning grid.</param>
+        /// <param name="OrderedPasses">Route passes in execution order.</param>
+        /// <param name="K">Prefix length; zero means the existing surface.</param>
+        /// <returns>Intermediate surface elevations in metres.</returns>
         static public Double[,] ReplaySurface(Grid Grid,
             IReadOnlyList<Pass> OrderedPasses, Int32 K)
         {
@@ -353,12 +516,23 @@ namespace HaulBuilder
         }
 
         /// <summary>Scores a route incrementally at the requested checkpoints.</summary>
+        /// <param name="Grid">Planning grid.</param>
+        /// <param name="OrderedPasses">Route passes in execution order.</param>
+        /// <param name="Outlets">Declared outlets.</param>
+        /// <param name="Analyser">Ponding scorer.</param>
+        /// <param name="CheckpointInterval">Maximum pass gap between scored checkpoints.</param>
+        /// <param name="TransitionEvaluator">Optional transition-cost accumulator.</param>
+        /// <param name="RetainAllSurfaces">Whether every checkpoint surface is retained.</param>
+        /// <param name="MetricsCache">Optional shared metrics cache for local search.</param>
+        /// <param name="ObjectiveMode">Objective used to pick the retained worst checkpoint.</param>
+        /// <returns>Checkpoint audit rows and route-level aggregates.</returns>
         static public PondingAuditResult AuditRoute(Grid Grid,
             IReadOnlyList<Pass> OrderedPasses, PondingOutlets Outlets,
             IPondingAnalyser Analyser, Int32 CheckpointInterval,
             Routing.TransitionCostEvaluator? TransitionEvaluator = null,
             Boolean RetainAllSurfaces = false,
-            Dictionary<(UInt64 PrefixHash, Int32 K), PondingMetrics>? MetricsCache = null)
+            Dictionary<(UInt64 PrefixHash, Int32 K), PondingMetrics>? MetricsCache = null,
+            PondingObjectiveMode ObjectiveMode = PondingObjectiveMode.PeakVolume)
         {
             Dictionary<(UInt64 PrefixHash, Int32 K), PondingMetrics> Cache =
                 MetricsCache ?? new();
@@ -391,8 +565,7 @@ namespace HaulBuilder
                     K, Metrics, Transition);
                 if (RetainAllSurfaces
                     || RetainedWorst == null
-                    || Metrics.ClosedDepressionVolumeBcy
-                        > RetainedWorst.Metrics.ClosedDepressionVolumeBcy)
+                    || IsWorseCheckpoint(Metrics, RetainedWorst.Metrics, ObjectiveMode))
                 {
                     if (!RetainAllSurfaces && RetainedWorst != null)
                         RetainedWorst.Surface = null;
@@ -401,10 +574,20 @@ namespace HaulBuilder
                 }
                 Rows.Add(Row);
             }
-            return new PondingAuditResult(Rows);
+            return new PondingAuditResult(Rows, ObjectiveMode);
         }
 
-        /// <summary>Runs optional audit and drainage-aware relocation in place.</summary>
+        /// <summary>Runs optional ponding audit and drainage-aware relocation in place.</summary>
+        /// <param name="Grid">Planning grid.</param>
+        /// <param name="GenerationOrder">Pass generation order used for layer constraints.</param>
+        /// <param name="Route">Route mutated when optimisation is enabled.</param>
+        /// <param name="Options">Ponding stage options.</param>
+        /// <param name="UnloadedTravelSpeedMph">Unloaded travel speed for transition cost.</param>
+        /// <param name="TurnSpeedMph">Turn speed for transition cost.</param>
+        /// <param name="TurningCircleFt">Turning diameter for transition cost.</param>
+        /// <param name="Obstacles">Optional obstacle field.</param>
+        /// <param name="ReorderWindow">Relocation window for local search.</param>
+        /// <returns>Audit and optimisation results.</returns>
         static public PondingRunResult Run(Grid Grid, IReadOnlyList<Pass> GenerationOrder,
             Route Route, PondingOptions Options,
             Double UnloadedTravelSpeedMph, Double TurnSpeedMph,
@@ -431,7 +614,8 @@ namespace HaulBuilder
             if (AuditBefore)
                 Result.Before = AuditRoute(Grid, Route.OrderedPasses,
                     Outlets, Analyser, Interval, Transition,
-                    MetricsCache: MetricsCache);
+                    MetricsCache: MetricsCache,
+                    ObjectiveMode: Options.ObjectiveMode);
             Result.TransitionCostBeforeS = TransitionCost(
                 Route.OrderedPasses, Transition);
 
@@ -447,7 +631,8 @@ namespace HaulBuilder
                 PondingAuditResult CurrentAudit = AuditRoute(Grid,
                     Tagged.Select(T => T.Pass).ToList(), Outlets, Analyser,
                     Interval, Transition, RetainAllSurfaces: true,
-                    MetricsCache: MetricsCache);
+                    MetricsCache: MetricsCache,
+                    ObjectiveMode: Options.ObjectiveMode);
                 Double CurrentT = TransitionCost(
                     Tagged.Select(T => T.Pass).ToList(), Transition);
                 for (Int32 Round = 0; Round < 12; Round += 1)
@@ -473,13 +658,16 @@ namespace HaulBuilder
                             List<Pass> Passes = Candidate.Select(T => T.Pass).ToList();
                             PondingAuditResult CandidateAudit = AuditRelocation(
                                 Grid, Passes, CurrentAudit, S, D,
-                                Outlets, Analyser, MetricsCache);
+                                Outlets, Analyser, MetricsCache,
+                                Options.ObjectiveMode);
                             Double CandidateT = CurrentT + RelocateTransitionDelta(
                                 Tagged.Select(T => T.Pass).ToList(),
                                 Transition, S, D);
-                            if (Better(CandidateT, CandidateAudit.PeakVolumeBcy,
-                                BestD == S ? CurrentT : BestT,
-                                BestD == S ? CurrentAudit.PeakVolumeBcy : BestAudit!.PeakVolumeBcy,
+                            Double CurrentP = CurrentAudit.Penalty;
+                            Double BestP = BestD == S ? CurrentP : BestAudit!.Penalty;
+                            // Accept moves that lower J = T + weight * P, then P, then T.
+                            if (Better(CandidateT, CandidateAudit.Penalty,
+                                BestD == S ? CurrentT : BestT, BestP,
                                 Options.Weight))
                             {
                                 BestD = D;
@@ -503,7 +691,8 @@ namespace HaulBuilder
                 Result.RelocationsAccepted = Moves;
                 Result.After = AuditRoute(Grid, Route.OrderedPasses,
                     Outlets, Analyser, Interval, Transition,
-                    MetricsCache: MetricsCache);
+                    MetricsCache: MetricsCache,
+                    ObjectiveMode: Options.ObjectiveMode);
             }
             else
                 Result.After = Result.Before;
@@ -517,41 +706,102 @@ namespace HaulBuilder
             return Result;
         }
 
+        /// <summary>Serialises checkpoint metrics to CSV text.</summary>
+        /// <param name="Audit">Audit rows to export.</param>
+        /// <param name="OutletCount">Outlet count recorded on each row.</param>
+        /// <returns>CSV text with header row.</returns>
         static public String BuildCsv(PondingAuditResult Audit,
             Int32 OutletCount)
         {
             StringBuilder Sb = new();
-            Sb.AppendLine("pass_index,closed_depression_volume_bcy,max_pond_depth_m,closed_depression_count,transition_cost_cumulative_s,outlet_count,analyser_ok");
+            Sb.AppendLine("pass_index,closed_depression_volume_bcy,max_pond_depth_m,average_pond_depth_m,closed_depression_count,transition_cost_cumulative_s,outlet_count,analyser_ok");
             foreach (PondingCheckpoint C in Audit.Checkpoints)
                 Sb.AppendFormat(CultureInfo.InvariantCulture,
-                    "{0},{1:F6},{2:F6},{3},{4:F3},{5},{6}\n",
+                    "{0},{1:F6},{2:F6},{3:F6},{4},{5:F3},{6},{7}\n",
                     C.PassIndex, C.Metrics.ClosedDepressionVolumeBcy,
                     C.Metrics.MaxPondDepthM,
+                    C.Metrics.AveragePondDepthM,
                     C.Metrics.ClosedDepressionCount,
                     C.TransitionCostCumulativeS, OutletCount,
                     C.Metrics.AnalyserOk.ToString().ToLowerInvariant());
             return Sb.ToString();
         }
 
+        /// <summary>Renders the worst-checkpoint surface retained on one audit result.</summary>
+        /// <param name="Grid">Planning grid.</param>
+        /// <param name="Outlets">Outlet mask.</param>
+        /// <param name="Worst">Worst checkpoint with retained surface.</param>
+        /// <param name="PixelsPerCell">Raster scale.</param>
+        /// <returns>PNG bytes with elevation, pond, and outlet overlays.</returns>
         static public Byte[] RenderWorstCheckpointPng(Grid Grid,
             PondingOutlets Outlets, PondingCheckpoint Worst,
             Int32 PixelsPerCell = 8)
         {
-            Double[,] Surface = Worst.Surface
+            return RenderCheckpointPng(
+                Grid, Outlets, Worst, PixelsPerCell);
+        }
+
+        /// <summary>Scores and renders ponding overlays at one route checkpoint.</summary>
+        /// <param name="Grid">Planning grid.</param>
+        /// <param name="Outlets">Outlet mask.</param>
+        /// <param name="OrderedPasses">Route passes in execution order.</param>
+        /// <param name="PassIndex">Checkpoint prefix length.</param>
+        /// <param name="Analyser">Ponding scorer.</param>
+        /// <param name="PixelsPerCell">Raster scale.</param>
+        /// <param name="SharedMinM">Optional shared colour-scale minimum.</param>
+        /// <param name="SharedMaxM">Optional shared colour-scale maximum.</param>
+        /// <returns>PNG bytes with elevation, pond, and outlet overlays.</returns>
+        static public Byte[] RenderCheckpointPng(Grid Grid,
+            PondingOutlets Outlets,
+            IReadOnlyList<Pass> OrderedPasses,
+            Int32 PassIndex,
+            IPondingAnalyser Analyser,
+            Int32 PixelsPerCell = 8,
+            Double? SharedMinM = null,
+            Double? SharedMaxM = null)
+        {
+            Double[,] Surface = ReplaySurface(Grid, OrderedPasses, PassIndex);
+            PondingMetrics Metrics = Analyser.Score(
+                Surface, Grid.Valid, Outlets.Mask, Grid.AreaM2);
+            PondingCheckpoint Checkpoint = new(PassIndex, Metrics, 0.0, Surface);
+            return RenderCheckpointPng(
+                Grid, Outlets, Checkpoint, PixelsPerCell,
+                SharedMinM, SharedMaxM);
+        }
+
+        /// <summary>Renders one checkpoint surface with pond and outlet overlays.</summary>
+        /// <param name="Grid">Planning grid.</param>
+        /// <param name="Outlets">Outlet mask.</param>
+        /// <param name="Checkpoint">Checkpoint surface and metrics.</param>
+        /// <param name="PixelsPerCell">Raster scale.</param>
+        /// <param name="SharedMinM">Optional shared colour-scale minimum.</param>
+        /// <param name="SharedMaxM">Optional shared colour-scale maximum.</param>
+        /// <returns>PNG bytes.</returns>
+        static public Byte[] RenderCheckpointPng(Grid Grid,
+            PondingOutlets Outlets,
+            PondingCheckpoint Checkpoint,
+            Int32 PixelsPerCell = 8,
+            Double? SharedMinM = null,
+            Double? SharedMaxM = null)
+        {
+            Double[,] Surface = Checkpoint.Surface
                 ?? throw new ArgumentException("Checkpoint surface was not retained.");
-            Double Min = Double.PositiveInfinity;
-            Double Max = Double.NegativeInfinity;
-            for (Int32 Y = 0; Y < Grid.Height; Y += 1)
-            for (Int32 X = 0; X < Grid.Width; X += 1)
-                if (Grid.Valid[Y, X])
-                {
-                    Min = Math.Min(Min, Surface[Y, X]);
-                    Max = Math.Max(Max, Surface[Y, X]);
-                }
+            Double Min = SharedMinM ?? Double.PositiveInfinity;
+            Double Max = SharedMaxM ?? Double.NegativeInfinity;
+            if (!SharedMinM.HasValue || !SharedMaxM.HasValue)
+            {
+                for (Int32 Y = 0; Y < Grid.Height; Y += 1)
+                for (Int32 X = 0; X < Grid.Width; X += 1)
+                    if (Grid.Valid[Y, X])
+                    {
+                        Min = Math.Min(Min, Surface[Y, X]);
+                        Max = Math.Max(Max, Surface[Y, X]);
+                    }
+            }
             Int32 Ppb = Math.Max(1, PixelsPerCell);
             using Image<Rgba32> Image = Render.ElevationToImage(
                 Surface, Grid.Valid, Ppb, Min, Max);
-            Double[,]? Depth = Worst.Metrics.DepressionDepthM;
+            Double[,]? Depth = Checkpoint.Metrics.DepressionDepthM;
             for (Int32 Y = 0; Y < Grid.Height; Y += 1)
             for (Int32 X = 0; X < Grid.Width; X += 1)
             {
@@ -569,6 +819,107 @@ namespace HaulBuilder
             using MemoryStream Stream = new();
             Image.Save(Stream, new PngEncoder());
             return Stream.ToArray();
+        }
+
+        /// <summary>One labelled panel in a ponding comparison figure.</summary>
+        public sealed class PondingComparisonPanel
+        {
+            /// <summary>Initializes one comparison panel.</summary>
+            /// <param name="Title">Short banner title.</param>
+            /// <param name="PngBytes">Rendered panel image.</param>
+            public PondingComparisonPanel(String Title, Byte[] PngBytes)
+            {
+                this.Title = Title;
+                this.PngBytes = PngBytes;
+            }
+
+            /// <summary>Gets the banner title.</summary>
+            public String Title { get; }
+
+            /// <summary>Gets the rendered PNG bytes.</summary>
+            public Byte[] PngBytes { get; }
+        }
+
+        /// <summary>Composes labelled ponding panels into one side-by-side PNG.</summary>
+        /// <param name="Panels">Left-to-right comparison panels.</param>
+        /// <param name="GapPx">Horizontal gap between panels.</param>
+        /// <param name="BannerPx">Title banner height per panel.</param>
+        /// <returns>Combined PNG bytes.</returns>
+        static public Byte[] RenderSideBySideComparisonPng(
+            IReadOnlyList<PondingComparisonPanel> Panels,
+            Int32 GapPx = 12,
+            Int32 BannerPx = 36)
+        {
+            if (Panels == null || Panels.Count == 0)
+                throw new ArgumentException("At least one panel is required.");
+            using Image<Rgba32> First = Image.Load<Rgba32>(Panels[0].PngBytes);
+            Int32 PanelWidth = First.Width;
+            Int32 PanelHeight = First.Height;
+            Int32 TotalWidth = Panels.Count * PanelWidth
+                + Math.Max(0, Panels.Count - 1) * GapPx;
+            Int32 TotalHeight = BannerPx + PanelHeight;
+            using Image<Rgba32> Composite = new(TotalWidth, TotalHeight);
+            Composite.Mutate(Context => Context.BackgroundColor(
+                new Rgba32(24, 24, 24, 255)));
+            Rgba32[] Accents =
+            {
+                new(220, 70, 70, 255),
+                new(70, 190, 90, 255),
+                new(120, 160, 220, 255),
+            };
+            Int32 OffsetX = 0;
+            for (Int32 Index = 0; Index < Panels.Count; Index += 1)
+            {
+                PondingComparisonPanel Panel = Panels[Index];
+                using Image<Rgba32> Map = Image.Load<Rgba32>(Panel.PngBytes);
+                if (Map.Width != PanelWidth || Map.Height != PanelHeight)
+                {
+                    throw new ArgumentException(
+                        "All comparison panels must share the same dimensions.");
+                }
+                Rgba32 Accent = Accents[Index % Accents.Length];
+                for (Int32 Y = 0; Y < BannerPx; Y += 1)
+                for (Int32 X = OffsetX; X < OffsetX + PanelWidth; X += 1)
+                    Composite[X, Y] = new Rgba32(32, 32, 32, 255);
+                // Colour stripes distinguish baseline vs optimised panels in comparisons.
+                for (Int32 Y = BannerPx; Y < TotalHeight; Y += 1)
+                for (Int32 X = OffsetX; X < OffsetX + 6; X += 1)
+                    Composite[X, Y] = Accent;
+                Render.DrawBannerText(
+                    Composite,
+                    OffsetX + PanelWidth / 2,
+                    BannerPx / 2,
+                    Panel.Title);
+                Composite.Mutate(Context => Context.DrawImage(
+                    Map,
+                    new SixLabors.ImageSharp.Point(OffsetX, BannerPx),
+                    1.0f));
+                OffsetX += PanelWidth + GapPx;
+            }
+            using MemoryStream Stream = new();
+            Composite.Save(Stream, new PngEncoder());
+            return Stream.ToArray();
+        }
+
+        /// <summary>Finds a shared elevation colour scale for two surfaces.</summary>
+        /// <param name="Grid">Planning grid.</param>
+        /// <param name="First">First surface.</param>
+        /// <param name="Second">Second surface.</param>
+        /// <returns>Minimum and maximum elevation in metres.</returns>
+        static public (Double MinM, Double MaxM) SharedElevationRange(
+            Grid Grid, Double[,] First, Double[,] Second)
+        {
+            Double Min = Double.PositiveInfinity;
+            Double Max = Double.NegativeInfinity;
+            foreach (Double[,] Surface in new[] { First, Second })
+            for (Int32 Y = 0; Y < Grid.Height; Y += 1)
+            for (Int32 X = 0; X < Grid.Width; X += 1)
+                if (Grid.Valid[Y, X])
+                {
+                    Min = Math.Min(Min, Surface[Y, X]);
+                    Max = Math.Max(Max, Surface[Y, X]);
+                }
+            return (Min, Max);
         }
 
         private sealed class LayerGraph
@@ -667,7 +1018,8 @@ namespace HaulBuilder
             Int32 Destination,
             PondingOutlets Outlets,
             IPondingAnalyser Analyser,
-            Dictionary<(UInt64 PrefixHash, Int32 K), PondingMetrics> MetricsCache)
+            Dictionary<(UInt64 PrefixHash, Int32 K), PondingMetrics> MetricsCache,
+            PondingObjectiveMode ObjectiveMode)
         {
             Int32 Low = Math.Min(Source, Destination);
             Int32 High = Math.Max(Source, Destination);
@@ -705,7 +1057,7 @@ namespace HaulBuilder
                 Rows.Add(new PondingCheckpoint(K, Metrics, 0.0,
                     (Double[,])Surface.Clone()));
             }
-            return new PondingAuditResult(Rows);
+            return new PondingAuditResult(Rows, ObjectiveMode);
         }
 
         static private Double RelocateTransitionDelta(
@@ -767,6 +1119,13 @@ namespace HaulBuilder
             return Out;
         }
 
+        /// <summary>Compares relocation candidates under the combined ponding objective.</summary>
+        /// <param name="CandidateT">Candidate transition cost.</param>
+        /// <param name="CandidateP">Candidate ponding penalty.</param>
+        /// <param name="CurrentT">Current transition cost.</param>
+        /// <param name="CurrentP">Current ponding penalty.</param>
+        /// <param name="Weight">Transition weight; zero optimises penalty alone.</param>
+        /// <returns>True when the candidate should replace the incumbent.</returns>
         static private Boolean Better(Double CandidateT, Double CandidateP,
             Double CurrentT, Double CurrentP, Double Weight)
         {
@@ -779,6 +1138,29 @@ namespace HaulBuilder
             if (CandidateP < CurrentP - 1e-7) return true;
             return Math.Abs(CandidateP - CurrentP) <= 1e-7
                 && CandidateT < CurrentT - 1e-7;
+        }
+
+        /// <summary>Compares checkpoint metrics for worst-case map retention.</summary>
+        /// <param name="Candidate">Candidate checkpoint metrics.</param>
+        /// <param name="Current">Current retained worst metrics.</param>
+        /// <param name="ObjectiveMode">Active objective mode.</param>
+        /// <returns>True when the candidate should replace the retained worst checkpoint.</returns>
+        static private Boolean IsWorseCheckpoint(PondingMetrics Candidate,
+            PondingMetrics Current, PondingObjectiveMode ObjectiveMode)
+        {
+            if (ObjectiveMode == PondingObjectiveMode.AverageDepth)
+            {
+                if (Candidate.AveragePondDepthM > Current.AveragePondDepthM + 1e-9)
+                    return true;
+                return Math.Abs(Candidate.AveragePondDepthM - Current.AveragePondDepthM) <= 1e-9
+                    && Candidate.MaxPondDepthM > Current.MaxPondDepthM + 1e-9;
+            }
+            if (Candidate.ClosedDepressionVolumeBcy
+                > Current.ClosedDepressionVolumeBcy + 1e-9)
+                return true;
+            return Math.Abs(Candidate.ClosedDepressionVolumeBcy
+                    - Current.ClosedDepressionVolumeBcy) <= 1e-9
+                && Candidate.MaxPondDepthM > Current.MaxPondDepthM + 1e-9;
         }
 
         static private IPondingAnalyser CreateAnalyser(PondingOptions Options)
@@ -983,4 +1365,3 @@ namespace HaulBuilder
         }
     }
 }
-#pragma warning restore CS1591

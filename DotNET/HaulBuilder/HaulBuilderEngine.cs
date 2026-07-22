@@ -431,16 +431,17 @@ namespace HaulBuilder
                                 Opt.Ponding.MapPixelsPerCell);
                     Result.Messages.Add(String.Format(
                         CultureInfo.InvariantCulture,
-                        "Ponding summary: peak={0:F2} BCY at pass {1}, max_depth={2:F3} m, outlets={3}, T={4:F1}->{5:F1} s, P={6:F2}->{7:F2} BCY, relocations={8}, analyser_failures={9}, weight={10:F1}.",
+                        "Ponding summary ({0}): penalty={1:F6}->{2:F6}, peak={3:F2} BCY at pass {4}, mean_avg_depth={5:F6} m, max_depth={6:F3} m, outlets={7}, T={8:F1}->{9:F1} s, relocations={10}, analyser_failures={11}, weight={12:F1}.",
+                        Opt.Ponding.ObjectiveMode,
+                        PondingResult.Before?.Penalty ?? FinalAudit.Penalty,
+                        FinalAudit.Penalty,
                         FinalAudit.PeakVolumeBcy,
                         FinalAudit.WorstCheckpoint.PassIndex,
+                        FinalAudit.MeanAveragePondDepthM,
                         FinalAudit.WorstCheckpoint.Metrics.MaxPondDepthM,
                         PondingResult.Outlets.Count,
                         PondingResult.TransitionCostBeforeS,
                         PondingResult.TransitionCostAfterS,
-                        PondingResult.Before?.PeakVolumeBcy
-                            ?? FinalAudit.PeakVolumeBcy,
-                        FinalAudit.PeakVolumeBcy,
                         PondingResult.RelocationsAccepted,
                         FinalAudit.AnalyserFailures,
                         Opt.Ponding.Weight));
@@ -1479,6 +1480,7 @@ namespace HaulBuilder
             PondingOptions Destination)
         {
             Destination.Optimize = Source.Optimize;
+            Destination.ObjectiveMode = Source.ObjectiveMode;
             Destination.Audit = Source.Audit;
             Destination.NoImplicitAudit = Source.NoImplicitAudit;
             Destination.TargetSpillOutlets = Source.TargetSpillOutlets;
