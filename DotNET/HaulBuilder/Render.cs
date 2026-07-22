@@ -684,6 +684,98 @@ namespace HaulBuilder
         }
 
         /// <summary>
+        /// Renders a consecutive route range from one connected lifecycle with
+        /// cut runs in red, fill runs in blue, and numbered route markers.
+        /// </summary>
+        /// <param name="Lifecycle">Final connected guidance lifecycle.</param>
+        /// <param name="Grid">Field grid used for projection.</param>
+        /// <param name="FirstRouteNumber">First 1-based route index in the sequence.</param>
+        /// <param name="RouteCount">Number of consecutive routes to include.</param>
+        /// <param name="BladeWidthM">Blade width in metres.</param>
+        /// <param name="PixelsPerBin">Render scale in pixels per grid cell.</param>
+        /// <param name="PadCells">Crop padding in cells.</param>
+        /// <returns>Cropped PNG bytes.</returns>
+        static public Byte[] RenderConsecutiveRouteSequencePng
+            (
+            LifecyclePlanner.Result Lifecycle,
+            Grid Grid,
+            Int32 FirstRouteNumber,
+            Int32 RouteCount,
+            Double BladeWidthM,
+            Int32 PixelsPerBin = 24,
+            Int32 PadCells = 8
+            )
+        {
+            if (Lifecycle == null) throw new ArgumentNullException(nameof(Lifecycle));
+            if (Grid == null) throw new ArgumentNullException(nameof(Grid));
+            if (RouteCount < 1)
+            {
+                throw new ArgumentOutOfRangeException(nameof(RouteCount));
+            }
+
+            Int32 LastRouteNumber = FirstRouteNumber + RouteCount - 1;
+            HashSet<Int32> RouteNumbers = Enumerable.Range(
+                FirstRouteNumber,
+                LastRouteNumber - FirstRouteNumber + 1).ToHashSet();
+            List<LifecyclePlanner.Segment> Segments = Lifecycle.Segments
+                .Where(Segment => RouteNumbers.Contains(Segment.RouteNumber))
+                .ToList();
+            List<IReadOnlyList<(Double X, Double Y)>> CutRuns = Segments
+                .Where(Segment => Segment.Phase == LifecyclePlanner.Phase.Cut)
+                .Select(Segment =>
+                    (IReadOnlyList<(Double X, Double Y)>)Segment.Points)
+                .ToList();
+            List<IReadOnlyList<(Double X, Double Y)>> FillRuns = Segments
+                .Where(Segment => Segment.Phase == LifecyclePlanner.Phase.Fill)
+                .Select(Segment =>
+                    (IReadOnlyList<(Double X, Double Y)>)Segment.Points)
+                .ToList();
+            List<IReadOnlyList<(Double X, Double Y)>> ManualRuns = Segments
+                .Where(Segment =>
+                    Segment.Phase == LifecyclePlanner.Phase.ManualAssist)
+                .Select(Segment =>
+                    (IReadOnlyList<(Double X, Double Y)>)Segment.Points)
+                .ToList();
+            List<(Double X, Double Y)> RoutePoints = Segments
+                .SelectMany(Segment => Segment.Points)
+                .ToList();
+            List<((Double X, Double Y) Point, String Label)> Markers =
+                new List<((Double X, Double Y) Point, String Label)>();
+            foreach (Int32 RouteNumber in RouteNumbers.OrderBy(Value => Value))
+            {
+                LifecyclePlanner.Segment? Cut = Segments.FirstOrDefault(
+                    Segment => Segment.RouteNumber == RouteNumber
+                        && Segment.Phase == LifecyclePlanner.Phase.Cut
+                        && Segment.Points.Count > 0);
+                LifecyclePlanner.Segment? Any = Segments.FirstOrDefault(
+                    Segment => Segment.RouteNumber == RouteNumber
+                        && Segment.Points.Count > 0);
+                LifecyclePlanner.Segment? MarkerSegment = Cut ?? Any;
+                if (MarkerSegment == null)
+                {
+                    continue;
+                }
+
+                Markers.Add((
+                    MarkerSegment.Points[MarkerSegment.Points.Count / 2],
+                    RouteNumber.ToString(CultureInfo.InvariantCulture)));
+            }
+
+            return RenderCoverageRunsPng(
+                Grid,
+                CutRuns,
+                FillRuns,
+                RoutePoints,
+                BladeWidthM,
+                PixelsPerBin,
+                PadCells,
+                ManualRuns,
+                Markers,
+                DrawDirectionArrows: true,
+                DirectionArrowSpacingM: 6.0 * Grid.GridSizeM);
+        }
+
+        /// <summary>
         /// Converts a world polyline to pixels and draws it at a fixed width.
         /// </summary>
         /// <param name="Image">Destination image.</param>

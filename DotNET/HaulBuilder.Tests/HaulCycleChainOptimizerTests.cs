@@ -61,39 +61,6 @@ namespace HaulBuilder.Tests
         }
 
         /// <summary>
-        /// Verifies field audit bounds do not exceed measured portfolio costs.
-        /// </summary>
-
-        [Fact]
-        public void FieldAuditBoundsDoNotExceedMeasuredPortfolioCosts()
-        {
-            Grid Grid = MakeGrid(70);
-            Double Load = 0.10 * Grid.AreaM2 * Constants.M3_TO_CY;
-            List<Pass> Source = new List<Pass>
-            {
-                MakePass(Grid, (30, 11), (30, 40), Load),
-                MakePass(Grid, (30, 55), (30, 30), Load),
-                MakePass(Grid, (40, 15), (40, 43), Load),
-            };
-
-            HaulFieldWideAudit.Result Result = HaulFieldWideAudit.Analyze(
-                Source,
-                Grid,
-                GradeReturn: false,
-                DirectionAware: false,
-                UnloadedTravelSpeedMph: 10.0,
-                TurnSpeedMph: 5.0,
-                TurningCircleFt: 20.0);
-
-            Assert.True(Result.TransitionLowerBoundSeconds
-                <= Result.CurrentTransitionSeconds + Constants.NUMERIC_COMPARISON_TOLERANCE);
-            Assert.True(Result.CutFillLowerBoundM
-                <= Result.CurrentCutFillCentroidM + Constants.NUMERIC_COMPARISON_TOLERANCE);
-            Assert.True(Result.JointLowerBoundEquivalentM
-                <= Result.CurrentJointEquivalentM + Constants.NUMERIC_COMPARISON_TOLERANCE);
-        }
-
-        /// <summary>
         /// Builds pass.
         /// </summary>
         /// <param name="Grid">Field grid used by the operation.</param>

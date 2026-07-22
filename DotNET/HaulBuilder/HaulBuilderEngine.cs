@@ -145,20 +145,16 @@ namespace HaulBuilder
                     OptimizedPasses = MultiRouteExchange.Passes;
                     Result.HaulMultiRouteExchange = MultiRouteExchange;
                 }
-                HaulDifficultCycleFilter.Result? DifficultFilter = null;
                 if ((PairRefinement != null)
                     || (EdgeCompletion != null)
                     || (RouteConsolidation != null)
-                    || (MultiRouteExchange != null)
-                    || (DifficultFilter != null))
+                    || (MultiRouteExchange != null))
                 {
                     IReadOnlyList<HaulDeferredWork> Deferred =
                         PreserveExistingDeferredReasons(
                             Ledger.BuildDeferredWork(
                                 OptimizedPasses,
-                                DifficultFilter == null
-                                    ? "OPTIMIZER_UNASSIGNED"
-                                    : "GUIDANCE_COMPACT_PREFLIGHT"),
+                                "OPTIMIZER_UNASSIGNED"),
                             Optimized.DeferredWork);
                     Double UnmatchedCutBcy = Deferred
                         .Where(Entry =>
@@ -190,8 +186,8 @@ namespace HaulBuilder
                         PairRefinement?.Swaps ?? 0,
                         PairRefinement?.BeforeM ?? 0.0,
                         PairRefinement?.AfterM ?? 0.0,
-                        DifficultFilter?.FailureCount ?? 0,
-                        DifficultFilter?.OmittedCycles ?? 0,
+                        0,
+                        0,
                         EdgeCompletion?.Passes.Count ?? 0,
                         EdgeCompletion?.OmittedCycles ?? 0);
                 }
@@ -301,7 +297,9 @@ namespace HaulBuilder
             }
 
             GuidancePlanner.BuildResult? PrecomputedGuidancePlan = null;
-            if (Opt.Optimization.EnableCycleChainOptimization)
+            // Exact chain promotion requires full guidance; skip when callers want a fast preview.
+            if (Opt.Optimization.EnableCycleChainOptimization
+                && !Opt.SkipGuidance)
             {
                 Route BaselineRoute = Route;
                 PassResult BaselinePassResult = PassResult;
@@ -456,8 +454,25 @@ namespace HaulBuilder
             // Pivot positions must exist before guidance so the final lifecycle can
             // route around the held arm for each executed haul route.
             BuildPivot(Result, Grid, Route, Obstacles, Opt);
-            BuildGuidance(Result, Grid, Field, Route, Obstacles, HeadingDeg, Opt,
-                PrecomputedGuidancePlan);
+            if (Opt.SkipGuidance)
+            {
+                Result.Messages.Add(
+                    "Exact production guidance skipped because SkipGuidance was set; "
+                    + "metrics use TimeModel estimates until guidance is built.");
+            }
+            else
+            {
+                BuildGuidance(
+                    Result,
+                    Grid,
+                    Field,
+                    Route,
+                    Obstacles,
+                    HeadingDeg,
+                    Opt,
+                    PrecomputedGuidancePlan);
+            }
+
             BuildTimingAndMetrics(Result, Grid, PassResult, Route, HeadingDeg, Opt);
             BuildAnimations(Result, Grid, Route, Opt);
 
@@ -725,6 +740,65 @@ namespace HaulBuilder
             }
 
             BuildPairSamples(Result, Grid, Guidance.Points, Options);
+            BuildRouteTriplets(Result, Grid, Options);
+        }
+
+        /// <summary>
+        /// Builds random PNGs of three consecutive routes with red cut and blue fill.
+        /// </summary>
+        /// <param name="Result">The result used by the operation.</param>
+        /// <param name="Grid">Field grid used by the operation.</param>
+        /// <param name="Options">Configuration controlling the operation.</param>
+        private static void BuildRouteTriplets
+            (
+            HaulBuilderResult Result,
+            Grid Grid,
+            HaulBuilderOptions Options
+            )
+        {
+            if (Options.RandomRouteTripletCount <= 0)
+            {
+                return;
+            }
+
+            if (Result.LifecycleGuidance == null)
+            {
+                return;
+            }
+
+            const Int32 ROUTES_PER_TRIPLET = 3;
+            Int32 PassCount = Result.Route?.OrderedPasses.Count ?? 0;
+            if (PassCount < ROUTES_PER_TRIPLET)
+            {
+                return;
+            }
+
+            Int32 MaximumStart = PassCount - ROUTES_PER_TRIPLET + 1;
+            Int32 Take = Math.Min(Options.RandomRouteTripletCount, MaximumStart);
+            Random Rng = new Random(Options.RandomSeed);
+            HashSet<Int32> Starts = new HashSet<Int32>();
+            while (Starts.Count < Take)
+            {
+                Starts.Add(Rng.Next(1, MaximumStart + 1));
+            }
+
+            Double BladeM = Options.BladeWidthMm / Constants.MILLIMETERS_PER_METER;
+            foreach (Int32 Start in Starts.OrderBy(Value => Value))
+            {
+                Int32 End = Start + ROUTES_PER_TRIPLET - 1;
+                String Key = String.Format(
+                    CultureInfo.InvariantCulture,
+                    "triplet_{0:D4}_{1:D4}",
+                    Start,
+                    End);
+                Result.PngBytesByName[Key] =
+                    Render.RenderConsecutiveRouteSequencePng(
+                        Result.LifecycleGuidance,
+                        Grid,
+                        Start,
+                        ROUTES_PER_TRIPLET,
+                        BladeM);
+            }
         }
 
         /// <summary>
@@ -1466,7 +1540,9 @@ namespace HaulBuilder
                 PivotAnimationStride = Options.PivotAnimationStride,
                 EquipmentWidthFt = Options.EquipmentWidthFt,
                 SkipHaulPlan = Options.SkipHaulPlan,
+                SkipGuidance = Options.SkipGuidance,
                 RandomRouteImageCount = Options.RandomRouteImageCount,
+                RandomRouteTripletCount = Options.RandomRouteTripletCount,
                 RandomSeed = Options.RandomSeed,
             };
             CopyOptimization(Options.Optimization, Copy.Optimization);
@@ -1601,6 +1677,9 @@ namespace HaulBuilder
             if (Options.RandomRouteImageCount < 0)
                 throw new ArgumentOutOfRangeException(
                     nameof(Options.RandomRouteImageCount));
+            if (Options.RandomRouteTripletCount < 0)
+                throw new ArgumentOutOfRangeException(
+                    nameof(Options.RandomRouteTripletCount));
             if (Options.AnimationStride <= 0)
                 throw new ArgumentOutOfRangeException(
                     nameof(Options.AnimationStride));

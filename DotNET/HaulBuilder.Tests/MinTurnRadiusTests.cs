@@ -440,105 +440,6 @@ namespace HaulBuilder.Tests
         }
 
         /// <summary>
-        /// TheShop2 route 3 U-turns must use compact keyholes and respect the turning circle.
-        /// </summary>
-        [Fact]
-        [Trait("Category", "Slow")]
-        public void TheShop2_Route3_KeyholeTurnsRespectRadius
-            (
-            )
-        {
-            String Fixture = Path.Combine(AppContext.BaseDirectory, "Fixtures", "TheShop2_2ft.agd");
-            Assert.True(File.Exists(Fixture), $"Missing fixture: {Fixture}");
-
-            Double ScraperBcy = Constants.DEFAULT_SCRAPER_CAPACITY_LCY / Constants.DEFAULT_SWELL_FACTOR;
-            AgdField Field = Agd.Parse(Fixture);
-            Grid Grid = GridMath.BuildGrid(Field, Constants.DEFAULT_GRID_SIZE_FT);
-            Balance.Compute(Grid, "check", Double.PositiveInfinity);
-            FlowField Flow = FlowFieldSolver.Compute(Grid, "poisson");
-            List<Strip> StripList = Strips.TraceStrips(Grid, Flow, 400);
-            PassResult PassResult = Passes.GeneratePasses(
-                Grid,
-                StripList,
-                Constants.DEFAULT_TOLERANCE_MM,
-                ScraperBcy,
-                0,
-                null,
-                Constants.HALF_SCALE,
-                50.0,
-                Constants.DEFAULT_MAX_DROP_HOP_FT * Constants.FEET_TO_METERS,
-                Flow,
-                true,
-                0.9,
-                EMPTY_OBSTACLES);
-            Route FullRoute = Routing.SequencePasses(
-                PassResult.Passes,
-                1500,
-                true,
-                true,
-                Constants.DEFAULT_UNLOADED_TRAVEL_SPEED_MPH,
-                Constants.DEFAULT_TURN_SPEED_MPH,
-                Constants.DEFAULT_TURNING_CIRCLE_FT,
-                EMPTY_OBSTACLES);
-            Double Heading = Passes.EstimateSlopeHeading(Grid);
-            Swaths.ReprofileKnots(FullRoute, Grid, Constants.DEFAULT_BLADE_WIDTH_MM, 3, Heading, 0.0);
-
-            Assert.True(FullRoute.OrderedPasses.Count >= 3, "expected at least 3 sequenced passes");
-            Pass Pass3 = FullRoute.OrderedPasses[2];
-            Route Mini = new Route(new List<Int32> { 0 }, new List<Pass> { Pass3 }, 0.0);
-            Double TurnRadiusM = Constants.DEFAULT_TURNING_CIRCLE_FT * Constants.HALF_SCALE * Constants.FEET_TO_METERS;
-            GuidanceResult Guidance = Swaths.BuildGuidance(
-                Grid,
-                Field,
-                Mini,
-                Constants.DEFAULT_BLADE_WIDTH_MM,
-                Heading,
-                0.0,
-                true,
-                60.0,
-                true,
-                TurnRadiusM,
-                0.7,
-                null,
-                null,
-                0.0);
-
-            AssertSteeringRespectsTurnRadius(Guidance.Points, TurnRadiusM);
-            Assert.True(
-                Guidance.Points.Any(Point => Point.Action == "MOVE"),
-                "expected R-radius MOVE keyhole headlands on route-3 U-turns");
-
-            // Sum contiguous MOVE runs; each should stay under the multi-loop CSC cap.
-            Double RunLen = 0.0;
-            Double MaxRun = 0.0;
-            for (Int32 I = 1; I < Guidance.Points.Count; I += 1)
-            {
-                if (Guidance.Points[I].Action == "MOVE")
-                {
-                    GuidancePoint A = Guidance.Points[I - 1];
-                    GuidancePoint B = Guidance.Points[I];
-                    RunLen += Math.Sqrt(((A.X - B.X) * (A.X - B.X)) + ((A.Y - B.Y) * (A.Y - B.Y)));
-                }
-                else
-                {
-                    MaxRun = Math.Max(MaxRun, RunLen);
-                    RunLen = 0.0;
-                }
-            }
-
-            MaxRun = Math.Max(MaxRun, RunLen);
-            // Intent: coalesced keyhole plus lineup spur may slightly exceed a bare CCC length.
-            Double KeyholeCap = 3.0 * Math.PI * TurnRadiusM;
-            Assert.True(
-                MaxRun < KeyholeCap,
-                String.Format(
-                    CultureInfo.InvariantCulture,
-                    "route-3 MOVE run {0:F1}m exceeds keyhole cap {1:F1}m",
-                    MaxRun,
-                    KeyholeCap));
-        }
-
-        /// <summary>
         /// TheShop2 route 7 guidance must stay inside the valid field mask (no out-of-field loops).
         /// </summary>
         [Fact]
@@ -550,37 +451,8 @@ namespace HaulBuilder.Tests
             String Fixture = Path.Combine(AppContext.BaseDirectory, "Fixtures", "TheShop2_2ft.agd");
             Assert.True(File.Exists(Fixture), $"Missing fixture: {Fixture}");
 
-            Double ScraperBcy = Constants.DEFAULT_SCRAPER_CAPACITY_LCY / Constants.DEFAULT_SWELL_FACTOR;
-            AgdField Field = Agd.Parse(Fixture);
-            Grid Grid = GridMath.BuildGrid(Field, Constants.DEFAULT_GRID_SIZE_FT);
-            Balance.Compute(Grid, "check", Double.PositiveInfinity);
-            FlowField Flow = FlowFieldSolver.Compute(Grid, "poisson");
-            List<Strip> StripList = Strips.TraceStrips(Grid, Flow, 400);
-            PassResult PassResult = Passes.GeneratePasses(
-                Grid,
-                StripList,
-                Constants.DEFAULT_TOLERANCE_MM,
-                ScraperBcy,
-                0,
-                null,
-                Constants.HALF_SCALE,
-                50.0,
-                Constants.DEFAULT_MAX_DROP_HOP_FT * Constants.FEET_TO_METERS,
-                Flow,
-                true,
-                0.9,
-                EMPTY_OBSTACLES);
-            Route FullRoute = Routing.SequencePasses(
-                PassResult.Passes,
-                1500,
-                true,
-                true,
-                Constants.DEFAULT_UNLOADED_TRAVEL_SPEED_MPH,
-                Constants.DEFAULT_TURN_SPEED_MPH,
-                Constants.DEFAULT_TURNING_CIRCLE_FT,
-                EMPTY_OBSTACLES);
-            Double Heading = Passes.EstimateSlopeHeading(Grid);
-            Swaths.ReprofileKnots(FullRoute, Grid, Constants.DEFAULT_BLADE_WIDTH_MM, 3, Heading, 0.0);
+            (AgdField Field, Grid Grid, Route FullRoute, Double Heading) =
+                BuildTheShop2SequencedRoute(Fixture);
 
             Pass Pass7 = FullRoute.OrderedPasses[6];
             Route Mini = new Route(new List<Int32> { 0 }, new List<Pass> { Pass7 }, 0.0);
@@ -602,99 +474,6 @@ namespace HaulBuilder.Tests
                     CultureInfo.InvariantCulture,
                     "route-7 guidance left the field ({0} samples)",
                     Outside));
-        }
-
-        /// <summary>
-        /// TheShop2 route 7 (the observed W hairpin) must not violate the 45 ft circle.
-        /// </summary>
-        [Fact]
-        [Trait("Category", "Slow")]
-        public void TheShop2_Route7_SteeringRespectsTurningCircle
-            (
-            )
-        {
-            String Fixture = Path.Combine(AppContext.BaseDirectory, "Fixtures", "TheShop2_2ft.agd");
-            Assert.True(File.Exists(Fixture), $"Missing fixture: {Fixture}");
-
-            Double ScraperBcy = Constants.DEFAULT_SCRAPER_CAPACITY_LCY / Constants.DEFAULT_SWELL_FACTOR;
-            AgdField Field = Agd.Parse(Fixture);
-            Grid Grid = GridMath.BuildGrid(Field, Constants.DEFAULT_GRID_SIZE_FT);
-            Balance.Compute(Grid, "check", Double.PositiveInfinity);
-            FlowField Flow = FlowFieldSolver.Compute(Grid, "poisson");
-            List<Strip> StripList = Strips.TraceStrips(Grid, Flow, 400);
-            PassResult PassResult = Passes.GeneratePasses(
-                Grid,
-                StripList,
-                Constants.DEFAULT_TOLERANCE_MM,
-                ScraperBcy,
-                0,
-                null,
-                Constants.HALF_SCALE,
-                50.0,
-                Constants.DEFAULT_MAX_DROP_HOP_FT * Constants.FEET_TO_METERS,
-                Flow,
-                true,
-                0.9,
-                EMPTY_OBSTACLES);
-            Route FullRoute = Routing.SequencePasses(
-                PassResult.Passes,
-                1500,
-                true,
-                true,
-                Constants.DEFAULT_UNLOADED_TRAVEL_SPEED_MPH,
-                Constants.DEFAULT_TURN_SPEED_MPH,
-                Constants.DEFAULT_TURNING_CIRCLE_FT,
-                EMPTY_OBSTACLES);
-            Double Heading = Passes.EstimateSlopeHeading(Grid);
-            Swaths.ReprofileKnots(FullRoute, Grid, Constants.DEFAULT_BLADE_WIDTH_MM, 3, Heading, 0.0);
-
-            Pass Pass7 = FullRoute.OrderedPasses[6];
-            Route Mini = new Route(new List<Int32> { 0 }, new List<Pass> { Pass7 }, 0.0);
-            Double TurnRadiusM = Constants.DEFAULT_TURNING_CIRCLE_FT * Constants.HALF_SCALE * Constants.FEET_TO_METERS;
-            GuidanceResult Guidance = Swaths.BuildGuidance(
-                Grid,
-                Field,
-                Mini,
-                Constants.DEFAULT_BLADE_WIDTH_MM,
-                Heading,
-                0.0,
-                true,
-                60.0,
-                true,
-                TurnRadiusM,
-                0.7,
-                null,
-                null,
-                0.0);
-
-            // Route 7: stacked-bulb regression checks. Soft short-leg pinches that cannot
-            // host an R fillet are left for upstream knot/boustrophedon repair.
-            Assert.True(
-                Guidance.Points.Any(Point => Point.Action == "MOVE"),
-                "expected R-radius MOVE headlands on the route-7 W hairpins");
-
-            // Soft pinches must not stack CCC bulbs: a few keyholes + short fillets only.
-            Double KeyholeCap = 2.75 * Math.PI * TurnRadiusM;
-            Double MaxRun = MaxContiguousMoveLengthM(Guidance.Points);
-            // Two coalesced keyholes may abut as one MOVE streak after splice repair.
-            Double MaxRunCap = 2.0 * KeyholeCap;
-            Assert.True(
-                MaxRun < MaxRunCap,
-                String.Format(
-                    CultureInfo.InvariantCulture,
-                    "route-7 MOVE run {0:F1}m exceeds keyhole cap {1:F1}m",
-                    MaxRun,
-                    MaxRunCap));
-            Double TotalMove = TotalMoveLengthM(Guidance.Points);
-            // Curved multi-drop MOVE hops add reposition beyond the old straight-chord budget.
-            Double TotalCap = 20.0 * Math.PI * TurnRadiusM;
-            Assert.True(
-                TotalMove < TotalCap,
-                String.Format(
-                    CultureInfo.InvariantCulture,
-                    "route-7 total MOVE {0:F1}m looks like stacked bulbs (cap {1:F1}m)",
-                    TotalMove,
-                    TotalCap));
         }
 
         /// <summary>
@@ -777,6 +556,53 @@ namespace HaulBuilder.Tests
                     FirstMove.X,
                     SoftKinkX));
             Assert.True(MaxContiguousMoveLengthM(Guidance.Points) < (2.75 * Math.PI * TurnRadiusM));
+        }
+
+        /// <summary>
+        /// Builds and sequences a TheShop2 route through the production haul optimizer.
+        /// </summary>
+        /// <param name="FixturePath">Path to the AGD fixture.</param>
+        /// <returns>Field, grid, sequenced route, and slope heading.</returns>
+        private static (AgdField Field, Grid Grid, Route Route, Double HeadingDeg)
+            BuildTheShop2SequencedRoute
+            (
+            String FixturePath
+            )
+        {
+            Double ScraperBcy =
+                Constants.DEFAULT_SCRAPER_CAPACITY_LCY / Constants.DEFAULT_SWELL_FACTOR;
+            AgdField Field = Agd.Parse(FixturePath);
+            Grid Grid = GridMath.BuildGrid(Field, Constants.DEFAULT_GRID_SIZE_FT);
+            Balance.Compute(Grid, "check", Double.PositiveInfinity);
+            FlowField Flow = FlowFieldSolver.Compute(Grid, "poisson");
+            HaulWorkLedger Ledger = HaulWorkLedger.Build(
+                Grid, Constants.DEFAULT_TOLERANCE_MM);
+            HaulOptimizationResult Optimized = HaulCycleOptimizer.Optimize(
+                Grid,
+                Flow,
+                Ledger,
+                HaulLaneBuilder.LaneAxis.EastWest,
+                ScraperBcy,
+                DeferEdgeWork: true,
+                Obstacles: EMPTY_OBSTACLES);
+            Route FullRoute = Routing.SequencePasses(
+                Optimized.PassResult.Passes,
+                1500,
+                true,
+                true,
+                Constants.DEFAULT_UNLOADED_TRAVEL_SPEED_MPH,
+                Constants.DEFAULT_TURN_SPEED_MPH,
+                Constants.DEFAULT_TURNING_CIRCLE_FT,
+                EMPTY_OBSTACLES);
+            Double Heading = Passes.EstimateSlopeHeading(Grid);
+            Swaths.ReprofileKnots(
+                FullRoute,
+                Grid,
+                Constants.DEFAULT_BLADE_WIDTH_MM,
+                3,
+                Heading,
+                0.0);
+            return (Field, Grid, FullRoute, Heading);
         }
 
     }

@@ -2,7 +2,8 @@ namespace HaulBuilder
 {
     /// <summary>
     /// User-facing inputs for the production haul planner. The current lane-first
-    /// optimizer and mandatory production guidance are always used; this type does
+    /// optimizer and mandatory production guidance are always used unless
+    /// <see cref="SkipGuidance"/> requests a fast plan-only preview; this type does
     /// not expose the retired greedy allocation mode.
     /// </summary>
     public sealed class HaulBuilderOptions
@@ -200,8 +201,23 @@ namespace HaulBuilder
         /// <summary>Gets or sets whether only field parsing, balance, flow, and map rendering run.</summary>
         public Boolean SkipHaulPlan { get; set; }
 
+        /// <summary>
+        /// Gets or sets whether exact production guidance is omitted after haul
+        /// planning, routing, and optional ponding. Pair maps, zone sequencing,
+        /// and productivity metrics still run; metrics fall back to
+        /// <see cref="TimeModel"/> estimates until guidance is built.
+        /// </summary>
+        public Boolean SkipGuidance { get; set; }
+
         /// <summary>Gets or sets random individual route image count; zero disables it.</summary>
         public Int32 RandomRouteImageCount { get; set; }
+
+        /// <summary>
+        /// Gets or sets how many random PNGs to emit, each showing three
+        /// consecutive routes with cut runs in red and fill runs in blue.
+        /// Zero disables triplet renders.
+        /// </summary>
+        public Int32 RandomRouteTripletCount { get; set; }
 
         /// <summary>Gets or sets the deterministic seed for zones and random renders.</summary>
         public Int32 RandomSeed { get; set; }
