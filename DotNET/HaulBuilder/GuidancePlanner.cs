@@ -24,6 +24,16 @@ static public class GuidancePlanner
     private const Int32 OMISSION_PROGRESS_INTERVAL = 25;
     private static readonly AsyncLocal<GeometrySettings?> CurrentGeometry =
         new AsyncLocal<GeometrySettings?>();
+    private static readonly AsyncLocal<CancellationToken> CurrentCancellation =
+        new AsyncLocal<CancellationToken>();
+
+    /// <summary>Throws when the active guidance-build cancellation token is set.</summary>
+    private static void ThrowIfCancellationRequested
+        (
+        )
+    {
+        CurrentCancellation.Value.ThrowIfCancellationRequested();
+    }
 
     /// <summary>One invocation's user-configured guidance geometry.</summary>
     private sealed class GeometrySettings
@@ -132,7 +142,8 @@ static public class GuidancePlanner
         Double HeadingDeg,
         HaulBuilderOptions Options,
         Action<String, Int32, Int32>? Progress = null,
-        Action<String>? Diagnostic = null
+        Action<String>? Diagnostic = null,
+        CancellationToken CancellationToken = default
         )
     {
         if (Route == null) throw new ArgumentNullException(nameof(Route));
@@ -149,12 +160,15 @@ static public class GuidancePlanner
             Diagnostic?.Invoke(Message);
         }
         GeometrySettings? PreviousGeometry = CurrentGeometry.Value;
+        CancellationToken PreviousCancellation = CurrentCancellation.Value;
         List<LifecyclePlanner.PassPlan> Passes;
         CurrentGeometry.Value = new GeometrySettings(
             Options.MinimumTurningDiameterFt * Constants.HALF_SCALE * Constants.FEET_TO_METERS,
             Options.EquipmentLengthFt * Constants.FEET_TO_METERS);
+        CurrentCancellation.Value = CancellationToken;
         try
         {
+            CancellationToken.ThrowIfCancellationRequested();
             Passes = BuildWholePlanPasses(
                 Route,
                 Grid,
@@ -163,35 +177,45 @@ static public class GuidancePlanner
                 Progress: Progress,
                 Diagnostic: ReportDiagnostic,
                 StopOnFailure: true);
+            CancellationToken.ThrowIfCancellationRequested();
+            Action<Int32, Int32>? LifecycleProgress = Progress == null
+                ? null
+                : (Completed, Total) => Progress.Invoke(
+                    "lifecycle",
+                    Completed,
+                    Total);
+            LifecyclePlanner.Result Lifecycle = LifecyclePlanner.Build(
+                Passes,
+                true,
+                Options.EquipmentLengthFt * Constants.FEET_TO_METERS,
+                Options.MinimumTurningDiameterFt * Constants.HALF_SCALE * Constants.FEET_TO_METERS,
+                Math.Min(Constants.HALF_SCALE, Grid.GridSizeM),
+                Grid,
+                Progress: LifecycleProgress,
+                FillSequencesPrepared: true,
+                CancellationToken: CancellationToken);
+            if (!Lifecycle.Success)
+            {
+                String Detail = PlanningDiagnostics.LastOrDefault(Message =>
+                    Message.Contains("sequence_failure", StringComparison.Ordinal))
+                    ?? "No sequencing diagnostic was recorded.";
+                throw new InvalidOperationException(
+                    "Guidance lifecycle construction failed: "
+                    + Lifecycle.FailureReason
+                    + " "
+                    + Detail);
+            }
+            GuidanceTiming.Result Timing = GuidanceTiming.Estimate(
+                Lifecycle, new GuidanceTiming.Options(Options));
+            GuidanceResult Guidance = BuildGuidanceResult(
+                Lifecycle, Timing, Route, Grid, Field, HeadingDeg, Options);
+            return new BuildResult(Lifecycle, Timing, Guidance, Passes);
         }
         finally
         {
             CurrentGeometry.Value = PreviousGeometry;
+            CurrentCancellation.Value = PreviousCancellation;
         }
-        LifecyclePlanner.Result Lifecycle = LifecyclePlanner.Build(
-            Passes,
-            true,
-            Options.EquipmentLengthFt * Constants.FEET_TO_METERS,
-            Options.MinimumTurningDiameterFt * Constants.HALF_SCALE * Constants.FEET_TO_METERS,
-            Math.Min(Constants.HALF_SCALE, Grid.GridSizeM),
-            Grid,
-            FillSequencesPrepared: true);
-        if (!Lifecycle.Success)
-        {
-            String Detail = PlanningDiagnostics.LastOrDefault(Message =>
-                Message.Contains("sequence_failure", StringComparison.Ordinal))
-                ?? "No sequencing diagnostic was recorded.";
-            throw new InvalidOperationException(
-                "Guidance lifecycle construction failed: "
-                + Lifecycle.FailureReason
-                + " "
-                + Detail);
-        }
-        GuidanceTiming.Result Timing = GuidanceTiming.Estimate(
-            Lifecycle, new GuidanceTiming.Options(Options));
-        GuidanceResult Guidance = BuildGuidanceResult(
-            Lifecycle, Timing, Route, Grid, Field, HeadingDeg, Options);
-        return new BuildResult(Lifecycle, Timing, Guidance, Passes);
     }
 
     /// <summary>
@@ -594,7 +618,11 @@ static public class GuidancePlanner
         String?[] Failures = new String?[PassCount];
         Int32 CoverageCompleted = 0;
         Progress?.Invoke("coverage", 0, PassCount);
-        Parallel.For(0, PassCount, PassIndex =>
+        ParallelOptions ParallelOptions = new ParallelOptions
+        {
+            CancellationToken = CurrentCancellation.Value,
+        };
+        Parallel.For(0, PassCount, ParallelOptions, PassIndex =>
         {
             Pass Pass = Route.OrderedPasses[PassIndex];
             CoveragePlanner.PlanResult Cut = CoveragePlanner.Plan(
@@ -617,6 +645,7 @@ static public class GuidancePlanner
         Progress?.Invoke("sequencing", 0, PassCount);
         for (Int32 PassIndex = 0; PassIndex < PassCount; PassIndex += 1)
         {
+            ThrowIfCancellationRequested();
             Stopwatch PassTimer = Stopwatch.StartNew();
             Stopwatch StageTimer = Stopwatch.StartNew();
             // Reports slow per-pass stages while avoiding noise from fast stages.
@@ -2950,6 +2979,7 @@ static public class GuidancePlanner
                 CandidateAttempts += 1;
                 if ((CandidateAttempts % CANDIDATE_PROGRESS_INTERVAL) == 0)
                 {
+                    ThrowIfCancellationRequested();
                     Diagnostic?.Invoke(String.Format(
                         CultureInfo.InvariantCulture,
                         "whole_plan backtrack_progress attempts={0} limit={1} cached_previous_options={2}",
@@ -3552,6 +3582,7 @@ static public class GuidancePlanner
                 }
                 if ((OmissionSets % OMISSION_PROGRESS_INTERVAL) == 0)
                 {
+                    ThrowIfCancellationRequested();
                     Diagnostic?.Invoke(String.Format(
                         CultureInfo.InvariantCulture,
                         "whole_plan edge_cut_omission_progress removed={0} sets_tested={1} limit={2}",

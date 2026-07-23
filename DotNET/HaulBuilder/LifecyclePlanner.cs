@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 
 namespace HaulBuilder
 {
@@ -205,7 +206,8 @@ namespace HaulBuilder
             Double SampleSpacingM,
             Grid Field,
             Action<Int32, Int32>? Progress = null,
-            Boolean FillSequencesPrepared = false
+            Boolean FillSequencesPrepared = false,
+            CancellationToken CancellationToken = default
             )
         {
             if (Passes == null) throw new ArgumentNullException(nameof(Passes));
@@ -216,6 +218,7 @@ namespace HaulBuilder
 
             for (Int32 PassIndex = 0; PassIndex < Passes.Count; PassIndex += 1)
             {
+                CancellationToken.ThrowIfCancellationRequested();
                 Int32 RouteSegmentStartIndex = Segments.Count;
                 PassPlan Pass = Passes[PassIndex];
                 if (!Pass.Cut.Success || !Pass.Fill.Success)

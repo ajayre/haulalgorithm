@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Linq;
 using System.Text;
+using System.Threading;
 
 namespace HaulBuilder
 {
@@ -17,12 +18,17 @@ namespace HaulBuilder
         /// Executes a full haul-planning run and returns typed in-memory results.
         /// </summary>
         /// <param name="Options">Validated production planning options.</param>
+        /// <param name="GuidanceProgress">Optional guidance-build progress reporter.</param>
+        /// <param name="CancellationToken">Cancellation token observed during guidance construction.</param>
         /// <returns>Structured pipeline outputs and render payloads.</returns>
         /// <exception cref="ArgumentNullException">Thrown when options is null.</exception>
         /// <exception cref="ArgumentException">Thrown when required options are invalid.</exception>
+        /// <exception cref="OperationCanceledException">Thrown when guidance construction is cancelled.</exception>
         public HaulBuilderResult Run
             (
-            HaulBuilderOptions Options
+            HaulBuilderOptions Options,
+            IProgress<GuidanceBuildProgress>? GuidanceProgress = null,
+            CancellationToken CancellationToken = default
             )
         {
             // Options are copied so later caller mutations cannot alter an already produced result.
@@ -356,10 +362,12 @@ namespace HaulBuilder
                 {
                     GuidanceCostOracle.Result BaselineExact =
                         GuidanceCostOracle.EvaluatePlan(
-                            BaselineRoute, Grid, Field, HeadingDeg, Opt);
+                            BaselineRoute, Grid, Field, HeadingDeg, Opt,
+                            CancellationToken: CancellationToken);
                     GuidanceCostOracle.Result CandidateExact =
                         GuidanceCostOracle.EvaluatePlan(
-                            CandidateRoute, Grid, Field, HeadingDeg, Opt);
+                            CandidateRoute, Grid, Field, HeadingDeg, Opt,
+                            CancellationToken: CancellationToken);
                     Boolean Promote = CandidateExact.Success
                         && (!BaselineExact.Success
                             || (CandidateExact.DeterministicSeconds
@@ -470,13 +478,58 @@ namespace HaulBuilder
                     Obstacles,
                     HeadingDeg,
                     Opt,
-                    PrecomputedGuidancePlan);
+                    PrecomputedGuidancePlan,
+                    GuidanceProgress,
+                    CancellationToken);
             }
 
             BuildTimingAndMetrics(Result, Grid, PassResult, Route, HeadingDeg, Opt);
             BuildAnimations(Result, Grid, Route, Opt);
 
             return Result;
+        }
+
+        /// <summary>Ensures guidance progress percentages never move backward.</summary>
+        private sealed class MonotonicGuidanceProgress
+        {
+            private readonly IProgress<GuidanceBuildProgress> Target;
+            private readonly Object Gate = new Object();
+            private Double LastPercent;
+
+            /// <summary>Initializes one monotonic guidance progress adapter.</summary>
+            /// <param name="Target">Underlying progress sink.</param>
+            public MonotonicGuidanceProgress
+                (
+                IProgress<GuidanceBuildProgress> Target
+                )
+            {
+                this.Target = Target;
+            }
+
+            /// <summary>Reports one planner phase when it advances overall progress.</summary>
+            /// <param name="Phase">Planner phase label.</param>
+            /// <param name="Completed">Completed units in the active phase.</param>
+            /// <param name="Total">Total units in the active phase.</param>
+            public void Report
+                (
+                String Phase,
+                Int32 Completed,
+                Int32 Total
+                )
+            {
+                GuidanceBuildProgress Snapshot =
+                    GuidanceBuildProgress.FromPlannerPhase(
+                        Phase, Completed, Total);
+                lock (Gate)
+                {
+                    if (Snapshot.PercentComplete < LastPercent)
+                    {
+                        return;
+                    }
+                    LastPercent = Snapshot.PercentComplete;
+                }
+                Target.Report(Snapshot);
+            }
         }
 
         /// <summary>Rebinds allocation diagnostics to a transactionally promoted pass set.</summary>
@@ -654,6 +707,8 @@ namespace HaulBuilder
         /// <param name="HeadingDeg">Direction in degrees.</param>
         /// <param name="Options">Configuration controlling the operation.</param>
         /// <param name="PrecomputedPlan">The precomputed plan used by the operation.</param>
+        /// <param name="GuidanceProgress">Optional guidance-build progress reporter.</param>
+        /// <param name="CancellationToken">Cancellation token observed during guidance construction.</param>
 
         private static void BuildGuidance
             (
@@ -664,10 +719,19 @@ namespace HaulBuilder
             ObstacleField Obstacles,
             Double HeadingDeg,
             HaulBuilderOptions Options,
-            GuidancePlanner.BuildResult? PrecomputedPlan = null
+            GuidancePlanner.BuildResult? PrecomputedPlan = null,
+            IProgress<GuidanceBuildProgress>? GuidanceProgress = null,
+            CancellationToken CancellationToken = default
             )
         {
             // Exact production guidance is mandatory for every completed haul plan.
+            MonotonicGuidanceProgress? MonotonicProgress =
+                GuidanceProgress == null
+                    ? null
+                    : new MonotonicGuidanceProgress(GuidanceProgress);
+            Action<String, Int32, Int32>? PlannerProgress = MonotonicProgress == null
+                ? null
+                : MonotonicProgress.Report;
 
             GuidancePlanner.BuildResult Plan = PrecomputedPlan
                 ?? GuidancePlanner.Build(
@@ -676,7 +740,9 @@ namespace HaulBuilder
                     Field,
                     HeadingDeg,
                     Options,
-                    Diagnostic: Message => Result.Messages.Add(Message));
+                    Progress: PlannerProgress,
+                    Diagnostic: Message => Result.Messages.Add(Message),
+                    CancellationToken: CancellationToken);
 
             if (Obstacles.Active)
             {

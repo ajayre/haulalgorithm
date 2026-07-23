@@ -1,4 +1,5 @@
 using System;
+using System.Threading;
 
 namespace HaulBuilder
 {
@@ -58,15 +59,20 @@ namespace HaulBuilder
             Double HeadingDeg,
             HaulBuilderOptions Options,
             Action<String, Int32, Int32>? Progress = null,
-            Action<String>? Diagnostic = null
+            Action<String>? Diagnostic = null,
+            CancellationToken CancellationToken = default
             )
         {
             try
             {
                 GuidancePlanner.BuildResult Plan = GuidancePlanner.Build(
                     Route, Grid, Field, HeadingDeg, Options,
-                    Progress, Diagnostic);
+                    Progress, Diagnostic, CancellationToken);
                 return new Result(true, Plan, String.Empty);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
             }
             catch (Exception Error)
             {
