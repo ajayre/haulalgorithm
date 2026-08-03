@@ -213,6 +213,13 @@ namespace HaulBuilder
         public Int32 RandomRouteImageCount { get; set; }
 
         /// <summary>
+        /// Gets or sets how many consecutive route PNGs to emit from route 1
+        /// through route N, each showing one route's cut/fill guidance geometry.
+        /// Zero disables sequential route renders.
+        /// </summary>
+        public Int32 RouteGuidanceImageCount { get; set; }
+
+        /// <summary>
         /// Gets or sets how many random PNGs to emit, each showing three
         /// consecutive routes with cut runs in red and fill runs in blue.
         /// Zero disables triplet renders.

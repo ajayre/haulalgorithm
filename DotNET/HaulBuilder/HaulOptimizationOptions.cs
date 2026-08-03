@@ -43,8 +43,12 @@ namespace HaulBuilder
         /// <summary>Gets or sets minimum compact-guidance improvement per exchange.</summary>
         public Double MultiRouteExchangeMinimumImprovementM { get; set; } = 1.0;
 
-        /// <summary>Gets or sets whether exact-gated field-wide fill-chain refinement runs.</summary>
-        public Boolean EnableCycleChainOptimization { get; set; } = true;
+        /// <summary>
+        /// Gets or sets whether exact-gated field-wide fill-chain refinement runs.
+        /// Disabled by default because promotion requires two full guidance builds;
+        /// enable when trading build time for lower deterministic drive time.
+        /// </summary>
+        public Boolean EnableCycleChainOptimization { get; set; }
 
         /// <summary>Gets or sets field-wide fill-chain rounds.</summary>
         public Int32 CycleChainRounds { get; set; } = 1;

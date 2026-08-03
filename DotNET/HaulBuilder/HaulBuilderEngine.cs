@@ -806,7 +806,55 @@ namespace HaulBuilder
             }
 
             BuildPairSamples(Result, Grid, Guidance.Points, Options);
+            BuildRouteGuidanceImages(Result, Grid, Options);
             BuildRouteTriplets(Result, Grid, Options);
+        }
+
+        /// <summary>
+        /// Builds one cut/fill guidance PNG for each of the first N routes.
+        /// </summary>
+        /// <param name="Result">The result used by the operation.</param>
+        /// <param name="Grid">Field grid used by the operation.</param>
+        /// <param name="Options">Configuration controlling the operation.</param>
+        private static void BuildRouteGuidanceImages
+            (
+            HaulBuilderResult Result,
+            Grid Grid,
+            HaulBuilderOptions Options
+            )
+        {
+            if (Options.RouteGuidanceImageCount <= 0)
+            {
+                return;
+            }
+
+            if (Result.LifecycleGuidance == null)
+            {
+                return;
+            }
+
+            Int32 PassCount = Result.Route?.OrderedPasses.Count ?? 0;
+            if (PassCount <= 0)
+            {
+                return;
+            }
+
+            Int32 Take = Math.Min(Options.RouteGuidanceImageCount, PassCount);
+            Double BladeM = Options.BladeWidthMm / Constants.MILLIMETERS_PER_METER;
+            for (Int32 RouteNumber = 1; RouteNumber <= Take; RouteNumber += 1)
+            {
+                String Key = String.Format(
+                    CultureInfo.InvariantCulture,
+                    "pair_{0:D4}",
+                    RouteNumber);
+                Result.PngBytesByName[Key] =
+                    Render.RenderConsecutiveRouteSequencePng(
+                        Result.LifecycleGuidance,
+                        Grid,
+                        RouteNumber,
+                        1,
+                        BladeM);
+            }
         }
 
         /// <summary>
@@ -1608,6 +1656,7 @@ namespace HaulBuilder
                 SkipHaulPlan = Options.SkipHaulPlan,
                 SkipGuidance = Options.SkipGuidance,
                 RandomRouteImageCount = Options.RandomRouteImageCount,
+                RouteGuidanceImageCount = Options.RouteGuidanceImageCount,
                 RandomRouteTripletCount = Options.RandomRouteTripletCount,
                 RandomSeed = Options.RandomSeed,
             };
@@ -1743,6 +1792,9 @@ namespace HaulBuilder
             if (Options.RandomRouteImageCount < 0)
                 throw new ArgumentOutOfRangeException(
                     nameof(Options.RandomRouteImageCount));
+            if (Options.RouteGuidanceImageCount < 0)
+                throw new ArgumentOutOfRangeException(
+                    nameof(Options.RouteGuidanceImageCount));
             if (Options.RandomRouteTripletCount < 0)
                 throw new ArgumentOutOfRangeException(
                     nameof(Options.RandomRouteTripletCount));

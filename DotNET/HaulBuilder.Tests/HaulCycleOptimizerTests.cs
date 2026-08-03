@@ -30,7 +30,7 @@ namespace HaulBuilder.Tests
             Assert.Equal(50, Options.Optimization.RouteConsolidationMaximumCycles);
             Assert.Equal(10, Options.Optimization.MaxLaneSlicesPerCycle);
             Assert.Equal(8, Options.Optimization.PairRefinementRounds);
-            Assert.True(Options.Optimization.EnableCycleChainOptimization);
+            Assert.False(Options.Optimization.EnableCycleChainOptimization);
             Assert.Equal(1, Options.Optimization.CycleChainRounds);
             Assert.Equal(1,
                 Options.Optimization.CycleChainCandidatesPerRoute);

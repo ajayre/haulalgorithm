@@ -62,6 +62,7 @@ namespace HaulBuilder.Tests
                 nameof(HaulBuilderOptions.PivotPixelsPerCell),
                 nameof(HaulBuilderOptions.PivotWheelbaseFt),
                 nameof(HaulBuilderOptions.RandomRouteImageCount),
+                nameof(HaulBuilderOptions.RouteGuidanceImageCount),
                 nameof(HaulBuilderOptions.RandomRouteTripletCount),
                 nameof(HaulBuilderOptions.RandomSeed),
                 nameof(HaulBuilderOptions.ScraperCapacityLcy),
