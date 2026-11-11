@@ -220,6 +220,113 @@ namespace HaulBuilder.Tests
         }
 
         /// <summary>
+        /// Verifies short-run fill omission pulls matching cut volume so the haul stays balanced.
+        /// </summary>
+        [Fact]
+        public void BalanceShortRunVolumes_OmitsMatchingCutWhenFillScrapDropped
+            (
+            )
+        {
+            Grid Grid = MakeGrid();
+            const Double DepthM = 0.05;
+            List<((Int32 Bx, Int32 By) Cell, Double DepthM)> CutCells =
+                new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>();
+            // Long cut strip that remains after the gate and can donate balance volume.
+            for (Int32 Bx = 2; Bx <= 12; Bx += 1)
+            {
+                CutCells.Add(((Bx, 5), DepthM));
+            }
+            List<((Int32 Bx, Int32 By) Cell, Double DepthM)> FillCells =
+                new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>();
+            for (Int32 Bx = 2; Bx <= 12; Bx += 1)
+            {
+                FillCells.Add(((Bx, 8), DepthM));
+            }
+            // Isolated fill scrap that the min-length gate must drop.
+            FillCells.Add(((2, 15), DepthM));
+
+            const Double MinimumWorkLengthM = 3.0;
+            CoveragePlanner.PlanResult Cut = CoveragePlanner.Plan(
+                CutCells,
+                Grid,
+                BLADE_WIDTH_M,
+                MinimumWorkLengthM: MinimumWorkLengthM);
+            CoveragePlanner.PlanResult Fill = CoveragePlanner.Plan(
+                FillCells,
+                Grid,
+                BLADE_WIDTH_M,
+                MinimumWorkLengthM: MinimumWorkLengthM);
+            Assert.Empty(Cut.ShortRunOmittedCells);
+            Assert.NotEmpty(Fill.ShortRunOmittedCells);
+
+            (CoveragePlanner.PlanResult BalancedCut,
+                CoveragePlanner.PlanResult BalancedFill) =
+                CoveragePlanner.BalanceShortRunVolumes(
+                    Cut, Fill, Grid, MinimumWorkLengthM);
+
+            Double CutFactor = Grid.AreaM2 * Constants.M3_TO_CY;
+            Double FillFactor = CutFactor * Grid.Compaction;
+            Double CutShortBcy = BalancedCut.ShortRunOmittedCells
+                .Where(Entry => Entry.DepthM > 0.0)
+                .Sum(Entry => Entry.DepthM * CutFactor);
+            Double FillShortBcy = BalancedFill.ShortRunOmittedCells
+                .Where(Entry => Entry.DepthM > 0.0)
+                .Sum(Entry => Entry.DepthM * FillFactor);
+            Assert.True(
+                CutShortBcy + Constants.NUMERIC_COMPARISON_TOLERANCE >= FillShortBcy);
+            Assert.True(
+                BalancedCut.ShortRunOmittedCells.Count
+                > Cut.ShortRunOmittedCells.Count);
+            Assert.True(
+                BalancedCut.OrderedCells.Count < Cut.OrderedCells.Count);
+        }
+
+        /// <summary>
+        /// Verifies runs shorter than the minimum work length are omitted and conserved.
+        /// </summary>
+        [Fact]
+        public void Plan_OmitsRunsBelowMinimumWorkLength
+            (
+            )
+        {
+            Grid Grid = MakeGrid();
+            List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Cells =
+                new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>();
+            // Long continuous strip (~8 m centerline) that must remain driven.
+            for (Int32 Bx = 2; Bx <= 10; Bx += 1)
+            {
+                Cells.Add(((Bx, 5), 0.02));
+            }
+            // Isolated scrap cell that forms its own ~1 m run.
+            Cells.Add(((2, 12), 0.03));
+
+            const Double MinimumWorkLengthM = 3.0;
+            CoveragePlanner.PlanResult Plan = CoveragePlanner.Plan(
+                Cells,
+                Grid,
+                BLADE_WIDTH_M,
+                null,
+                null,
+                MinimumWorkLengthM);
+
+            Assert.True(CoveragePlanner.ConservesAllocation(
+                Cells, Plan.AccountedCells));
+            Assert.NotEmpty(Plan.Runs);
+            Assert.All(
+                Plan.Runs,
+                Run => Assert.True(
+                    Run.LengthM + Constants.NUMERIC_COMPARISON_TOLERANCE
+                    >= MinimumWorkLengthM));
+            Assert.NotEmpty(Plan.ShortRunOmittedCells);
+            Assert.Contains(
+                Plan.ShortRunOmittedCells,
+                Entry => Entry.Cell == (2, 12));
+            Assert.DoesNotContain(
+                Plan.OrderedCells,
+                Entry => Entry.Cell == (2, 12));
+        }
+
+        /// <summary>
         /// Creates a deterministic cell pattern whose supplied ordering repeatedly reverses direction.
         /// </summary>
         private static List<((Int32 Bx, Int32 By) Cell, Double DepthM)> MakeKnottedCells

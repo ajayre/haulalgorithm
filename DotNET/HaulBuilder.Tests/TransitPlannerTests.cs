@@ -235,6 +235,53 @@ namespace HaulBuilder.Tests
         }
 
         /// <summary>
+        /// Verifies a southbound corridor right-jog prefers the short alignment path
+        /// over a full-circle Dubins word (TheShop2 route-7 fill→fill class).
+        /// </summary>
+        [Fact]
+        public void Connect_CorridorRightJog_PrefersShortAlignmentJogOverFullCircle
+            (
+            )
+        {
+            const Double RadiusM = 7.62;
+            Grid Grid = MakeGrid(80, 80, null);
+            // Intent: scaled copy of route-7 fill-conn poses (Δ≈(-2.6,-4.9), both h=180).
+            ConnectorPlanner.Pose Start =
+                new ConnectorPlanner.Pose(40.0, 50.0, 180.0);
+            ConnectorPlanner.Pose End =
+                new ConnectorPlanner.Pose(37.4, 45.1, 180.0);
+
+            ConnectorPlanner.Result Exact = ConnectorPlanner.Connect(
+                Start, End, RadiusM, 0.5, Grid);
+            TransitPlanner.Result Result = TransitPlanner.Connect(
+                Start, End, RadiusM, 0.5, Grid, true, 8.0);
+
+            Double DirectM = Math.Sqrt(
+                ((End.X - Start.X) * (End.X - Start.X))
+                + ((End.Y - Start.Y) * (End.Y - Start.Y)));
+            Assert.True(Exact.Success, Exact.FailureReason);
+            Assert.True(
+                Exact.LengthM > (DirectM + (Math.PI * RadiusM)),
+                String.Format(
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    "exact len {0:F1} word={1} should waste ≥ half-turn vs direct {2:F1}",
+                    Exact.LengthM,
+                    Exact.Word,
+                    DirectM));
+            Assert.True(Result.Success, Result.FailureReason);
+            Assert.Equal("AUTO_SHORT_ALIGNMENT_JOG", Result.Mode);
+            Assert.InRange(Result.LengthM, DirectM - 0.05, DirectM + 0.05);
+            Assert.True(
+                Result.LengthM < (0.5 * Exact.LengthM),
+                String.Format(
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    "jog {0:F1} should beat exact {1:F1} word={2}",
+                    Result.LengthM,
+                    Exact.LengthM,
+                    Exact.Word));
+        }
+
+        /// <summary>
         /// Sweeps more than three thousand nearby pose combinations and verifies the
         /// global connector quality gate never returns a disproportionate loop.
         /// </summary>

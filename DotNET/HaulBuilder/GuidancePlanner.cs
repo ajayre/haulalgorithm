@@ -42,11 +42,13 @@ static public class GuidancePlanner
         public GeometrySettings
             (
             Double MinimumRadiusM,
-            Double PreferredLineupM
+            Double PreferredLineupM,
+            Double MinimumWorkLengthM
             )
         {
             this.MinimumRadiusM = MinimumRadiusM;
             this.PreferredLineupM = PreferredLineupM;
+            this.MinimumWorkLengthM = MinimumWorkLengthM;
         }
 
         /// <summary>Gets the minimum turning radius.</summary>
@@ -54,6 +56,9 @@ static public class GuidancePlanner
 
         /// <summary>Gets the preferred straight lineup distance.</summary>
         public Double PreferredLineupM { get; }
+
+        /// <summary>Gets the minimum blade-down cut/fill run length.</summary>
+        public Double MinimumWorkLengthM { get; }
     }
 
     /// <summary>Gets the active or default minimum turning radius.</summary>
@@ -65,6 +70,40 @@ static public class GuidancePlanner
     private static Double PlanningPreferredLineupM =>
         CurrentGeometry.Value?.PreferredLineupM
         ?? Constants.DEFAULT_EQUIPMENT_LENGTH_FT * Constants.FEET_TO_METERS;
+
+    /// <summary>Gets the active or default minimum blade-down work length.</summary>
+    private static Double PlanningMinimumWorkLengthM =>
+        CurrentGeometry.Value?.MinimumWorkLengthM
+        ?? (Constants.DEFAULT_EQUIPMENT_LENGTH_FT
+            * Constants.HALF_SCALE
+            * Constants.FEET_TO_METERS);
+
+    /// <summary>
+    /// Plans coverage using the active minimum blade-down work length.
+    /// </summary>
+    /// <param name="Cells">Allocated cells and depths.</param>
+    /// <param name="Grid">Field grid.</param>
+    /// <param name="BladeM">Blade width in metres.</param>
+    /// <param name="OrientStartXy">Optional approach anchor.</param>
+    /// <param name="OrientEndXy">Optional exit anchor.</param>
+    /// <returns>Lowest-scoring coverage candidate.</returns>
+    private static CoveragePlanner.PlanResult PlanCoverage
+        (
+        List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Cells,
+        Grid Grid,
+        Double BladeM,
+        (Double X, Double Y)? OrientStartXy = null,
+        (Double X, Double Y)? OrientEndXy = null
+        )
+    {
+        return CoveragePlanner.Plan(
+            Cells,
+            Grid,
+            BladeM,
+            OrientStartXy,
+            OrientEndXy,
+            PlanningMinimumWorkLengthM);
+    }
 
     /// <summary>Compact isolated-cycle feasibility used by haul allocation refinement.</summary>
     public sealed class CompactCycleResult
@@ -164,7 +203,8 @@ static public class GuidancePlanner
         List<LifecyclePlanner.PassPlan> Passes;
         CurrentGeometry.Value = new GeometrySettings(
             Options.MinimumTurningDiameterFt * Constants.HALF_SCALE * Constants.FEET_TO_METERS,
-            Options.EquipmentLengthFt * Constants.FEET_TO_METERS);
+            Options.EquipmentLengthFt * Constants.FEET_TO_METERS,
+            Options.ResolveMinimumWorkLengthM());
         CurrentCancellation.Value = CancellationToken;
         try
         {
@@ -216,6 +256,89 @@ static public class GuidancePlanner
             CurrentGeometry.Value = PreviousGeometry;
             CurrentCancellation.Value = PreviousCancellation;
         }
+    }
+
+    /// <summary>
+    /// Concatenates a main guidance plan with an end-of-job cleanup plan, offsets
+    /// cleanup route numbers, and rebuilds timing plus waypoint export.
+    /// </summary>
+    /// <param name="Head">Main-job guidance plan.</param>
+    /// <param name="Tail">Cleanup guidance plan whose route numbers start at 1.</param>
+    /// <param name="CombinedRoute">Full route including appended cleanup passes.</param>
+    /// <param name="Grid">Field grid.</param>
+    /// <param name="Field">AGD field model.</param>
+    /// <param name="HeadingDeg">Lane axis heading.</param>
+    /// <param name="Options">Production options for retiming.</param>
+    /// <param name="HeadPassCount">Number of main-job passes before cleanup.</param>
+    /// <returns>Merged guidance build result.</returns>
+    static public BuildResult Concatenate
+        (
+        BuildResult Head,
+        BuildResult Tail,
+        Route CombinedRoute,
+        Grid Grid,
+        AgdField Field,
+        Double HeadingDeg,
+        HaulBuilderOptions Options,
+        Int32 HeadPassCount
+        )
+    {
+        if (Head == null)
+        {
+            throw new ArgumentNullException(nameof(Head));
+        }
+        if (Tail == null)
+        {
+            throw new ArgumentNullException(nameof(Tail));
+        }
+        if (CombinedRoute == null)
+        {
+            throw new ArgumentNullException(nameof(CombinedRoute));
+        }
+        if (Grid == null)
+        {
+            throw new ArgumentNullException(nameof(Grid));
+        }
+        if (Field == null)
+        {
+            throw new ArgumentNullException(nameof(Field));
+        }
+        if (Options == null)
+        {
+            throw new ArgumentNullException(nameof(Options));
+        }
+        if (HeadPassCount < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(HeadPassCount));
+        }
+
+        // Intent: cleanup was planned as its own 1..N route; renumber onto the job tail.
+        foreach (LifecyclePlanner.Segment Segment in Tail.Lifecycle.Segments)
+        {
+            if (Segment.RouteNumber > 0)
+            {
+                Segment.RouteNumber += HeadPassCount;
+            }
+        }
+        List<LifecyclePlanner.Segment> Segments =
+            new List<LifecyclePlanner.Segment>(Head.Lifecycle.Segments);
+        Segments.AddRange(Tail.Lifecycle.Segments);
+        LifecyclePlanner.Result Lifecycle = new LifecyclePlanner.Result(
+            Head.Lifecycle.Success && Tail.Lifecycle.Success,
+            Segments,
+            Head.Lifecycle.ManualAssistCount + Tail.Lifecycle.ManualAssistCount,
+            Head.Lifecycle.DistanceM + Tail.Lifecycle.DistanceM,
+            Head.Lifecycle.Success
+                ? Tail.Lifecycle.FailureReason
+                : Head.Lifecycle.FailureReason);
+        GuidanceTiming.Result Timing = GuidanceTiming.Estimate(
+            Lifecycle, new GuidanceTiming.Options(Options));
+        GuidanceResult Guidance = BuildGuidanceResult(
+            Lifecycle, Timing, CombinedRoute, Grid, Field, HeadingDeg, Options);
+        List<LifecyclePlanner.PassPlan> Passes =
+            new List<LifecyclePlanner.PassPlan>(Head.Passes);
+        Passes.AddRange(Tail.Passes);
+        return new BuildResult(Lifecycle, Timing, Guidance, Passes);
     }
 
     /// <summary>
@@ -488,18 +611,34 @@ static public class GuidancePlanner
         Pass Pass,
         Grid Grid,
         Double BladeM,
-        Boolean GradeReturn
+        Boolean GradeReturn,
+        Double? MinimumWorkLengthM = null
         )
     {
         if (Pass == null) throw new ArgumentNullException(nameof(Pass));
         if (Grid == null) throw new ArgumentNullException(nameof(Grid));
+        // Null inherits the ambient engine minimum so compact preflight matches
+        // production guidance; an explicit value overrides that scope.
         CoveragePlanner.PlanResult Cut = CoveragePlanner.Plan(
-            Pass.CutCells, Grid, BladeM, null, Pass.FillStartXy);
+            Pass.CutCells,
+            Grid,
+            BladeM,
+            null,
+            Pass.FillStartXy,
+            MinimumWorkLengthM);
         (Double X, Double Y)? FillAnchor = Cut.Runs.Count == 0
             ? null
             : Cut.Runs[Cut.Runs.Count - 1].EndXy;
         CoveragePlanner.PlanResult Fill = CoveragePlanner.Plan(
-            Pass.FillCells, Grid, BladeM, FillAnchor, null);
+            Pass.FillCells,
+            Grid,
+            BladeM,
+            FillAnchor,
+            null,
+            MinimumWorkLengthM);
+        // Intent: short-run scraps on one side must pull matching volume from the other.
+        (Cut, Fill) = CoveragePlanner.BalanceShortRunVolumes(
+            Cut, Fill, Grid, MinimumWorkLengthM);
         RunSequencer.Result FillSequence = BuildSequence(Fill.Runs, Grid);
         if (!FillSequence.Success)
         {
@@ -625,13 +764,14 @@ static public class GuidancePlanner
         Parallel.For(0, PassCount, ParallelOptions, PassIndex =>
         {
             Pass Pass = Route.OrderedPasses[PassIndex];
-            CoveragePlanner.PlanResult Cut = CoveragePlanner.Plan(
+            CoveragePlanner.PlanResult Cut = PlanCoverage(
                 Pass.CutCells, Grid, BladeM, null, Pass.FillStartXy);
             (Double X, Double Y)? FillAnchor = Cut.Runs.Count == 0
                 ? null
                 : Cut.Runs[Cut.Runs.Count - 1].EndXy;
-            CoveragePlanner.PlanResult Fill = CoveragePlanner.Plan(
+            CoveragePlanner.PlanResult Fill = PlanCoverage(
                 Pass.FillCells, Grid, BladeM, FillAnchor, null);
+            (Cut, Fill) = CoveragePlanner.BalanceShortRunVolumes(Cut, Fill, Grid);
             CutPlans[PassIndex] = Cut;
             FillPlans[PassIndex] = Fill;
             Progress?.Invoke(
@@ -667,6 +807,10 @@ static public class GuidancePlanner
                 ?? throw new InvalidOperationException("Parallel coverage construction omitted cut work.");
             CoveragePlanner.PlanResult Fill = FillPlans[PassIndex]
                 ?? throw new InvalidOperationException("Parallel coverage construction omitted fill work.");
+            // Re-assert haul balance after any prior recovery rewrite of either side.
+            (Cut, Fill) = CoveragePlanner.BalanceShortRunVolumes(Cut, Fill, Grid);
+            CutPlans[PassIndex] = Cut;
+            FillPlans[PassIndex] = Fill;
             Progress?.Invoke(
                 String.Format(
                     CultureInfo.InvariantCulture,
@@ -1096,7 +1240,9 @@ static public class GuidancePlanner
                                 PreviousPass.Cut,
                                 BacktrackedPreviousSequence,
                                 PreviousPass.CutOmittedCells,
-                                BacktrackedPreviousFill.OmittedCells);
+                                BacktrackedPreviousFill.OmittedCells,
+                                PreviousPass.CutShortOmittedCells,
+                                BacktrackedPreviousFill.ShortRunOmittedCells);
                         FillPlans[PassIndex - 1] = BacktrackedPreviousFill;
                         FillPlans[PassIndex] = BacktrackedCurrentFill;
                         PreselectedFillSequences[PassIndex] = BacktrackedCurrentSequence;
@@ -1136,7 +1282,9 @@ static public class GuidancePlanner
                                 PreviousPass.Cut,
                                 TriplePreviousSequence,
                                 PreviousPass.CutOmittedCells,
-                                TriplePreviousFill.OmittedCells);
+                                TriplePreviousFill.OmittedCells,
+                                PreviousPass.CutShortOmittedCells,
+                                TriplePreviousFill.ShortRunOmittedCells);
                         FillPlans[PassIndex - 1] = TriplePreviousFill;
                         CutPlans[PassIndex] = TripleCut;
                         FillPlans[PassIndex] = TripleFill;
@@ -1553,7 +1701,9 @@ static public class GuidancePlanner
                             PreviousPass.Cut,
                             BacktrackedPreviousSequence,
                             PreviousPass.CutOmittedCells,
-                            BacktrackedPreviousFill.OmittedCells);
+                            BacktrackedPreviousFill.OmittedCells,
+                            PreviousPass.CutShortOmittedCells,
+                            BacktrackedPreviousFill.ShortRunOmittedCells);
                     FillPlans[PassIndex - 1] = BacktrackedPreviousFill;
                     CutPlans[PassIndex] = BacktrackedCut;
                     FillPlans[PassIndex] = BacktrackedFill;
@@ -1620,7 +1770,9 @@ static public class GuidancePlanner
                             DeeperPreviousCut,
                             DeeperPreviousFillSequence,
                             PreviousPass.CutOmittedCells,
-                            DeeperPreviousFill.OmittedCells);
+                            DeeperPreviousFill.OmittedCells,
+                            PreviousPass.CutShortOmittedCells,
+                            DeeperPreviousFill.ShortRunOmittedCells);
                     FillPlans[PassIndex - 1] = DeeperPreviousFill;
                     CutPlans[PassIndex] = DeeperCut;
                     FillPlans[PassIndex] = DeeperFill;
@@ -1771,37 +1923,11 @@ static public class GuidancePlanner
                     PreviousToFillConnected);
             }
             ReportStage("final_connectivity_validation");
-            if ((Failures[PassIndex] == null)
-                && CutSequence.Success
-                && FillSequence.Success)
+            Boolean DeferredEntirePass = Failures[PassIndex] != null;
+            if (DeferredEntirePass)
             {
-                RetainSelectedLifecycleConnections(
-                    Current,
-                    CutSequence,
-                    FillSequence,
-                    GradeReturn,
-                    Grid);
-            }
-            Output.Add(new LifecyclePlanner.PassPlan(
-                CutSequence,
-                FillSequence,
-                Cut.OmittedCells,
-                Fill.OmittedCells));
-            Progress?.Invoke("sequencing", PassIndex + 1, PassCount);
-            if ((PassTimer.Elapsed >= TimeSpan.FromSeconds(1.0))
-                || (Failures[PassIndex] != null))
-            {
-                Diagnostic?.Invoke(String.Format(
-                    CultureInfo.InvariantCulture,
-                    "whole_plan pass_timing pass={0} elapsed_s={1:F3} cut_runs={2} fill_runs={3} success={4}",
-                    PassIndex + 1,
-                    PassTimer.Elapsed.TotalSeconds,
-                    Cut.Runs.Count,
-                    Fill.Runs.Count,
-                    Failures[PassIndex] == null));
-            }
-            if (Failures[PassIndex] != null)
-            {
+                // Intent: scrap gating can leave an unconnectable remainder; defer
+                // that cycle's dirt and keep the machine pose from the prior pass.
                 FieldEdgePolicy FailedEdgePolicy =
                     new FieldEdgePolicy(Grid, Grid.GridSizeM);
                 for (Int32 RunIndex = 0;
@@ -1882,7 +2008,65 @@ static public class GuidancePlanner
                     }
                 }
                 Diagnostic?.Invoke(Failures[PassIndex]!);
-                if (StopOnFailure) break;
+                Diagnostic?.Invoke(String.Format(
+                    CultureInfo.InvariantCulture,
+                    "whole_plan deferred_unsequenceable_pass pass={0} cut_cells={1} fill_cells={2}",
+                    PassIndex + 1,
+                    Cut.OrderedCells.Count + Cut.ShortRunOmittedCells.Count,
+                    Fill.OrderedCells.Count + Fill.ShortRunOmittedCells.Count));
+                List<((Int32 Bx, Int32 By) Cell, Double DepthM)> DeferredCut =
+                    new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>(
+                        Cut.ShortRunOmittedCells);
+                DeferredCut.AddRange(Cut.OrderedCells);
+                List<((Int32 Bx, Int32 By) Cell, Double DepthM)> DeferredFill =
+                    new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>(
+                        Fill.ShortRunOmittedCells);
+                DeferredFill.AddRange(Fill.OrderedCells);
+                CutSequence = BuildSequence(
+                    new List<CoveragePlanner.Run>(), Grid);
+                FillSequence = BuildSequence(
+                    new List<CoveragePlanner.Run>(), Grid);
+                Output.Add(new LifecyclePlanner.PassPlan(
+                    CutSequence,
+                    FillSequence,
+                    Cut.OmittedCells,
+                    Fill.OmittedCells,
+                    DeferredCut,
+                    DeferredFill,
+                    DeferredEntirePass: true));
+                // Legacy StopOnFailure abort is replaced by end-of-job deferral.
+            }
+            else
+            {
+                if (CutSequence.Success && FillSequence.Success)
+                {
+                    RetainSelectedLifecycleConnections(
+                        Current,
+                        CutSequence,
+                        FillSequence,
+                        GradeReturn,
+                        Grid);
+                }
+                Output.Add(new LifecyclePlanner.PassPlan(
+                    CutSequence,
+                    FillSequence,
+                    Cut.OmittedCells,
+                    Fill.OmittedCells,
+                    Cut.ShortRunOmittedCells,
+                    Fill.ShortRunOmittedCells));
+            }
+            Progress?.Invoke("sequencing", PassIndex + 1, PassCount);
+            if ((PassTimer.Elapsed >= TimeSpan.FromSeconds(1.0))
+                || DeferredEntirePass)
+            {
+                Diagnostic?.Invoke(String.Format(
+                    CultureInfo.InvariantCulture,
+                    "whole_plan pass_timing pass={0} elapsed_s={1:F3} cut_runs={2} fill_runs={3} success={4}",
+                    PassIndex + 1,
+                    PassTimer.Elapsed.TotalSeconds,
+                    Cut.Runs.Count,
+                    Fill.Runs.Count,
+                    !DeferredEntirePass));
             }
             Diagnostic?.Invoke(String.Format(
                 CultureInfo.InvariantCulture,
@@ -1892,7 +2076,8 @@ static public class GuidancePlanner
                 FillSequence.Runs.Count,
                 CutSequence.Success,
                 FillSequence.Success));
-            if (CutSequence.Success
+            if (!DeferredEntirePass
+                && CutSequence.Success
                 && FillSequence.Success
                 && (CutSequence.Runs.Count > 0)
                 && (FillSequence.Runs.Count > 0))
@@ -1917,7 +2102,10 @@ static public class GuidancePlanner
                     FillSequence.Runs[0].EntryPose.HeadingDeg,
                     Link.FailureReason));
             }
-            if (CutSequence.Success && FillSequence.Success && (FillSequence.Runs.Count > 0))
+            if (!DeferredEntirePass
+                && CutSequence.Success
+                && FillSequence.Success
+                && (FillSequence.Runs.Count > 0))
             {
                 RunSequencer.SequencedRun LastFill =
                     FillSequence.Runs[FillSequence.Runs.Count - 1];
@@ -2070,7 +2258,12 @@ static public class GuidancePlanner
         )
     {
         return CoveragePlanner.CandidatePlans(
-                Cells, Grid, BladeM, Start, End)
+                Cells,
+                Grid,
+                BladeM,
+                Start,
+                End,
+                PlanningMinimumWorkLengthM)
             .GroupBy(
                 Candidate => CoverageGeometrySignature(Candidate),
                 StringComparer.Ordinal)
@@ -2396,7 +2589,7 @@ static public class GuidancePlanner
                 return true;
             }
         }
-        SelectedPlan = CoveragePlanner.Plan(
+        SelectedPlan = PlanCoverage(
             new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>(),
             Grid,
             BladeM);
@@ -2466,7 +2659,7 @@ static public class GuidancePlanner
             SelectedSequence = Sequence;
             return true;
         }
-        SelectedPlan = CoveragePlanner.Plan(
+        SelectedPlan = PlanCoverage(
             new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>(),
             Grid,
             BladeM);
@@ -2560,11 +2753,11 @@ static public class GuidancePlanner
         }
 
     Failure:
-        SelectedCutPlan = CoveragePlanner.Plan(
+        SelectedCutPlan = PlanCoverage(
             CutCells, Grid, BladeM);
         SelectedCutSequence = BuildSequence(
             SelectedCutPlan.Runs, Grid);
-        SelectedFillPlan = CoveragePlanner.Plan(
+        SelectedFillPlan = PlanCoverage(
             FillCells, Grid, BladeM);
         SelectedFillSequence = BuildSequence(
             SelectedFillPlan.Runs, Grid);
@@ -2804,9 +2997,9 @@ static public class GuidancePlanner
             SelectedNextSequence = BestNextSequence;
             return true;
         }
-        SelectedCurrentPlan = CoveragePlanner.Plan(CurrentCells, Grid, BladeM);
+        SelectedCurrentPlan = PlanCoverage(CurrentCells, Grid, BladeM);
         SelectedCurrentSequence = BuildSequence(SelectedCurrentPlan.Runs, Grid);
-        SelectedNextPlan = CoveragePlanner.Plan(NextCells, Grid, BladeM);
+        SelectedNextPlan = PlanCoverage(NextCells, Grid, BladeM);
         SelectedNextSequence = BuildSequence(SelectedNextPlan.Runs, Grid);
         return false;
     }
@@ -3146,12 +3339,12 @@ static public class GuidancePlanner
             SelectedFillSequence = BestFillSequence;
             return true;
         }
-        SelectedPreviousFillPlan = CoveragePlanner.Plan(
+        SelectedPreviousFillPlan = PlanCoverage(
             PreviousFillCells, Grid, BladeM);
         SelectedPreviousFillSequence = BuildSequence(SelectedPreviousFillPlan.Runs, Grid);
-        SelectedCutPlan = CoveragePlanner.Plan(CurrentCutCells, Grid, BladeM);
+        SelectedCutPlan = PlanCoverage(CurrentCutCells, Grid, BladeM);
         SelectedCutSequence = BuildSequence(SelectedCutPlan.Runs, Grid);
-        SelectedFillPlan = CoveragePlanner.Plan(CurrentFillCells, Grid, BladeM);
+        SelectedFillPlan = PlanCoverage(CurrentFillCells, Grid, BladeM);
         SelectedFillSequence = BuildSequence(SelectedFillPlan.Runs, Grid);
         return false;
     }
@@ -3260,14 +3453,14 @@ static public class GuidancePlanner
             }
         }
         SelectedPreviousCut = ExistingPreviousCut;
-        SelectedPreviousFillPlan = CoveragePlanner.Plan(
+        SelectedPreviousFillPlan = PlanCoverage(
             PreviousFillCells, Grid, BladeM);
         SelectedPreviousFillSequence = BuildSequence(
             SelectedPreviousFillPlan.Runs, Grid);
-        SelectedCutPlan = CoveragePlanner.Plan(
+        SelectedCutPlan = PlanCoverage(
             CurrentCutCells, Grid, BladeM);
         SelectedCutSequence = BuildSequence(SelectedCutPlan.Runs, Grid);
-        SelectedFillPlan = CoveragePlanner.Plan(
+        SelectedFillPlan = PlanCoverage(
             CurrentFillCells, Grid, BladeM);
         SelectedFillSequence = BuildSequence(SelectedFillPlan.Runs, Grid);
         return false;
@@ -3413,7 +3606,7 @@ static public class GuidancePlanner
                 return true;
             }
         }
-        SelectedPlan = CoveragePlanner.Plan(
+        SelectedPlan = PlanCoverage(
             new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>(), Grid, BladeM);
         SelectedSequence = BuildSequence(SelectedPlan.Runs, Grid);
         return false;
@@ -3659,7 +3852,8 @@ static public class GuidancePlanner
                                         AlternativeCut.ConnectorDistanceM,
                                         AlternativeCut.AnchorDistanceM,
                                         AlternativeCut.Score,
-                                        JointOmitted);
+                                        JointOmitted,
+                                        AlternativeCut.ShortRunOmittedCells);
                                 SelectedSequence = AlternativeCutSequence;
                                 SelectedFillPlan = AlternativeFill;
                                 SelectedFillSequence =
@@ -3692,7 +3886,8 @@ static public class GuidancePlanner
                         Candidate.ConnectorDistanceM,
                         Candidate.AnchorDistanceM,
                         Candidate.Score,
-                        Omitted);
+                        Omitted,
+                        Candidate.ShortRunOmittedCells);
                     SelectedSequence = Sequence;
                     Diagnostic?.Invoke(String.Format(
                         CultureInfo.InvariantCulture,
@@ -3775,7 +3970,8 @@ static public class GuidancePlanner
                         Candidate.ConnectorDistanceM,
                         Candidate.AnchorDistanceM,
                         Candidate.Score,
-                        Omitted);
+                        Omitted,
+                        Candidate.ShortRunOmittedCells);
                     SelectedSequence = Sequence;
                     Diagnostic?.Invoke(String.Format(
                         CultureInfo.InvariantCulture,
@@ -3799,7 +3995,7 @@ static public class GuidancePlanner
                 OmissionSets,
                 OmissionSets >= MAXIMUM_OMISSION_SETS_PER_TIER));
         }
-        SelectedPlan = CoveragePlanner.Plan(
+        SelectedPlan = PlanCoverage(
             new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>(), Grid, BladeM);
         SelectedSequence = BuildSequence(SelectedPlan.Runs, Grid);
         return false;
@@ -3936,7 +4132,7 @@ static public class GuidancePlanner
         {
             if (!Remaining.Remove(Entry))
             {
-                SelectedPlan = CoveragePlanner.Plan(
+                SelectedPlan = PlanCoverage(
                     new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>(), Grid, BladeM);
                 SelectedSequence = BuildSequence(SelectedPlan.Runs, Grid);
                 return false;
@@ -3964,11 +4160,12 @@ static public class GuidancePlanner
                 Candidate.ConnectorDistanceM,
                 Candidate.AnchorDistanceM,
                 Candidate.Score,
-                Omitted);
+                Omitted,
+                Candidate.ShortRunOmittedCells);
             SelectedSequence = Sequence;
             return true;
         }
-        SelectedPlan = CoveragePlanner.Plan(
+        SelectedPlan = PlanCoverage(
             new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>(), Grid, BladeM);
         SelectedSequence = BuildSequence(SelectedPlan.Runs, Grid);
         return false;
@@ -4097,7 +4294,9 @@ static public class GuidancePlanner
             ConnectorDistanceM,
             Original.AnchorDistanceM,
             Original.Score,
-            new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>(Original.OmittedCells));
+            new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>(Original.OmittedCells),
+            new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>(
+                Original.ShortRunOmittedCells));
     }
 
     /// <summary>

@@ -2,6 +2,28 @@ using System;
 
 namespace HaulBuilder
 {
+    /// <summary>Stable reason strings used by deferred-work accounting.</summary>
+    public static class HaulDeferredWorkReasons
+    {
+        /// <summary>Work omitted because blade-down run length is below the equipment minimum.</summary>
+        public const String BELOW_MINIMUM_WORK_LENGTH = "BELOW_MINIMUM_WORK_LENGTH";
+
+        /// <summary>
+        /// Entire remaining pass deferred because cut/fill sequencing could not
+        /// produce a legal forward guidance track after scrap omission.
+        /// </summary>
+        public const String GUIDANCE_SEQUENCE_FAILED = "GUIDANCE_SEQUENCE_FAILED";
+
+        /// <summary>Interior packing left field-edge cells for later residual completion.</summary>
+        public const String FIELD_EDGE_HEADING = "FIELD_EDGE_HEADING";
+
+        /// <summary>Work remaining only because of material surplus or imbalance.</summary>
+        public const String MATERIAL_IMBALANCE = "MATERIAL_IMBALANCE";
+
+        /// <summary>Unassigned work after residual and repair stages.</summary>
+        public const String OPTIMIZER_UNASSIGNED = "OPTIMIZER_UNASSIGNED";
+    }
+
     /// <summary>One exact depth-layer entry not assigned to the automatic plan.</summary>
     public sealed class HaulDeferredWork
     {

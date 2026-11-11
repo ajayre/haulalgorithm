@@ -135,8 +135,41 @@ namespace HaulBuilder
         /// <summary>Gets or sets tractor and scraper overall length in feet.</summary>
         public Double EquipmentLengthFt { get; set; }
 
+        /// <summary>
+        /// Gets or sets the minimum blade-down cut/fill run length in feet.
+        /// Zero means half of <see cref="EquipmentLengthFt"/>.
+        /// Shorter coverage runs are omitted from automatic guidance and deferred.
+        /// </summary>
+        public Double MinimumWorkLengthFt { get; set; }
+
         /// <summary>Gets or sets the waypoint heading-change threshold counted as a turn.</summary>
         public Double WaypointTurnThresholdDeg { get; set; }
+
+        /// <summary>
+        /// Resolves the effective minimum blade-down work length in feet.
+        /// </summary>
+        /// <returns>Configured override, or half the equipment length when unset.</returns>
+        public Double ResolveMinimumWorkLengthFt
+            (
+            )
+        {
+            if (MinimumWorkLengthFt > 0.0)
+            {
+                return MinimumWorkLengthFt;
+            }
+            return EquipmentLengthFt * Constants.HALF_SCALE;
+        }
+
+        /// <summary>
+        /// Resolves the effective minimum blade-down work length in metres.
+        /// </summary>
+        /// <returns>Minimum work length used by coverage planning.</returns>
+        public Double ResolveMinimumWorkLengthM
+            (
+            )
+        {
+            return ResolveMinimumWorkLengthFt() * Constants.FEET_TO_METERS;
+        }
 
         /// <summary>Gets or sets whether leveling animation GIF bytes are included.</summary>
         public Boolean IncludeAnimationGif { get; set; }

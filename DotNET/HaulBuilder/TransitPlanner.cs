@@ -12,7 +12,7 @@ namespace HaulBuilder
     static public class TransitPlanner
     {
         private const Double AUTOMATIC_ALIGNMENT_TOLERANCE_DEG = 5.0;
-        private const Double SHORT_ALIGNMENT_JOG_TOLERANCE_DEG = 15.0;
+        private const Double SHORT_ALIGNMENT_JOG_TOLERANCE_DEG = 30.0;
         private const Double MAX_MANUAL_HEADING_CORRECTION_DEG = 30.0;
         private const Int32 MAX_CONNECT_CACHE_ENTRIES_PER_FIELD = 200000;
         private static readonly Object AllowanceCacheLock = new Object();
@@ -435,14 +435,29 @@ namespace HaulBuilder
         /// Rejects exact-pose geometry whose distance is grossly out of proportion
         /// to an already validated small-angle forward alternative.
         /// </summary>
+        /// <remarks>
+        /// The multiplicative 4× gate catches tiny near-coincident loops. The half-turn
+        /// waste gate catches full-circle Dubins words on longer corridor jogs (e.g.
+        /// TheShop2 route 7 fill→fill) where 2πR is only ~2–3× the straight jog and
+        /// would otherwise survive the 4× test.
+        /// </remarks>
         private static Boolean IsGrosslyDisproportionate
             (
             Double ExactLengthM,
             Double AlternativeLengthM,
             Double MinimumRadiusM
-            ) => ExactLengthM > Math.Max(
+            )
+        {
+            if (ExactLengthM > Math.Max(
                 4.0 * AlternativeLengthM,
-                2.0 * MinimumRadiusM);
+                2.0 * MinimumRadiusM))
+            {
+                return true;
+            }
+
+            // Intent: a validated forward jog beats any exact path that wastes ≥ half a turn.
+            return ExactLengthM > (AlternativeLengthM + (Math.PI * MinimumRadiusM));
+        }
 
         /// <summary>
         /// Uses a short forward jog when two nearby poses differ only by the small
@@ -450,6 +465,11 @@ namespace HaulBuilder
         /// This prevents an exact-pose Dubins solution from inserting a full loop to
         /// resolve a few degrees across approximately one blade width.
         /// </summary>
+        /// <remarks>
+        /// Tolerance is 30° (not 15°) so a short corridor right-jog whose chord bears
+        /// slightly off the travel heading still qualifies — TheShop2 route 7's
+        /// fill→fill connector was ~28° off and otherwise fell through to a 2πR loop.
+        /// </remarks>
         private static List<(Double X, Double Y)> ShortAlignmentJog
             (
             ConnectorPlanner.Pose Start,
@@ -463,6 +483,14 @@ namespace HaulBuilder
             {
                 return new List<(Double X, Double Y)>();
             }
+
+            // Intent: both poses must already agree; this is not a U-turn substitute.
+            if (HeadingDifferenceDeg(Start.HeadingDeg, End.HeadingDeg)
+                > SHORT_ALIGNMENT_JOG_TOLERANCE_DEG)
+            {
+                return new List<(Double X, Double Y)>();
+            }
+
             Double DirectHeadingDeg = BearingDeg(
                 (Start.X, Start.Y), (End.X, End.Y));
             if ((HeadingDifferenceDeg(Start.HeadingDeg, DirectHeadingDeg)
@@ -472,6 +500,16 @@ namespace HaulBuilder
             {
                 return new List<(Double X, Double Y)>();
             }
+
+            // Intent: reject pure sideways / reverse chords — jog must advance along travel.
+            Double StartRad = Start.HeadingDeg * Math.PI / Constants.DEGREES_PER_HALF_TURN;
+            Double ForwardM = ((End.X - Start.X) * Math.Sin(StartRad))
+                + ((End.Y - Start.Y) * Math.Cos(StartRad));
+            if (ForwardM <= SampleSpacingM)
+            {
+                return new List<(Double X, Double Y)>();
+            }
+
             return SampleLine(
                 (Start.X, Start.Y),
                 (End.X, End.Y),

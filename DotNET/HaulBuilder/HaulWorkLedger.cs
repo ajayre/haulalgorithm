@@ -93,6 +93,59 @@ namespace HaulBuilder
         }
 
         /// <summary>
+        /// Builds a synthetic ledger from explicit cut/fill cell depths, used for
+        /// end-of-job cleanup of guidance-deferred scraps.
+        /// </summary>
+        /// <param name="Grid">Field grid.</param>
+        /// <param name="CutCells">Deferred cut cells and depths.</param>
+        /// <param name="FillCells">Deferred fill cells and depths.</param>
+        /// <param name="ToleranceMm">Depth tolerance in millimetres.</param>
+        /// <returns>Ledger containing only the supplied allocated depths.</returns>
+        static public HaulWorkLedger FromAllocatedCells
+            (
+            Grid Grid,
+            IEnumerable<((Int32 Bx, Int32 By) Cell, Double DepthM)> CutCells,
+            IEnumerable<((Int32 Bx, Int32 By) Cell, Double DepthM)> FillCells,
+            Double ToleranceMm = Constants.DEFAULT_TOLERANCE_MM
+            )
+        {
+            if (Grid == null)
+            {
+                throw new ArgumentNullException(nameof(Grid));
+            }
+            if (CutCells == null)
+            {
+                throw new ArgumentNullException(nameof(CutCells));
+            }
+            if (FillCells == null)
+            {
+                throw new ArgumentNullException(nameof(FillCells));
+            }
+
+            Double ToleranceM = ToleranceMm / Constants.MILLIMETERS_PER_METER;
+            Double[,] Cut = new Double[Grid.Height, Grid.Width];
+            Double[,] Fill = new Double[Grid.Height, Grid.Width];
+            foreach (((Int32 Bx, Int32 By) Cell, Double DepthM) Entry in CutCells)
+            {
+                if (Entry.DepthM <= 0.0)
+                {
+                    continue;
+                }
+                // Intent: accumulate multi-pass scraps that share a cell.
+                Cut[Entry.Cell.By, Entry.Cell.Bx] += Entry.DepthM;
+            }
+            foreach (((Int32 Bx, Int32 By) Cell, Double DepthM) Entry in FillCells)
+            {
+                if (Entry.DepthM <= 0.0)
+                {
+                    continue;
+                }
+                Fill[Entry.Cell.By, Entry.Cell.Bx] += Entry.DepthM;
+            }
+            return new HaulWorkLedger(Grid, ToleranceM, Cut, Fill);
+        }
+
+        /// <summary>
         /// Builds a ledger containing only work not owned by the supplied passes.
         /// The source target and material conversions are unchanged; this supports
         /// incremental completion without reallocating an already accepted plan.

@@ -51,6 +51,7 @@ namespace HaulBuilder.Tests
                 nameof(HaulBuilderOptions.LoadedTravelSpeedMph),
                 nameof(HaulBuilderOptions.MaxDepthMm),
                 nameof(HaulBuilderOptions.MinimumTurningDiameterFt),
+                nameof(HaulBuilderOptions.MinimumWorkLengthFt),
                 nameof(HaulBuilderOptions.Optimization),
                 nameof(HaulBuilderOptions.PixelsPerCell),
                 nameof(HaulBuilderOptions.Ponding),

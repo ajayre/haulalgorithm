@@ -71,6 +71,15 @@ namespace HaulBuilder
         public sealed class PassPlan
         {
             /// <summary>Initializes one pass plan.</summary>
+            /// <param name="Cut">Sequenced cut work (may be empty when deferred).</param>
+            /// <param name="Fill">Sequenced fill work (may be empty when deferred).</param>
+            /// <param name="CutOmittedCells">Cut cells omitted for edge/heading policy.</param>
+            /// <param name="FillOmittedCells">Fill cells omitted for edge/heading policy.</param>
+            /// <param name="CutShortOmittedCells">Cut cells deferred from automatic guidance.</param>
+            /// <param name="FillShortOmittedCells">Fill cells deferred from automatic guidance.</param>
+            /// <param name="DeferredEntirePass">
+            /// True when sequencing failed and the whole remaining allocation was deferred.
+            /// </param>
             public PassPlan
                 (
                 RunSequencer.Result Cut,
@@ -78,7 +87,12 @@ namespace HaulBuilder
                 IReadOnlyList<((Int32 Bx, Int32 By) Cell, Double DepthM)>?
                     CutOmittedCells = null,
                 IReadOnlyList<((Int32 Bx, Int32 By) Cell, Double DepthM)>?
-                    FillOmittedCells = null
+                    FillOmittedCells = null,
+                IReadOnlyList<((Int32 Bx, Int32 By) Cell, Double DepthM)>?
+                    CutShortOmittedCells = null,
+                IReadOnlyList<((Int32 Bx, Int32 By) Cell, Double DepthM)>?
+                    FillShortOmittedCells = null,
+                Boolean DeferredEntirePass = false
                 )
             {
                 this.Cut = Cut;
@@ -87,6 +101,11 @@ namespace HaulBuilder
                     ?? Array.Empty<((Int32 Bx, Int32 By) Cell, Double DepthM)>();
                 this.FillOmittedCells = FillOmittedCells
                     ?? Array.Empty<((Int32 Bx, Int32 By) Cell, Double DepthM)>();
+                this.CutShortOmittedCells = CutShortOmittedCells
+                    ?? Array.Empty<((Int32 Bx, Int32 By) Cell, Double DepthM)>();
+                this.FillShortOmittedCells = FillShortOmittedCells
+                    ?? Array.Empty<((Int32 Bx, Int32 By) Cell, Double DepthM)>();
+                this.DeferredEntirePass = DeferredEntirePass;
             }
 
             /// <summary>Gets sequenced cut work.</summary>
@@ -102,6 +121,23 @@ namespace HaulBuilder
             /// <summary>Gets fill allocations explicitly omitted from guidance.</summary>
             public IReadOnlyList<((Int32 Bx, Int32 By) Cell, Double DepthM)>
                 FillOmittedCells { get; }
+
+            /// <summary>
+            /// Gets cut cells omitted because their run was below the minimum work length.
+            /// </summary>
+            public IReadOnlyList<((Int32 Bx, Int32 By) Cell, Double DepthM)>
+                CutShortOmittedCells { get; }
+
+            /// <summary>
+            /// Gets fill cells omitted because their run was below the minimum work length.
+            /// </summary>
+            public IReadOnlyList<((Int32 Bx, Int32 By) Cell, Double DepthM)>
+                FillShortOmittedCells { get; }
+
+            /// <summary>
+            /// Gets whether this pass was skipped and fully deferred after sequencing failed.
+            /// </summary>
+            public Boolean DeferredEntirePass { get; }
 
             /// <summary>Gets the number of omitted cut allocations.</summary>
             public Int32 CutOmittedCellCount => CutOmittedCells.Count;

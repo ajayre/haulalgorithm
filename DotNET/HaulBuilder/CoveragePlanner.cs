@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 
 namespace HaulBuilder
 {
@@ -18,6 +19,71 @@ namespace HaulBuilder
         private const Double EDGE_PARALLEL_TOLERANCE_DEG = 7.5;
         private const Double NUMERIC_TOLERANCE = Constants.NUMERIC_COMPARISON_TOLERANCE;
         private const Double ENDPOINT_EXTENSION_GRID_FRACTION = 0.49;
+        private static readonly AsyncLocal<Double?> AmbientMinimumWorkLengthM =
+            new AsyncLocal<Double?>();
+
+        /// <summary>
+        /// Sets the ambient minimum blade-down length used when callers omit an
+        /// explicit gate, typically for one full <see cref="HaulBuilderEngine.Run"/>.
+        /// </summary>
+        /// <param name="MinimumWorkLengthM">Minimum kept run length in metres.</param>
+        /// <returns>Scope that restores the previous ambient value when disposed.</returns>
+        static public IDisposable PushMinimumWorkLength
+            (
+            Double MinimumWorkLengthM
+            )
+        {
+            Double? Previous = AmbientMinimumWorkLengthM.Value;
+            AmbientMinimumWorkLengthM.Value = MinimumWorkLengthM;
+            return new AmbientMinimumWorkLengthScope(Previous);
+        }
+
+        /// <summary>Restores the previous ambient minimum work length.</summary>
+        private sealed class AmbientMinimumWorkLengthScope : IDisposable
+        {
+            private readonly Double? Previous;
+            private Boolean Disposed;
+
+            /// <summary>Initializes one ambient restore scope.</summary>
+            /// <param name="Previous">Prior ambient value.</param>
+            public AmbientMinimumWorkLengthScope
+                (
+                Double? Previous
+                )
+            {
+                this.Previous = Previous;
+            }
+
+            /// <summary>Restores the prior ambient minimum work length.</summary>
+            public void Dispose
+                (
+                )
+            {
+                if (Disposed)
+                {
+                    return;
+                }
+                AmbientMinimumWorkLengthM.Value = Previous;
+                Disposed = true;
+            }
+        }
+
+        /// <summary>
+        /// Resolves the effective minimum work length from an explicit argument or ambient scope.
+        /// </summary>
+        /// <param name="MinimumWorkLengthM">Explicit gate, or null to use ambient/default.</param>
+        /// <returns>Effective minimum length in metres; zero disables the gate.</returns>
+        private static Double ResolveMinimumWorkLengthM
+            (
+            Double? MinimumWorkLengthM
+            )
+        {
+            if (MinimumWorkLengthM.HasValue)
+            {
+                return MinimumWorkLengthM.Value;
+            }
+            return AmbientMinimumWorkLengthM.Value ?? 0.0;
+        }
 
         /// <summary>
         /// One straight blade-down run and the material cells assigned to it.
@@ -91,6 +157,7 @@ namespace HaulBuilder
             /// <param name="AnchorDistanceM">Distance to requested start/end anchors.</param>
             /// <param name="Score">Deterministic candidate score.</param>
             /// <param name="OmittedCells">Edge/corner cells that cannot be worked at the required boundary heading.</param>
+            /// <param name="ShortRunOmittedCells">Cells omitted because their run was shorter than the minimum work length.</param>
             public PlanResult
                 (
                 Double HeadingDeg,
@@ -98,7 +165,8 @@ namespace HaulBuilder
                 Double ConnectorDistanceM,
                 Double AnchorDistanceM,
                 Double Score,
-                List<((Int32 Bx, Int32 By) Cell, Double DepthM)> OmittedCells
+                List<((Int32 Bx, Int32 By) Cell, Double DepthM)> OmittedCells,
+                List<((Int32 Bx, Int32 By) Cell, Double DepthM)>? ShortRunOmittedCells = null
                 )
             {
                 // Store candidate metrics separately from production timing and turn construction.
@@ -108,6 +176,8 @@ namespace HaulBuilder
                 this.AnchorDistanceM = AnchorDistanceM;
                 this.Score = Score;
                 this.OmittedCells = OmittedCells;
+                this.ShortRunOmittedCells = ShortRunOmittedCells
+                    ?? new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>();
             }
 
             /// <summary>Gets the selected common sweep heading.</summary>
@@ -127,6 +197,12 @@ namespace HaulBuilder
 
             /// <summary>Gets allocated corner cells deliberately omitted from work guidance.</summary>
             public List<((Int32 Bx, Int32 By) Cell, Double DepthM)> OmittedCells { get; }
+
+            /// <summary>
+            /// Gets cells omitted solely because their coverage run was shorter than
+            /// the configured minimum blade-down work length.
+            /// </summary>
+            public List<((Int32 Bx, Int32 By) Cell, Double DepthM)> ShortRunOmittedCells { get; }
 
             /// <summary>Gets total straight blade-down centerline distance.</summary>
             public Double WorkDistanceM => Runs.Sum(Run => Run.LengthM);
@@ -206,6 +282,10 @@ namespace HaulBuilder
         /// <param name="BladeWidthM">Effective blade coverage width in metres.</param>
         /// <param name="OrientStartXy">Optional approach anchor.</param>
         /// <param name="OrientEndXy">Optional exit anchor.</param>
+        /// <param name="MinimumWorkLengthM">
+        /// Minimum kept blade-down run length in metres; null uses the ambient
+        /// engine scope, and zero disables the gate.
+        /// </param>
         /// <returns>Lowest-scoring straight-run candidate.</returns>
         /// <exception cref="ArgumentNullException">Cells or Grid is null.</exception>
         /// <exception cref="ArgumentOutOfRangeException">BladeWidthM is not positive.</exception>
@@ -216,29 +296,52 @@ namespace HaulBuilder
             Grid Grid,
             Double BladeWidthM,
             (Double X, Double Y)? OrientStartXy = null,
-            (Double X, Double Y)? OrientEndXy = null
+            (Double X, Double Y)? OrientEndXy = null,
+            Double? MinimumWorkLengthM = null
             )
         {
             List<PlanResult> Candidates = CandidatePlans(
-                Cells, Grid, BladeWidthM, OrientStartXy, OrientEndXy);
+                Cells,
+                Grid,
+                BladeWidthM,
+                OrientStartXy,
+                OrientEndXy,
+                MinimumWorkLengthM);
             return Candidates[0];
         }
 
         /// <summary>
         /// Builds every deterministic five-degree coverage candidate in score order.
         /// </summary>
+        /// <param name="Cells">Allocated cells and depths.</param>
+        /// <param name="Grid">Grid geometry.</param>
+        /// <param name="BladeWidthM">Effective blade coverage width in metres.</param>
+        /// <param name="OrientStartXy">Optional approach anchor.</param>
+        /// <param name="OrientEndXy">Optional exit anchor.</param>
+        /// <param name="MinimumWorkLengthM">
+        /// Minimum kept blade-down run length in metres; null uses the ambient
+        /// engine scope, and zero disables the gate.
+        /// </param>
+        /// <returns>Candidates ordered by ascending score.</returns>
         static public List<PlanResult> CandidatePlans
             (
             List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Cells,
             Grid Grid,
             Double BladeWidthM,
             (Double X, Double Y)? OrientStartXy = null,
-            (Double X, Double Y)? OrientEndXy = null
+            (Double X, Double Y)? OrientEndXy = null,
+            Double? MinimumWorkLengthM = null
             )
         {
             if (Cells == null) throw new ArgumentNullException(nameof(Cells));
             if (Grid == null) throw new ArgumentNullException(nameof(Grid));
             if (BladeWidthM <= 0.0) throw new ArgumentOutOfRangeException(nameof(BladeWidthM));
+            Double ResolvedMinimumWorkLengthM =
+                ResolveMinimumWorkLengthM(MinimumWorkLengthM);
+            if (ResolvedMinimumWorkLengthM < 0.0)
+            {
+                throw new ArgumentOutOfRangeException(nameof(MinimumWorkLengthM));
+            }
             if (Cells.Count == 0)
             {
                 return new List<PlanResult>
@@ -279,7 +382,9 @@ namespace HaulBuilder
                         DescendingCross,
                         OrientStartXy,
                         OrientEndXy,
-                        OmittedCells);
+                        OmittedCells,
+                        MAX_ALONG_GAP_GRID_MULTIPLIER,
+                        ResolvedMinimumWorkLengthM);
                     if (!ConservesAllocation(Cells, Candidate.AccountedCells))
                         throw new InvalidOperationException(
                             " coverage planning failed to account for the cell/depth multiset.");
@@ -357,6 +462,8 @@ namespace HaulBuilder
                 % Constants.DEGREES_PER_HALF_TURN;
             List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Omitted =
                 new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>();
+            // Fill envelopes must keep every allocated cell on a driven run; length
+            // omission is intentionally disabled for this temporary grade geometry.
             PlanResult Selected = new Boolean[] { false, true }
                 .Select(DescendingCross => BuildCandidate(
                     Cells,
@@ -367,7 +474,8 @@ namespace HaulBuilder
                     null,
                     null,
                     Omitted,
-                    MaximumAlongGapGridMultiplier))
+                    MaximumAlongGapGridMultiplier,
+                    MinimumWorkLengthM: 0.0))
                 .OrderBy(Candidate => Candidate.Score)
                 .ThenBy(Candidate => Candidate.HeadingDeg)
                 .First();
@@ -382,6 +490,17 @@ namespace HaulBuilder
         /// <summary>
         /// Builds and scores one heading and cross-axis packing direction.
         /// </summary>
+        /// <param name="Cells">Work cells for this candidate.</param>
+        /// <param name="Grid">Field grid.</param>
+        /// <param name="BladeWidthM">Blade width in metres.</param>
+        /// <param name="HeadingDeg">Candidate heading.</param>
+        /// <param name="DescendingCross">Cross-axis packing direction.</param>
+        /// <param name="OrientStartXy">Optional approach anchor.</param>
+        /// <param name="OrientEndXy">Optional exit anchor.</param>
+        /// <param name="OmittedCells">Already omitted edge/corner cells.</param>
+        /// <param name="MaximumAlongGapGridMultiplier">Along-lane gap split threshold.</param>
+        /// <param name="MinimumWorkLengthM">Minimum kept blade-down length; zero disables.</param>
+        /// <returns>One scored coverage candidate.</returns>
         private static PlanResult BuildCandidate
             (
             List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Cells,
@@ -393,7 +512,8 @@ namespace HaulBuilder
             (Double X, Double Y)? OrientEndXy,
             List<((Int32 Bx, Int32 By) Cell, Double DepthM)> OmittedCells,
             Double MaximumAlongGapGridMultiplier =
-                MAX_ALONG_GAP_GRID_MULTIPLIER
+                MAX_ALONG_GAP_GRID_MULTIPLIER,
+            Double MinimumWorkLengthM = 0.0
             )
         {
             if (Cells.Count == 0)
@@ -427,7 +547,13 @@ namespace HaulBuilder
                     MaximumGapM));
             }
             Runs = EnsureInFieldRuns(Runs, Grid);
-            Runs = OrderRuns(Runs, OrientStartXy, OrientEndXy);
+            (List<Run> KeptRuns,
+                List<((Int32 Bx, Int32 By) Cell, Double DepthM)> ShortOmitted) =
+                OmitShortRuns(Runs, MinimumWorkLengthM);
+            Runs = OrderRuns(KeptRuns, OrientStartXy, OrientEndXy);
+            List<((Int32 Bx, Int32 By) Cell, Double DepthM)> CombinedOmitted =
+                new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>(OmittedCells);
+            CombinedOmitted.AddRange(ShortOmitted);
 
             Double ConnectorDistanceM = ConnectorDistance(Runs);
             Double AnchorDistanceM = AnchorDistance(Runs, OrientStartXy, OrientEndXy);
@@ -436,14 +562,304 @@ namespace HaulBuilder
                 + (ConnectorDistanceM * CONNECTOR_WEIGHT)
                 + AnchorDistanceM
                 + (WorkDistanceM * WORK_DISTANCE_WEIGHT)
-                + (OmittedCells.Count * OMITTED_CELL_WEIGHT);
+                + (CombinedOmitted.Count * OMITTED_CELL_WEIGHT);
             return new PlanResult(
                 HeadingDeg,
                 Runs,
                 ConnectorDistanceM,
                 AnchorDistanceM,
                 Score,
-                new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>(OmittedCells));
+                CombinedOmitted,
+                ShortOmitted);
+        }
+
+        /// <summary>
+        /// Drops blade-down runs shorter than the configured minimum and returns
+        /// their cells as short-run omissions.
+        /// </summary>
+        /// <param name="Runs">Candidate coverage runs.</param>
+        /// <param name="MinimumWorkLengthM">Minimum kept length; zero keeps all runs.</param>
+        /// <returns>Kept runs and cells from omitted short runs.</returns>
+        private static (
+            List<Run> KeptRuns,
+            List<((Int32 Bx, Int32 By) Cell, Double DepthM)> ShortOmitted)
+            OmitShortRuns
+            (
+            List<Run> Runs,
+            Double MinimumWorkLengthM
+            )
+        {
+            if ((MinimumWorkLengthM <= 0.0) || (Runs.Count == 0))
+            {
+                return (
+                    Runs,
+                    new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>());
+            }
+
+            List<Run> Kept = new List<Run>();
+            List<((Int32 Bx, Int32 By) Cell, Double DepthM)> ShortOmitted =
+                new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>();
+            foreach (Run Run in Runs)
+            {
+                // Intent: scrap runs are never worth a full equipment lineup/turn.
+                if (Run.LengthM + Constants.NUMERIC_COMPARISON_TOLERANCE
+                    < MinimumWorkLengthM)
+                {
+                    ShortOmitted.AddRange(Run.Cells);
+                }
+                else
+                {
+                    Kept.Add(Run);
+                }
+            }
+            return (Kept, ShortOmitted);
+        }
+
+        /// <summary>
+        /// After independent short-run gates on cut and fill, omits matching bank
+        /// volume from the surplus side so the remaining haul stays balanced.
+        /// </summary>
+        /// <param name="Cut">Cut coverage after the minimum-length gate.</param>
+        /// <param name="Fill">Fill coverage after the minimum-length gate.</param>
+        /// <param name="Grid">Field grid (area and compaction).</param>
+        /// <param name="MinimumWorkLengthM">
+        /// Explicit gate for cascaded short-run drops, or null for ambient/default.
+        /// </param>
+        /// <returns>Cut and fill plans with equalized short-run deferred volume.</returns>
+        static public (PlanResult Cut, PlanResult Fill) BalanceShortRunVolumes
+            (
+            PlanResult Cut,
+            PlanResult Fill,
+            Grid Grid,
+            Double? MinimumWorkLengthM = null
+            )
+        {
+            if (Cut == null)
+            {
+                throw new ArgumentNullException(nameof(Cut));
+            }
+            if (Fill == null)
+            {
+                throw new ArgumentNullException(nameof(Fill));
+            }
+            if (Grid == null)
+            {
+                throw new ArgumentNullException(nameof(Grid));
+            }
+
+            Double ResolvedMinimumWorkLengthM =
+                ResolveMinimumWorkLengthM(MinimumWorkLengthM);
+            Double CutBcyPerDepthM = Grid.AreaM2 * Constants.M3_TO_CY;
+            Double FillBcyPerDepthM = CutBcyPerDepthM * Grid.Compaction;
+            PlanResult BalancedCut = Cut;
+            PlanResult BalancedFill = Fill;
+
+            // Intent: peel the surplus side until short-run deferred cut and fill
+            // bank volumes match; cascading min-length drops may need a few passes.
+            for (Int32 Guard = 0; Guard < 32; Guard += 1)
+            {
+                Double CutShortBcy = ShortRunVolumeBcy(
+                    BalancedCut.ShortRunOmittedCells, CutBcyPerDepthM);
+                Double FillShortBcy = ShortRunVolumeBcy(
+                    BalancedFill.ShortRunOmittedCells, FillBcyPerDepthM);
+                Double DeltaBcy = FillShortBcy - CutShortBcy;
+                if (Math.Abs(DeltaBcy) <= NUMERIC_TOLERANCE)
+                {
+                    break;
+                }
+
+                if (DeltaBcy > 0.0)
+                {
+                    // Fill scraps exceed cut scraps: trim matching cut volume.
+                    (PlanResult NextCut, Double RemovedBcy) = OmitVolumeFromPlan(
+                        BalancedCut,
+                        Grid,
+                        DeltaBcy,
+                        CutBcyPerDepthM,
+                        ResolvedMinimumWorkLengthM);
+                    if (RemovedBcy <= NUMERIC_TOLERANCE)
+                    {
+                        break;
+                    }
+                    BalancedCut = NextCut;
+                }
+                else
+                {
+                    // Cut scraps exceed fill scraps: trim matching fill volume.
+                    (PlanResult NextFill, Double RemovedBcy) = OmitVolumeFromPlan(
+                        BalancedFill,
+                        Grid,
+                        -DeltaBcy,
+                        FillBcyPerDepthM,
+                        ResolvedMinimumWorkLengthM);
+                    if (RemovedBcy <= NUMERIC_TOLERANCE)
+                    {
+                        break;
+                    }
+                    BalancedFill = NextFill;
+                }
+            }
+
+            return (BalancedCut, BalancedFill);
+        }
+
+        /// <summary>
+        /// Sums short-run omitted bank volume using the cut or fill depth factor.
+        /// </summary>
+        /// <param name="Cells">Short-run omitted cells.</param>
+        /// <param name="BcyPerDepthM">Bank-volume conversion for one metre of depth.</param>
+        /// <returns>Total deferred bank volume in BCY.</returns>
+        private static Double ShortRunVolumeBcy
+            (
+            IReadOnlyList<((Int32 Bx, Int32 By) Cell, Double DepthM)> Cells,
+            Double BcyPerDepthM
+            )
+        {
+            Double Total = 0.0;
+            foreach (((Int32 Bx, Int32 By) Cell, Double DepthM) Entry in Cells)
+            {
+                if (Entry.DepthM > 0.0)
+                {
+                    Total += Entry.DepthM * BcyPerDepthM;
+                }
+            }
+            return Total;
+        }
+
+        /// <summary>
+        /// Peels tip cells from the shortest kept runs until TargetBcy is reached,
+        /// cascading any remainder that falls below the minimum work length.
+        /// </summary>
+        /// <param name="Plan">Coverage plan to trim.</param>
+        /// <param name="Grid">Field grid for run rebuilds.</param>
+        /// <param name="TargetBcy">Minimum bank volume to move into short-run omission.</param>
+        /// <param name="BcyPerDepthM">Bank-volume conversion for one metre of depth.</param>
+        /// <param name="MinimumWorkLengthM">Minimum kept blade-down length.</param>
+        /// <returns>Updated plan and bank volume newly omitted.</returns>
+        private static (PlanResult Plan, Double RemovedBcy) OmitVolumeFromPlan
+            (
+            PlanResult Plan,
+            Grid Grid,
+            Double TargetBcy,
+            Double BcyPerDepthM,
+            Double MinimumWorkLengthM
+            )
+        {
+            if ((TargetBcy <= NUMERIC_TOLERANCE) || (Plan.Runs.Count == 0))
+            {
+                return (Plan, 0.0);
+            }
+
+            List<Run> Runs = new List<Run>(Plan.Runs);
+            List<((Int32 Bx, Int32 By) Cell, Double DepthM)> ExtraShort =
+                new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>();
+            Double RemovedBcy = 0.0;
+
+            while ((RemovedBcy + NUMERIC_TOLERANCE < TargetBcy) && (Runs.Count > 0))
+            {
+                // Prefer the shortest kept run so balance trims scrap tips first.
+                Int32 RunIndex = 0;
+                for (Int32 Index = 1; Index < Runs.Count; Index += 1)
+                {
+                    if (Runs[Index].LengthM < Runs[RunIndex].LengthM
+                        - NUMERIC_TOLERANCE)
+                    {
+                        RunIndex = Index;
+                    }
+                    else if (Math.Abs(Runs[Index].LengthM - Runs[RunIndex].LengthM)
+                        <= NUMERIC_TOLERANCE
+                        && (Runs[Index].Cells.Count < Runs[RunIndex].Cells.Count))
+                    {
+                        RunIndex = Index;
+                    }
+                }
+
+                Run Selected = Runs[RunIndex];
+                if (Selected.Cells.Count == 0)
+                {
+                    Runs.RemoveAt(RunIndex);
+                    continue;
+                }
+
+                // Peel the drive-end tip; that scrap is least useful for lineup.
+                ((Int32 Bx, Int32 By) Cell, Double DepthM) Tip =
+                    Selected.Cells[Selected.Cells.Count - 1];
+                ExtraShort.Add(Tip);
+                if (Tip.DepthM > 0.0)
+                {
+                    RemovedBcy += Tip.DepthM * BcyPerDepthM;
+                }
+
+                List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Remaining =
+                    Selected.Cells.GetRange(0, Selected.Cells.Count - 1);
+                if (Remaining.Count == 0)
+                {
+                    Runs.RemoveAt(RunIndex);
+                    continue;
+                }
+
+                Run Rebuilt = BuildSubRun(Remaining, Selected.HeadingDeg, Grid);
+                // Intent: do not leave a new sub-minimum stub after tip peeling.
+                if ((MinimumWorkLengthM > 0.0)
+                    && (Rebuilt.LengthM + NUMERIC_TOLERANCE < MinimumWorkLengthM))
+                {
+                    foreach (((Int32 Bx, Int32 By) Cell, Double DepthM) Entry
+                        in Remaining)
+                    {
+                        ExtraShort.Add(Entry);
+                        if (Entry.DepthM > 0.0)
+                        {
+                            RemovedBcy += Entry.DepthM * BcyPerDepthM;
+                        }
+                    }
+                    Runs.RemoveAt(RunIndex);
+                }
+                else
+                {
+                    Runs[RunIndex] = Rebuilt;
+                }
+            }
+
+            if (ExtraShort.Count == 0)
+            {
+                return (Plan, 0.0);
+            }
+
+            (List<Run> KeptRuns,
+                List<((Int32 Bx, Int32 By) Cell, Double DepthM)> CascadedShort) =
+                OmitShortRuns(Runs, MinimumWorkLengthM);
+            ExtraShort.AddRange(CascadedShort);
+            foreach (((Int32 Bx, Int32 By) Cell, Double DepthM) Entry in CascadedShort)
+            {
+                if (Entry.DepthM > 0.0)
+                {
+                    RemovedBcy += Entry.DepthM * BcyPerDepthM;
+                }
+            }
+
+            List<((Int32 Bx, Int32 By) Cell, Double DepthM)> ShortOmitted =
+                new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>(
+                    Plan.ShortRunOmittedCells);
+            ShortOmitted.AddRange(ExtraShort);
+            List<((Int32 Bx, Int32 By) Cell, Double DepthM)> CombinedOmitted =
+                new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>(Plan.OmittedCells);
+            CombinedOmitted.AddRange(ExtraShort);
+            Double ConnectorDistanceM = ConnectorDistance(KeptRuns);
+            Double WorkDistanceM = KeptRuns.Sum(Run => Run.LengthM);
+            Double Score = (KeptRuns.Count * RUN_COUNT_WEIGHT)
+                + (ConnectorDistanceM * CONNECTOR_WEIGHT)
+                + Plan.AnchorDistanceM
+                + (WorkDistanceM * WORK_DISTANCE_WEIGHT)
+                + (CombinedOmitted.Count * OMITTED_CELL_WEIGHT);
+            PlanResult Updated = new PlanResult(
+                Plan.HeadingDeg,
+                KeptRuns,
+                ConnectorDistanceM,
+                Plan.AnchorDistanceM,
+                Score,
+                CombinedOmitted,
+                ShortOmitted);
+            return (Updated, RemovedBcy);
         }
 
         /// <summary>

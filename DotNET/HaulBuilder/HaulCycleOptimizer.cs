@@ -15,6 +15,20 @@ namespace HaulBuilder
         private const Double DEFAULT_MINIMUM_TURN_RADIUS_M = 7.62;
 
         /// <summary>Builds one complete axis-lane candidate.</summary>
+        /// <param name="Grid">Field grid.</param>
+        /// <param name="Flow">Transport flow field.</param>
+        /// <param name="Ledger">Work ledger to allocate.</param>
+        /// <param name="Axis">Lane axis mode.</param>
+        /// <param name="MaximumLoadBcy">Scraper capacity in bank cubic yards.</param>
+        /// <param name="MaximumRunsPerKind">Max nearby lanes grouped into one cycle side.</param>
+        /// <param name="DeferEdgeWork">When true, edge cells stay deferred.</param>
+        /// <param name="FlowPenaltyWeight">Flow-aware pair cost weight.</param>
+        /// <param name="Obstacles">Optional exclusion obstacles.</param>
+        /// <param name="HeadingAxisDeg">Optional user heading for UserHeading axis.</param>
+        /// <param name="AllowAnyDeferredRemainder">
+        /// When true, unpaired leftovers are allowed beyond pure material imbalance
+        /// (used for end-of-job cleanup ledgers of scrap cells).
+        /// </param>
         static public HaulOptimizationResult Optimize
             (
             Grid Grid,
@@ -26,7 +40,8 @@ namespace HaulBuilder
             Boolean DeferEdgeWork = false,
             Double FlowPenaltyWeight = 0.20,
             ObstacleField? Obstacles = null,
-            Double? HeadingAxisDeg = null
+            Double? HeadingAxisDeg = null,
+            Boolean AllowAnyDeferredRemainder = false
             )
         {
             if (Grid == null) throw new ArgumentNullException(nameof(Grid));
@@ -106,7 +121,7 @@ namespace HaulBuilder
             Double UnmatchedFillBcy = DeferredWork
                 .Where(Entry => Entry.Kind == HaulLaneBuilder.WorkKind.Fill)
                 .Sum(Entry => Entry.VolumeBcy);
-            if (!DeferEdgeWork)
+            if (!DeferEdgeWork && !AllowAnyDeferredRemainder)
             {
                 Double ExpectedCutBcy = Math.Max(
                     0.0, Ledger.TotalCutBcy - Ledger.TotalFillBcy);
