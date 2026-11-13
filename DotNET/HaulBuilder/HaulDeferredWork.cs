@@ -22,6 +22,12 @@ namespace HaulBuilder
 
         /// <summary>Unassigned work after residual and repair stages.</summary>
         public const String OPTIMIZER_UNASSIGNED = "OPTIMIZER_UNASSIGNED";
+
+        /// <summary>
+        /// Depth allocated to a cycle that guidance coverage left out of every
+        /// run and that no short-run list holds.
+        /// </summary>
+        public const String GUIDANCE_COVERAGE_OMITTED = "GUIDANCE_COVERAGE_OMITTED";
     }
 
     /// <summary>One exact depth-layer entry not assigned to the automatic plan.</summary>

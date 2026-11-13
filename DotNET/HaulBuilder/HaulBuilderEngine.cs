@@ -43,17 +43,40 @@ namespace HaulBuilder
                 Options = Opt,
             };
 
-            // Ambient minimum length aligns compact preflight with guidance.
-            using (CoveragePlanner.PushMinimumWorkLength(
-                Opt.ResolveMinimumWorkLengthM()))
+            Interlocked.Increment(ref _ActiveRunCount);
+            try
             {
-            return RunCore(
-                Opt,
-                Result,
-                GuidanceProgress,
-                CancellationToken);
+                // Ambient minimum length aligns compact preflight with guidance.
+                using (CoveragePlanner.PushMinimumWorkLength(
+                    Opt.ResolveMinimumWorkLengthM()))
+                {
+                    return RunCore(
+                        Opt,
+                        Result,
+                        GuidanceProgress,
+                        CancellationToken);
+                }
+            }
+            finally
+            {
+                // The connector caches are keyed by grid objects that this run
+                // created, so no other run can use an entry. Release them when the
+                // last active run ends; a run still in flight only loses memoized
+                // results, which it recomputes with the same values.
+                if (Interlocked.Decrement(ref _ActiveRunCount) == 0)
+                {
+                    TransitPlanner.ReleaseCaches();
+                }
             }
         }
+
+        /// <summary>Number of <see cref="Run"/> calls executing in this process.</summary>
+        static private Int32 _ActiveRunCount;
+
+        /// <summary>
+        /// Factor that turns a ratio into a percentage, for warning text.
+        /// </summary>
+        private const Double PERCENT_PER_UNIT = 100.0;
 
         /// <summary>
         /// Executes the validated haul-planning pipeline under an ambient work-length scope.
@@ -72,6 +95,15 @@ namespace HaulBuilder
             )
         {
             AgdField Field = Agd.Parse(Opt.AgdPath);
+            // Intent: the parser writes this warning to the console only, where a
+            // caller with no console never sees it.
+            if (Field.Skipped > 0)
+            {
+                Result.Messages.Add(String.Format(
+                    CultureInfo.InvariantCulture,
+                    "WARNING: Skipped {0} unusable AGD rows (missing/zero/short).",
+                    Field.Skipped));
+            }
             Grid Grid = GridMath.BuildGrid(Field, Opt.GridSizeFt, Opt.SwellFactor, Opt.CutFillRatio, Opt.MaxDepthMm);
             Result.Field = Field;
             Result.Grid = Grid;
@@ -80,6 +112,18 @@ namespace HaulBuilder
             Double BalanceThreshold = Obstacles.Active ? Double.PositiveInfinity : Balance.DEFAULT_IMBALANCE_THRESHOLD;
             BalanceResult BalanceResult = Balance.Compute(Grid, "check", BalanceThreshold);
             Result.Balance = BalanceResult;
+            // Intent: same test and same wording as the console warning in
+            // Balance.Compute, so both report the same imbalance.
+            if (BalanceResult.RelativeImbalance > BalanceThreshold)
+            {
+                Result.Messages.Add(String.Format(
+                    CultureInfo.InvariantCulture,
+                    "WARNING: cut/fill imbalance {0:0.0}% exceeds {1:0.0}% (supply={2:0.0} BCY, demand={3:0.0} BCY)",
+                    BalanceResult.RelativeImbalance * PERCENT_PER_UNIT,
+                    BalanceThreshold * PERCENT_PER_UNIT,
+                    BalanceResult.TotalSupplyBcy,
+                    BalanceResult.TotalDemandBcy));
+            }
 
             FlowField Flow = FlowFieldSolver.Compute(Grid, "poisson");
             Result.Flow = Flow;
@@ -836,7 +880,11 @@ namespace HaulBuilder
             Result.LifecycleGuidance = Plan.Lifecycle;
             Result.DetailedGuidanceTime = Plan.Timing;
 
-            Result.CsvTextByName["guidance"] = BuildGuidanceCsv(Guidance.Points);
+            // Callers that read GuidancePoints do not need the multi-hundred-megabyte CSV.
+            if (Options.IncludeGuidanceCsv)
+            {
+                Result.CsvTextByName["guidance"] = BuildGuidanceCsv(Guidance.Points);
+            }
             if (Options.IncludeGuidancePng)
             {
                 Result.PngBytesByName["guidance"] = Render.RenderGuidancePng(
@@ -897,14 +945,30 @@ namespace HaulBuilder
                     HeadingDeg,
                     HaulBuilder.Obstacles.EMPTY_OBSTACLES,
                     Options.ToleranceMm);
+            // Intent: typed values, so a caller does not parse message text. With
+            // no cleanup build, the main build is also the last build.
+            Result.GuidanceSequenceFailureCount =
+                Plan.Passes.Count(PassPlan => PassPlan.DeferredEntirePass);
+            Result.UnsequenceablePassCount = Result.GuidanceSequenceFailureCount;
+            // Intent: depth that the main build neither drove nor deferred is
+            // still owed, whichever branch follows.
+            List<HaulDeferredWork> StillDeferred =
+                new List<HaulDeferredWork>(Cleanup.RemainingDeferred);
+            StillDeferred.AddRange(BuildUnrecordedDeferred(Grid, Plan.Passes));
+            // Intent: cleanup labels every leftover as a sequence failure.
+            // Cells the main build omitted only for length keep that reason.
+            StillDeferred = RelabelUnpairedMinimumLength(Plan, StillDeferred);
             if (Cleanup.Passes.Count == 0)
             {
+                // RemainingDeferred already holds the short lists, so appending
+                // them again would count each cell twice.
                 RecordGuidanceDeferredWork(
                     Result,
                     Grid,
                     Plan,
-                    Cleanup.RemainingDeferred,
-                    CleanupCycleCount: 0);
+                    StillDeferred,
+                    CleanupCycleCount: 0,
+                    AppendPlanShortLists: false);
                 return Plan;
             }
 
@@ -976,13 +1040,54 @@ namespace HaulBuilder
                 "Appended {0} end-of-job cleanup haul route(s) grouping deferred scraps by area ({1:F3} BCY).",
                 CleanupRoute.OrderedPasses.Count,
                 Cleanup.AssignedCutBcy));
+            Result.CleanupRouteCount = CleanupRoute.OrderedPasses.Count;
+            Result.CleanupRouteBcy = Cleanup.AssignedCutBcy;
+            // Intent: the cleanup build is now the last build, so its count is
+            // the number of passes that no route drives.
+            Result.UnsequenceablePassCount =
+                CleanupPlan.Passes.Count(PassPlan => PassPlan.DeferredEntirePass);
+            StillDeferred.AddRange(BuildUnrecordedDeferred(Grid, CleanupPlan.Passes));
             RecordGuidanceDeferredWork(
                 Result,
                 Grid,
                 CleanupPlan,
-                Cleanup.RemainingDeferred,
+                StillDeferred,
                 CleanupRoute.OrderedPasses.Count);
             return Merged;
+        }
+
+        /// <summary>
+        /// Builds deferred entries for depth that one guidance build neither
+        /// drove nor listed as deferred.
+        /// </summary>
+        /// <param name="Grid">Field grid for volume conversion.</param>
+        /// <param name="Passes">Final pass plans of one guidance build.</param>
+        /// <returns>One entry per unrecorded cell and side.</returns>
+        static private List<HaulDeferredWork> BuildUnrecordedDeferred
+            (
+            Grid Grid,
+            IReadOnlyList<LifecyclePlanner.PassPlan> Passes
+            )
+        {
+            Double CutBcyPerDepthM = Grid.AreaM2 * Constants.M3_TO_CY;
+            Double FillBcyPerDepthM = CutBcyPerDepthM * Grid.Compaction;
+            List<HaulDeferredWork> Output = new List<HaulDeferredWork>();
+            foreach (LifecyclePlanner.PassPlan PassPlan in Passes)
+            {
+                AppendShortDeferred(
+                    Output,
+                    HaulLaneBuilder.WorkKind.Cut,
+                    PassPlan.CutUnrecordedCells,
+                    CutBcyPerDepthM,
+                    HaulDeferredWorkReasons.GUIDANCE_COVERAGE_OMITTED);
+                AppendShortDeferred(
+                    Output,
+                    HaulLaneBuilder.WorkKind.Fill,
+                    PassPlan.FillUnrecordedCells,
+                    FillBcyPerDepthM,
+                    HaulDeferredWorkReasons.GUIDANCE_COVERAGE_OMITTED);
+            }
+            return Output;
         }
 
         /// <summary>
@@ -1090,6 +1195,61 @@ namespace HaulBuilder
         }
 
         /// <summary>
+        /// Gives unpaired short cells the reason the short-list append would have used.
+        /// </summary>
+        /// <param name="Plan">Guidance plan whose short lists name the cells.</param>
+        /// <param name="Deferred">Deferred entries already built from those cells.</param>
+        /// <returns>The same entries, with minimum-length cells relabeled.</returns>
+        static private List<HaulDeferredWork> RelabelUnpairedMinimumLength
+            (
+            GuidancePlanner.BuildResult Plan,
+            IReadOnlyList<HaulDeferredWork> Deferred
+            )
+        {
+            // Intent: the cleanup ledger splits a short cell across layers, so
+            // the leftover depth is not the depth stored on the short list.
+            HashSet<(HaulLaneBuilder.WorkKind Kind, (Int32 Bx, Int32 By) Cell)>
+                MinimumLength =
+                new HashSet<(HaulLaneBuilder.WorkKind Kind, (Int32 Bx, Int32 By) Cell)>();
+            foreach (LifecyclePlanner.PassPlan PassPlan in Plan.Passes)
+            {
+                if (PassPlan.DeferredEntirePass)
+                {
+                    continue;
+                }
+                foreach (((Int32 Bx, Int32 By) Cell, Double DepthM) Entry
+                    in PassPlan.CutShortOmittedCells)
+                {
+                    MinimumLength.Add((HaulLaneBuilder.WorkKind.Cut, Entry.Cell));
+                }
+                foreach (((Int32 Bx, Int32 By) Cell, Double DepthM) Entry
+                    in PassPlan.FillShortOmittedCells)
+                {
+                    MinimumLength.Add((HaulLaneBuilder.WorkKind.Fill, Entry.Cell));
+                }
+            }
+
+            List<HaulDeferredWork> Output = new List<HaulDeferredWork>(Deferred.Count);
+            foreach (HaulDeferredWork Entry in Deferred)
+            {
+                if ((Entry.Reason == HaulDeferredWorkReasons.GUIDANCE_SEQUENCE_FAILED)
+                    && MinimumLength.Contains((Entry.Kind, Entry.Cell)))
+                {
+                    Output.Add(new HaulDeferredWork(
+                        Entry.Kind,
+                        Entry.Cell,
+                        Entry.LayerIndex,
+                        Entry.DepthM,
+                        Entry.VolumeBcy,
+                        HaulDeferredWorkReasons.BELOW_MINIMUM_WORK_LENGTH));
+                    continue;
+                }
+                Output.Add(Entry);
+            }
+            return Output;
+        }
+
+        /// <summary>
         /// Records leftover guidance-deferred work after cleanup routes are built.
         /// </summary>
         /// <param name="Result">Pipeline result to update.</param>
@@ -1097,13 +1257,18 @@ namespace HaulBuilder
         /// <param name="Plan">Guidance plan whose short omissions still count.</param>
         /// <param name="ExtraDeferred">Additional unpaired cleanup leftovers.</param>
         /// <param name="CleanupCycleCount">Number of appended cleanup routes.</param>
-        private static void RecordGuidanceDeferredWork
+        /// <param name="AppendPlanShortLists">
+        /// When false, the plan's short lists are not appended. The empty-cleanup
+        /// branch already carries those cells in <paramref name="ExtraDeferred"/>.
+        /// </param>
+        static internal void RecordGuidanceDeferredWork
             (
             HaulBuilderResult Result,
             Grid Grid,
             GuidancePlanner.BuildResult Plan,
             IReadOnlyList<HaulDeferredWork> ExtraDeferred,
-            Int32 CleanupCycleCount
+            Int32 CleanupCycleCount,
+            Boolean AppendPlanShortLists = true
             )
         {
             Double CutBcyPerDepthM = Grid.AreaM2 * Constants.M3_TO_CY;
@@ -1118,6 +1283,10 @@ namespace HaulBuilder
                 if (PassPlan.DeferredEntirePass)
                 {
                     SequenceFailedPasses += 1;
+                }
+                if (!AppendPlanShortLists)
+                {
+                    continue;
                 }
                 AppendShortDeferred(
                     ShortDeferred,
@@ -2024,7 +2193,7 @@ namespace HaulBuilder
         /// <param name="Options">Configuration controlling the operation.</param>
         /// <returns>The resulting clone options.</returns>
 
-        private static HaulBuilderOptions CloneOptions
+        static internal HaulBuilderOptions CloneOptions
             (
             HaulBuilderOptions Options
             )
@@ -2054,11 +2223,13 @@ namespace HaulBuilder
                 IncludeCutFillPairCsv = Options.IncludeCutFillPairCsv,
                 IncludeCutFillPairPng = Options.IncludeCutFillPairPng,
                 IncludeGuidancePng = Options.IncludeGuidancePng,
+                IncludeGuidanceCsv = Options.IncludeGuidanceCsv,
                 TurnSpeedMph = Options.TurnSpeedMph,
                 GradeSpeedMph = Options.GradeSpeedMph,
                 MinimumTurningDiameterFt = Options.MinimumTurningDiameterFt,
                 EquipmentLengthFt = Options.EquipmentLengthFt,
                 MinimumWorkLengthFt = Options.MinimumWorkLengthFt,
+                EnableMinimumWorkLength = Options.EnableMinimumWorkLength,
                 WaypointTurnThresholdDeg = Options.WaypointTurnThresholdDeg,
                 IncludeAnimationGif = Options.IncludeAnimationGif,
                 IncludeAnimationFrames = Options.IncludeAnimationFrames,

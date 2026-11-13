@@ -99,6 +99,45 @@ namespace HaulBuilder.Tests
         }
 
         /// <summary>
+        /// Verifies skipping the guidance CSV keeps the waypoints and the distance.
+        /// </summary>
+        [Fact]
+        public void Run_IncludeGuidanceCsvFalse_OmitsTextAndKeepsDistance
+            (
+            )
+        {
+            String AgdPath = CreateMinimalAgd();
+            try
+            {
+                HaulBuilderOptions WithoutCsv = new HaulBuilderOptions
+                {
+                    AgdPath = AgdPath,
+                    LaneAxisHeadingDeg = 90.0,
+                    IncludeGuidanceCsv = false,
+                };
+                HaulBuilderOptions WithCsv = new HaulBuilderOptions
+                {
+                    AgdPath = AgdPath,
+                    LaneAxisHeadingDeg = 90.0,
+                    IncludeGuidanceCsv = true,
+                };
+                HaulBuilderResult Without = new HaulBuilderEngine().Run(WithoutCsv);
+                HaulBuilderResult With = new HaulBuilderEngine().Run(WithCsv);
+                Assert.False(Without.CsvTextByName.ContainsKey("guidance"));
+                Assert.NotEmpty(Without.GuidancePoints);
+                Assert.NotNull(Without.DetailedGuidanceTime);
+                Assert.NotNull(With.DetailedGuidanceTime);
+                Assert.Equal(
+                    With.DetailedGuidanceTime.DistanceM,
+                    Without.DetailedGuidanceTime.DistanceM);
+            }
+            finally
+            {
+                File.Delete(AgdPath);
+            }
+        }
+
+        /// <summary>
         /// Writes a tiny balanced AGD sufficient for a fast haul-plan smoke run.
         /// </summary>
         /// <returns>Path to a temporary AGD file.</returns>

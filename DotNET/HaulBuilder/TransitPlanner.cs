@@ -245,6 +245,31 @@ namespace HaulBuilder
             }
         }
 
+        /// <summary>
+        /// Releases every field-scoped cache and keeps the audit counters.
+        /// </summary>
+        /// <remarks>
+        /// Every cache here is keyed by a <see cref="Grid"/> object that one run
+        /// creates, so no later run can hit an entry. Releasing the caches frees
+        /// memory and cannot change a plan.
+        /// </remarks>
+        static internal void ReleaseCaches
+            (
+            )
+        {
+            // The two locks are taken one after the other, never nested, so this
+            // method cannot take part in a lock-order deadlock.
+            lock (ConnectCacheLock)
+            {
+                ConnectCache.Clear();
+                RetainedConnectCache.Clear();
+            }
+            lock (AllowanceCacheLock)
+            {
+                AllowanceCache.Clear();
+            }
+        }
+
         /// <summary>Gets bounded forward-search workload counters.</summary>
         static public (Int64 Calls, Int64 Successes, Int64 ExpansionLimitHits,
             Int64 Expansions, Int64 MaximumSuccessExpansions,

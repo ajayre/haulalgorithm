@@ -13,6 +13,36 @@ namespace HaulBuilder.Tests
     {
         private const Double BLADE_WIDTH_M = 2.0;
 
+        /// <summary>Minimum blade-down run length of the balance fixture, in metres.</summary>
+        private const Double BALANCE_MINIMUM_WORK_LENGTH_M = 3.0;
+
+        /// <summary>First column of the cut strip and the fill strip of the balance fixture.</summary>
+        private const Int32 BALANCE_FIRST_COLUMN = 2;
+
+        /// <summary>Last column of the cut strip and the fill strip of the balance fixture.</summary>
+        private const Int32 BALANCE_LAST_COLUMN = 12;
+
+        /// <summary>Row of the cut strip of the balance fixture.</summary>
+        private const Int32 BALANCE_CUT_ROW = 5;
+
+        /// <summary>Row of the fill strip of the balance fixture.</summary>
+        private const Int32 BALANCE_FILL_ROW = 8;
+
+        /// <summary>Row of the isolated fill cell that the minimum-length gate drops.</summary>
+        private const Int32 BALANCE_SCRAP_ROW = 15;
+
+        /// <summary>Depth of column zero of the balance fixture, in metres.</summary>
+        private const Double BALANCE_BASE_DEPTH_M = 0.031;
+
+        /// <summary>Depth added per column, so no two cells of a strip hold the same volume.</summary>
+        private const Double BALANCE_DEPTH_STEP_M = 0.001;
+
+        /// <summary>Largest difference between two volumes that count as equal, in BCY.</summary>
+        private const Double BALANCE_VOLUME_TOLERANCE_BCY = 1e-9;
+
+        /// <summary>Largest difference between two depths that count as equal, in metres.</summary>
+        private const Double BALANCE_DEPTH_TOLERANCE_M = 1e-12;
+
         /// <summary>
         /// Verifies exact cell/depth conservation and confirms the caller's list remains unchanged.
         /// </summary>
@@ -279,6 +309,208 @@ namespace HaulBuilder.Tests
                 > Cut.ShortRunOmittedCells.Count);
             Assert.True(
                 BalancedCut.OrderedCells.Count < Cut.OrderedCells.Count);
+        }
+
+        /// <summary>
+        /// Verifies balancing defers exactly the scrap volume on both sides when no
+        /// set of whole cells adds up to it.
+        /// </summary>
+        [Fact]
+        public void BalanceShortRunVolumes_UnevenDepths_DefersOnlyTheScrapVolume
+            (
+            )
+        {
+            Grid Grid = MakeGrid();
+            (CoveragePlanner.PlanResult Cut,
+                CoveragePlanner.PlanResult Fill,
+                List<((Int32 Bx, Int32 By) Cell, Double DepthM)> CutCells,
+                List<((Int32 Bx, Int32 By) Cell, Double DepthM)> FillCells) Fixture = MakeUnevenBalanceFixture(Grid);
+            Double CutFactor = Grid.AreaM2 * Constants.M3_TO_CY;
+            Double FillFactor = CutFactor * Grid.Compaction;
+            // The gate drops one isolated fill cell; that is all the balance has to match.
+            Double ScrapBcy = Fixture.Fill.ShortRunOmittedCells.Sum(Entry => Entry.DepthM) * FillFactor;
+
+            (CoveragePlanner.PlanResult BalancedCut,
+                CoveragePlanner.PlanResult BalancedFill) =
+                CoveragePlanner.BalanceShortRunVolumes(
+                    Fixture.Cut, Fixture.Fill, Grid, BALANCE_MINIMUM_WORK_LENGTH_M);
+
+            Double CutShortBcy = BalancedCut.ShortRunOmittedCells.Sum(Entry => Entry.DepthM) * CutFactor;
+            Double FillShortBcy = BalancedFill.ShortRunOmittedCells.Sum(Entry => Entry.DepthM) * FillFactor;
+            Assert.True(ScrapBcy > 0.0, "The fixture dropped no fill scrap.");
+            Assert.InRange(Math.Abs(CutShortBcy - FillShortBcy), 0.0, BALANCE_VOLUME_TOLERANCE_BCY);
+            Assert.InRange(Math.Abs(FillShortBcy - ScrapBcy), 0.0, BALANCE_VOLUME_TOLERANCE_BCY);
+        }
+
+        /// <summary>
+        /// Verifies a balanced pair of plans is left alone by a second balancing call,
+        /// which is what the guidance planner makes.
+        /// </summary>
+        [Fact]
+        public void BalanceShortRunVolumes_CalledTwice_ChangesNothingTheSecondTime
+            (
+            )
+        {
+            Grid Grid = MakeGrid();
+            (CoveragePlanner.PlanResult Cut,
+                CoveragePlanner.PlanResult Fill,
+                List<((Int32 Bx, Int32 By) Cell, Double DepthM)> CutCells,
+                List<((Int32 Bx, Int32 By) Cell, Double DepthM)> FillCells) Fixture = MakeUnevenBalanceFixture(Grid);
+            (CoveragePlanner.PlanResult FirstCut,
+                CoveragePlanner.PlanResult FirstFill) =
+                CoveragePlanner.BalanceShortRunVolumes(
+                    Fixture.Cut, Fixture.Fill, Grid, BALANCE_MINIMUM_WORK_LENGTH_M);
+
+            (CoveragePlanner.PlanResult SecondCut,
+                CoveragePlanner.PlanResult SecondFill) =
+                CoveragePlanner.BalanceShortRunVolumes(
+                    FirstCut, FirstFill, Grid, BALANCE_MINIMUM_WORK_LENGTH_M);
+
+            Assert.Equal(FirstCut.Runs.Count, SecondCut.Runs.Count);
+            Assert.Equal(FirstFill.Runs.Count, SecondFill.Runs.Count);
+            Assert.InRange(
+                Math.Abs(SecondCut.ShortRunOmittedCells.Sum(Entry => Entry.DepthM)
+                    - FirstCut.ShortRunOmittedCells.Sum(Entry => Entry.DepthM)),
+                0.0,
+                BALANCE_DEPTH_TOLERANCE_M);
+            Assert.InRange(
+                Math.Abs(SecondFill.ShortRunOmittedCells.Sum(Entry => Entry.DepthM)
+                    - FirstFill.ShortRunOmittedCells.Sum(Entry => Entry.DepthM)),
+                0.0,
+                BALANCE_DEPTH_TOLERANCE_M);
+        }
+
+        /// <summary>
+        /// Verifies balancing loses and invents no soil: for every cell, the depth
+        /// kept in runs plus the depth omitted equals the depth that was put in,
+        /// also when one cell is split between a run and the deferred list.
+        /// </summary>
+        [Fact]
+        public void BalanceShortRunVolumes_UnevenDepths_ConservesDepthPerCell
+            (
+            )
+        {
+            Grid Grid = MakeGrid();
+            (CoveragePlanner.PlanResult Cut,
+                CoveragePlanner.PlanResult Fill,
+                List<((Int32 Bx, Int32 By) Cell, Double DepthM)> CutCells,
+                List<((Int32 Bx, Int32 By) Cell, Double DepthM)> FillCells) Fixture = MakeUnevenBalanceFixture(Grid);
+
+            (CoveragePlanner.PlanResult BalancedCut,
+                CoveragePlanner.PlanResult BalancedFill) =
+                CoveragePlanner.BalanceShortRunVolumes(
+                    Fixture.Cut, Fixture.Fill, Grid, BALANCE_MINIMUM_WORK_LENGTH_M);
+
+            AssertDepthPerCell(Fixture.CutCells, BalancedCut.AccountedCells);
+            AssertDepthPerCell(Fixture.FillCells, BalancedFill.AccountedCells);
+        }
+
+        /// <summary>
+        /// Verifies a reverse between runs is charged a half-turn and a same-heading
+        /// pair is not, so lineup metres outrank a bare run count.
+        /// </summary>
+        [Fact]
+        public void EstimateRunOverheadM_ChargesAHalfTurnWhenTheNextRunReverses
+            (
+            )
+        {
+            CoveragePlanner.Run East = new CoveragePlanner.Run(
+                new List<((Int32 Bx, Int32 By) Cell, Double DepthM)> { ((1, 1), 0.01) },
+                (0.0, 0.0),
+                (10.0, 0.0),
+                90.0,
+                0.0);
+            CoveragePlanner.Run West = new CoveragePlanner.Run(
+                new List<((Int32 Bx, Int32 By) Cell, Double DepthM)> { ((1, 2), 0.01) },
+                (10.0, 2.0),
+                (0.0, 2.0),
+                270.0,
+                0.0);
+            CoveragePlanner.Run EastAgain = new CoveragePlanner.Run(
+                new List<((Int32 Bx, Int32 By) Cell, Double DepthM)> { ((1, 3), 0.01) },
+                (0.0, 4.0),
+                (10.0, 4.0),
+                90.0,
+                0.0);
+            Double ReversedM = CoveragePlanner.EstimateRunOverheadM(
+                new List<CoveragePlanner.Run> { East, West });
+            Double ContinuedM = CoveragePlanner.EstimateRunOverheadM(
+                new List<CoveragePlanner.Run> { East, EastAgain });
+            Double TurnArcM = Constants.DEFAULT_TURNING_CIRCLE_FT
+                * Constants.HALF_SCALE
+                * Constants.FEET_TO_METERS
+                * Math.PI;
+            Assert.InRange(Math.Abs((ReversedM - ContinuedM) - TurnArcM), 0.0, 1e-9);
+        }
+
+        /// <summary>
+        /// Builds the balance fixture: an eleven-cell cut strip, an eleven-cell fill
+        /// strip, and one isolated fill cell that the minimum-length gate drops.
+        /// Every cell of a strip has a different depth, so whole cells never add up
+        /// to the scrap volume.
+        /// </summary>
+        /// <param name="Grid">Grid the plans are built on.</param>
+        /// <returns>The gated cut plan, the gated fill plan, and the two input cell lists.</returns>
+        static private (CoveragePlanner.PlanResult Cut,
+            CoveragePlanner.PlanResult Fill,
+            List<((Int32 Bx, Int32 By) Cell, Double DepthM)> CutCells,
+            List<((Int32 Bx, Int32 By) Cell, Double DepthM)> FillCells) MakeUnevenBalanceFixture
+            (
+            Grid Grid
+            )
+        {
+            List<((Int32 Bx, Int32 By) Cell, Double DepthM)> CutCells =
+                new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>();
+            List<((Int32 Bx, Int32 By) Cell, Double DepthM)> FillCells =
+                new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>();
+            for (Int32 Bx = BALANCE_FIRST_COLUMN; Bx <= BALANCE_LAST_COLUMN; Bx += 1)
+            {
+                Double DepthM = BALANCE_BASE_DEPTH_M + (BALANCE_DEPTH_STEP_M * Bx);
+                CutCells.Add(((Bx, BALANCE_CUT_ROW), DepthM));
+                FillCells.Add(((Bx, BALANCE_FILL_ROW), DepthM));
+            }
+            // One cell far from the fill strip forms a run below the minimum length.
+            FillCells.Add((
+                (BALANCE_FIRST_COLUMN, BALANCE_SCRAP_ROW),
+                BALANCE_BASE_DEPTH_M + (BALANCE_DEPTH_STEP_M * BALANCE_FIRST_COLUMN)));
+
+            CoveragePlanner.PlanResult Cut = CoveragePlanner.Plan(
+                CutCells,
+                Grid,
+                BLADE_WIDTH_M,
+                MinimumWorkLengthM: BALANCE_MINIMUM_WORK_LENGTH_M);
+            CoveragePlanner.PlanResult Fill = CoveragePlanner.Plan(
+                FillCells,
+                Grid,
+                BLADE_WIDTH_M,
+                MinimumWorkLengthM: BALANCE_MINIMUM_WORK_LENGTH_M);
+            return (Cut, Fill, CutCells, FillCells);
+        }
+
+        /// <summary>Asserts that two cell lists hold the same total depth in every cell.</summary>
+        /// <param name="Expected">Cells and depths that were put in.</param>
+        /// <param name="Actual">Cells and depths that came out; a cell may appear more than once.</param>
+        static private void AssertDepthPerCell
+            (
+            IEnumerable<((Int32 Bx, Int32 By) Cell, Double DepthM)> Expected,
+            IEnumerable<((Int32 Bx, Int32 By) Cell, Double DepthM)> Actual
+            )
+        {
+            Dictionary<(Int32 Bx, Int32 By), Double> ExpectedByCell = Expected
+                .GroupBy(Entry => Entry.Cell)
+                .ToDictionary(Group => Group.Key, Group => Group.Sum(Entry => Entry.DepthM));
+            Dictionary<(Int32 Bx, Int32 By), Double> ActualByCell = Actual
+                .GroupBy(Entry => Entry.Cell)
+                .ToDictionary(Group => Group.Key, Group => Group.Sum(Entry => Entry.DepthM));
+            Assert.Equal(ExpectedByCell.Count, ActualByCell.Count);
+            foreach (KeyValuePair<(Int32 Bx, Int32 By), Double> Entry in ExpectedByCell)
+            {
+                Assert.True(ActualByCell.ContainsKey(Entry.Key), "Cell " + Entry.Key + " is missing.");
+                Assert.InRange(
+                    Math.Abs(ActualByCell[Entry.Key] - Entry.Value),
+                    0.0,
+                    BALANCE_DEPTH_TOLERANCE_M);
+            }
         }
 
         /// <summary>

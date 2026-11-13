@@ -48,6 +48,33 @@ namespace HaulBuilder.Tests
         }
 
         /// <summary>
+        /// Verifies direction-aware order follows transition seconds, so a long
+        /// straight deadhead beats a short half-turn.
+        /// </summary>
+        [Fact]
+        public void SequencePasses_DirectionAware_PrefersFasterStraightOverShortTurn
+            (
+            )
+        {
+            // Grade return exits at the fill start, heading from fill end back to fill start (south).
+            Pass Anchor = MakePass((0.0, 0.0), (0.0, 0.0), (0.0, 10.0));
+            // Ten metres north: a half-turn, short in metres and slow in seconds.
+            Pass ShortTurn = MakePass((0.0, 10.0), (0.0, 20.0), (0.0, 30.0));
+            // Eighty metres south: straight, long in metres and fast in seconds.
+            Pass LongStraight = MakePass((0.0, -80.0), (0.0, -70.0), (0.0, -60.0));
+            Routing.TransitionCostEvaluator Evaluator = new Routing.TransitionCostEvaluator();
+            Double ShortSeconds = Evaluator.CostSeconds(Anchor, ShortTurn);
+            Double LongSeconds = Evaluator.CostSeconds(Anchor, LongStraight);
+            Assert.True(LongSeconds < ShortSeconds);
+
+            Route Route = Routing.SequencePasses(
+                new List<Pass> { Anchor, ShortTurn, LongStraight });
+            Assert.Equal(0, Route.Order[0]);
+            // Index 2 is the long straight. Ranking by metres was measured and reverted.
+            Assert.Equal(2, Route.Order[1]);
+        }
+
+        /// <summary>
         /// Builds pass.
         /// </summary>
         /// <param name="CutStart">The cut start used by the operation.</param>

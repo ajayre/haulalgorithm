@@ -83,7 +83,7 @@ namespace HaulBuilder
                     Obstacles ?? EMPTY_OBSTACLES);
             }
 
-            /// <summary>Gets transition proxy seconds from one cycle to another.</summary>
+            /// <summary>Gets transition time in seconds.</summary>
             public Double CostSeconds(Pass First, Pass Second) =>
                 Model.Cost(First, Second);
         }
@@ -834,14 +834,15 @@ namespace HaulBuilder
             /// </summary>
             /// <param name="A">Current pass.</param>
             /// <param name="B">Next pass.</param>
-            /// <returns>Transition cost.</returns>
+            /// <returns>Deadhead time plus turn time, in seconds.</returns>
             public Double Cost
                 (
                 Pass A,
                 Pass B
                 )
             {
-                // Blend deadhead drive time plus turn-arc time when enabled.
+                // Task A ranked metres and left one unsequenceable pass, so
+                // sequencing stays on deadhead time plus turn time.
                 (Double X, Double Y) Exit = ExitXy(A, this.GradeReturn);
                 (Double X, Double Y) CutStart = B.CutStartXy;
                 Double Dist = this.Obstacles.Active ? this.Obstacles.PathLength(Exit, CutStart) : Distance(Exit, CutStart);
@@ -861,6 +862,7 @@ namespace HaulBuilder
                 Double TurnT = (R * Angle) / TurnV;
                 return DriveT + TurnT;
             }
+
         }
     }
 }

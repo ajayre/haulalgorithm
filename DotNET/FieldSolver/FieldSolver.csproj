@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Class library that searches for the HaulBuilder settings with the shortest
+       whole-job driving distance for one field. It uses only the public API of
+       HaulBuilder and adds no package of its own. -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <AssemblyName>FieldSolver</AssemblyName>
+    <RootNamespace>FieldSolver</RootNamespace>
+    <Description>Field solver: finds the HaulBuilder settings that give one field the shortest driving distance.</Description>
+    <Version>0.0.1</Version>
+    <!-- Every file names its own namespaces; DotNET/Directory.Build.props would switch implicit usings on. -->
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <!-- A missing documentation header (CS1591) must stop the build in this project. -->
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\HaulBuilder\HaulBuilder.csproj" />
+  </ItemGroup>
+
+  <!-- The tests replace the engine with a table of results through an internal interface. -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="FieldSolver.Tests" />
+  </ItemGroup>
+
+</Project>

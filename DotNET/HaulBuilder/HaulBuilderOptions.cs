@@ -50,6 +50,9 @@ namespace HaulBuilder
             Ponding = new PondingOptions();
             ExcludePolygonSpecs = new List<String>();
             RandomSeed = Constants.DEFAULT_SEED;
+            // Existing callers keep the guidance CSV and the minimum-length rule.
+            IncludeGuidanceCsv = true;
+            EnableMinimumWorkLength = true;
         }
 
         /// <summary>Gets or sets the required AGD input file path.</summary>
@@ -123,6 +126,13 @@ namespace HaulBuilder
         /// <summary>Gets or sets whether a full guidance PNG is included.</summary>
         public Boolean IncludeGuidancePng { get; set; }
 
+        /// <summary>
+        /// Gets or sets whether the <c>guidance</c> entry of
+        /// <see cref="HaulBuilderResult.CsvTextByName"/> is built.
+        /// Waypoints in <see cref="HaulBuilderResult.GuidancePoints"/> are unchanged.
+        /// </summary>
+        public Boolean IncludeGuidanceCsv { get; set; }
+
         /// <summary>Gets or sets turn speed in miles per hour.</summary>
         public Double TurnSpeedMph { get; set; }
 
@@ -139,8 +149,16 @@ namespace HaulBuilder
         /// Gets or sets the minimum blade-down cut/fill run length in feet.
         /// Zero means half of <see cref="EquipmentLengthFt"/>.
         /// Shorter coverage runs are omitted from automatic guidance and deferred.
+        /// Ignored when <see cref="EnableMinimumWorkLength"/> is false.
         /// </summary>
         public Double MinimumWorkLengthFt { get; set; }
+
+        /// <summary>
+        /// Gets or sets whether a minimum blade-down run length is applied.
+        /// When false, every coverage run is kept, however short, and
+        /// <see cref="MinimumWorkLengthFt"/> is ignored.
+        /// </summary>
+        public Boolean EnableMinimumWorkLength { get; set; }
 
         /// <summary>Gets or sets the waypoint heading-change threshold counted as a turn.</summary>
         public Double WaypointTurnThresholdDeg { get; set; }
@@ -153,11 +171,29 @@ namespace HaulBuilder
             (
             )
         {
+            if (!EnableMinimumWorkLength)
+            {
+                // Zero is the value the coverage planner treats as "keep every run".
+                return 0.0;
+            }
             if (MinimumWorkLengthFt > 0.0)
             {
                 return MinimumWorkLengthFt;
             }
             return EquipmentLengthFt * Constants.HALF_SCALE;
+        }
+
+        /// <summary>
+        /// Makes an independent copy of every option, option group, and list.
+        /// </summary>
+        /// <returns>A new options object with equal values and no shared lists.</returns>
+        public HaulBuilderOptions Clone
+            (
+            )
+        {
+            // One copy routine for the engine and for callers, so a new option
+            // cannot be copied by one and forgotten by the other.
+            return HaulBuilderEngine.CloneOptions(this);
         }
 
         /// <summary>

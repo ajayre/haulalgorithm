@@ -31,6 +31,7 @@ namespace HaulBuilder.Tests
                 nameof(HaulBuilderOptions.CutFillRatio),
                 nameof(HaulBuilderOptions.CutSpeedMph),
                 nameof(HaulBuilderOptions.DecelerationTimeS),
+                nameof(HaulBuilderOptions.EnableMinimumWorkLength),
                 nameof(HaulBuilderOptions.EnablePivot),
                 nameof(HaulBuilderOptions.EquipmentLengthFt),
                 nameof(HaulBuilderOptions.EquipmentWidthFt),
@@ -44,6 +45,7 @@ namespace HaulBuilder.Tests
                 nameof(HaulBuilderOptions.IncludeAnimationGif),
                 nameof(HaulBuilderOptions.IncludeCutFillPairCsv),
                 nameof(HaulBuilderOptions.IncludeCutFillPairPng),
+                nameof(HaulBuilderOptions.IncludeGuidanceCsv),
                 nameof(HaulBuilderOptions.IncludeGuidancePng),
                 nameof(HaulBuilderOptions.IncludePivotAnimationFrames),
                 nameof(HaulBuilderOptions.IncludePivotAnimationGif),
@@ -267,6 +269,141 @@ namespace HaulBuilder.Tests
                     AgdPath = FixturePath,
                     AnimationMode = "invalid",
                 }));
+        }
+
+        /// <summary>
+        /// Verifies Clone copies every option and shares no list or option group.
+        /// </summary>
+        [Fact]
+        public void CloneCopiesEveryOption
+            (
+            )
+        {
+            HaulBuilderOptions Source = new HaulBuilderOptions();
+            MutateOptions(Source);
+            HaulBuilderOptions Copy = Source.Clone();
+            AssertOptionsEqual(Source, Copy);
+            Assert.NotSame(Source.Optimization, Copy.Optimization);
+            Assert.NotSame(Source.Ponding, Copy.Ponding);
+            Assert.NotSame(Source.ExcludePolygonSpecs, Copy.ExcludePolygonSpecs);
+            Assert.NotSame(Source.Ponding.OutletSpecs, Copy.Ponding.OutletSpecs);
+            Assert.NotSame(Source.Ponding.OutletPolygonSpecs, Copy.Ponding.OutletPolygonSpecs);
+        }
+
+        /// <summary>
+        /// Gives every settable option a non-default value and adds one list entry.
+        /// </summary>
+        /// <param name="Target">Options object or nested option group.</param>
+        static private void MutateOptions
+            (
+            Object Target
+            )
+        {
+            foreach (PropertyInfo Property in Target.GetType().GetProperties(
+                BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly))
+            {
+                if (Property.PropertyType == typeof(List<String>))
+                {
+                    List<String>? Items = Property.GetValue(Target) as List<String>;
+                    if (Items == null)
+                    {
+                        Assert.Fail("Missing list " + Property.Name);
+                    }
+                    Items.Add("x");
+                    continue;
+                }
+                if (Property.GetSetMethod() == null)
+                {
+                    Object? Nested = Property.GetValue(Target);
+                    if ((Nested != null) && Property.PropertyType.IsClass)
+                    {
+                        MutateOptions(Nested);
+                        continue;
+                    }
+                    Assert.Fail("Unhandled get-only property " + Property.Name);
+                }
+                Property.SetValue(
+                    Target,
+                    DifferentValue(Property.PropertyType, Property.GetValue(Target)));
+            }
+        }
+
+        /// <summary>Builds a value different from the current one for a known option type.</summary>
+        /// <param name="Type">Property type.</param>
+        /// <param name="Current">Current value; a null number counts as zero.</param>
+        /// <returns>A different value of the same type.</returns>
+        static private Object DifferentValue
+            (
+            Type Type,
+            Object? Current
+            )
+        {
+            Type Underlying = Nullable.GetUnderlyingType(Type) ?? Type;
+            if (Underlying == typeof(Double))
+            {
+                Double Number = (Current == null) ? 0.0 : (Double)Current;
+                return Number + 3.0;
+            }
+            if (Underlying == typeof(Int32))
+            {
+                Int32 Number = (Current == null) ? 0 : (Int32)Current;
+                return Number + 3;
+            }
+            if (Underlying == typeof(Boolean))
+            {
+                Boolean Flag = (Current != null) && (Boolean)Current;
+                return !Flag;
+            }
+            if (Underlying == typeof(String))
+            {
+                String Text = (Current as String) ?? String.Empty;
+                return Text + "x";
+            }
+            if (Underlying.IsEnum)
+            {
+                Array Values = Enum.GetValues(Underlying);
+                Object? Value = Values.GetValue(Values.Length - 1);
+                if (Value == null)
+                {
+                    throw new InvalidOperationException("Missing enum value " + Type);
+                }
+                return Value;
+            }
+            throw new InvalidOperationException("Unhandled option type " + Type);
+        }
+
+        /// <summary>Asserts every public property of two option objects is equal.</summary>
+        /// <param name="Source">Mutated options.</param>
+        /// <param name="Copy">Clone of the mutated options.</param>
+        static private void AssertOptionsEqual
+            (
+            Object Source,
+            Object Copy
+            )
+        {
+            foreach (PropertyInfo Property in Source.GetType().GetProperties(
+                BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly))
+            {
+                Object? Left = Property.GetValue(Source);
+                Object? Right = Property.GetValue(Copy);
+                if (Property.PropertyType == typeof(List<String>))
+                {
+                    Assert.Equal((IEnumerable<String>?)Left, (IEnumerable<String>?)Right);
+                    continue;
+                }
+                if ((Property.GetSetMethod() == null)
+                    && Property.PropertyType.IsClass
+                    && (Property.PropertyType != typeof(String)))
+                {
+                    if ((Left == null) || (Right == null))
+                    {
+                        Assert.Fail("Missing nested options " + Property.Name);
+                    }
+                    AssertOptionsEqual(Left, Right);
+                    continue;
+                }
+                Assert.Equal(Left, Right);
+            }
         }
 
         /// <summary>

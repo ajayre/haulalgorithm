@@ -80,6 +80,12 @@ namespace HaulBuilder
             /// <param name="DeferredEntirePass">
             /// True when sequencing failed and the whole remaining allocation was deferred.
             /// </param>
+            /// <param name="CutUnrecordedCells">
+            /// Cut depth allocated to the pass that guidance neither drives nor defers.
+            /// </param>
+            /// <param name="FillUnrecordedCells">
+            /// Fill depth allocated to the pass that guidance neither drives nor defers.
+            /// </param>
             public PassPlan
                 (
                 RunSequencer.Result Cut,
@@ -92,7 +98,11 @@ namespace HaulBuilder
                     CutShortOmittedCells = null,
                 IReadOnlyList<((Int32 Bx, Int32 By) Cell, Double DepthM)>?
                     FillShortOmittedCells = null,
-                Boolean DeferredEntirePass = false
+                Boolean DeferredEntirePass = false,
+                IReadOnlyList<((Int32 Bx, Int32 By) Cell, Double DepthM)>?
+                    CutUnrecordedCells = null,
+                IReadOnlyList<((Int32 Bx, Int32 By) Cell, Double DepthM)>?
+                    FillUnrecordedCells = null
                 )
             {
                 this.Cut = Cut;
@@ -106,7 +116,25 @@ namespace HaulBuilder
                 this.FillShortOmittedCells = FillShortOmittedCells
                     ?? Array.Empty<((Int32 Bx, Int32 By) Cell, Double DepthM)>();
                 this.DeferredEntirePass = DeferredEntirePass;
+                this.CutUnrecordedCells = CutUnrecordedCells
+                    ?? Array.Empty<((Int32 Bx, Int32 By) Cell, Double DepthM)>();
+                this.FillUnrecordedCells = FillUnrecordedCells
+                    ?? Array.Empty<((Int32 Bx, Int32 By) Cell, Double DepthM)>();
             }
+
+            /// <summary>
+            /// Gets cut depth allocated to this pass that guidance neither drives
+            /// nor lists as deferred.
+            /// </summary>
+            public IReadOnlyList<((Int32 Bx, Int32 By) Cell, Double DepthM)>
+                CutUnrecordedCells { get; }
+
+            /// <summary>
+            /// Gets fill depth allocated to this pass that guidance neither drives
+            /// nor lists as deferred.
+            /// </summary>
+            public IReadOnlyList<((Int32 Bx, Int32 By) Cell, Double DepthM)>
+                FillUnrecordedCells { get; }
 
             /// <summary>Gets sequenced cut work.</summary>
             public RunSequencer.Result Cut { get; }

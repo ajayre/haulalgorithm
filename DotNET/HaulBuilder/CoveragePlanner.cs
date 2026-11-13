@@ -15,6 +15,21 @@ namespace HaulBuilder
         private const Double RUN_COUNT_WEIGHT = 1000000.0;
         private const Double CONNECTOR_WEIGHT = 100.0;
         private const Double WORK_DISTANCE_WEIGHT = 0.01;
+        /// <summary>Heading gap above which the next run is treated as a reverse.</summary>
+        private const Double REVERSE_HEADING_SPLIT_DEG = 90.0;
+        /// <summary>Degrees in one full circle, for wrapping a heading difference.</summary>
+        private const Double FULL_CIRCLE_DEG = 360.0;
+        /// <summary>Straight lineup before a coverage run, at the production equipment length.</summary>
+        private const Double COVERAGE_LINEUP_M =
+            Constants.DEFAULT_EQUIPMENT_LENGTH_FT * Constants.FEET_TO_METERS;
+        /// <summary>Straight exit after a coverage run, at the production equipment length.</summary>
+        private const Double COVERAGE_EXIT_M =
+            Constants.DEFAULT_EQUIPMENT_LENGTH_FT * Constants.FEET_TO_METERS;
+        /// <summary>Minimum turn radius used to price a reverse between coverage runs.</summary>
+        private const Double COVERAGE_MINIMUM_RADIUS_M =
+            Constants.DEFAULT_TURNING_CIRCLE_FT
+            * Constants.HALF_SCALE
+            * Constants.FEET_TO_METERS;
         private const Double OMITTED_CELL_WEIGHT = 1000000000000.0;
         private const Double EDGE_PARALLEL_TOLERANCE_DEG = 7.5;
         private const Double NUMERIC_TOLERANCE = Constants.NUMERIC_COMPARISON_TOLERANCE;
@@ -574,6 +589,51 @@ namespace HaulBuilder
         }
 
         /// <summary>
+        /// Estimates the blade-up metres one extra coverage run costs: lineup,
+        /// exit, and a half-turn when the next run reverses.
+        /// </summary>
+        /// <param name="Runs">Ordered coverage runs.</param>
+        /// <returns>Estimated driven overhead in metres.</returns>
+        static internal Double EstimateRunOverheadM
+            (
+            IReadOnlyList<Run> Runs
+            )
+        {
+            Double TotalM = 0.0;
+            for (Int32 Index = 0; Index < Runs.Count; Index += 1)
+            {
+                TotalM += COVERAGE_LINEUP_M + COVERAGE_EXIT_M;
+                if (((Index + 1) < Runs.Count)
+                    && NextRunReverses(Runs[Index].HeadingDeg, Runs[Index + 1].HeadingDeg))
+                {
+                    // A reverse between runs is a half-turn at the minimum radius.
+                    TotalM += COVERAGE_MINIMUM_RADIUS_M * Math.PI;
+                }
+            }
+            return TotalM;
+        }
+
+        /// <summary>
+        /// Reports whether the next run is driven back toward the previous one.
+        /// </summary>
+        /// <param name="HeadingDeg">Heading of the current run, in degrees.</param>
+        /// <param name="NextHeadingDeg">Heading of the following run, in degrees.</param>
+        /// <returns>True when the smaller heading gap exceeds a right angle.</returns>
+        static private Boolean NextRunReverses
+            (
+            Double HeadingDeg,
+            Double NextHeadingDeg
+            )
+        {
+            Double Delta = Math.Abs(HeadingDeg - NextHeadingDeg) % FULL_CIRCLE_DEG;
+            if (Delta > Constants.DEGREES_PER_HALF_TURN)
+            {
+                Delta = FULL_CIRCLE_DEG - Delta;
+            }
+            return Delta > REVERSE_HEADING_SPLIT_DEG;
+        }
+
+        /// <summary>
         /// Drops blade-down runs shorter than the configured minimum and returns
         /// their cells as short-run omissions.
         /// </summary>
@@ -728,11 +788,15 @@ namespace HaulBuilder
 
         /// <summary>
         /// Peels tip cells from the shortest kept runs until TargetBcy is reached,
-        /// cascading any remainder that falls below the minimum work length.
+        /// splitting the last tip by depth when it holds more than the remainder,
+        /// and cascading any remainder that falls below the minimum work length.
         /// </summary>
         /// <param name="Plan">Coverage plan to trim.</param>
         /// <param name="Grid">Field grid for run rebuilds.</param>
-        /// <param name="TargetBcy">Minimum bank volume to move into short-run omission.</param>
+        /// <param name="TargetBcy">
+        /// Bank volume to move into short-run omission. The last tip is split by
+        /// depth so the omitted volume can match this target exactly.
+        /// </param>
         /// <param name="BcyPerDepthM">Bank-volume conversion for one metre of depth.</param>
         /// <param name="MinimumWorkLengthM">Minimum kept blade-down length.</param>
         /// <returns>Updated plan and bank volume newly omitted.</returns>
@@ -758,6 +822,7 @@ namespace HaulBuilder
             while ((RemovedBcy + NUMERIC_TOLERANCE < TargetBcy) && (Runs.Count > 0))
             {
                 // Prefer the shortest kept run so balance trims scrap tips first.
+                // Taking the longest run instead was 950 m longer on TheShop2.
                 Int32 RunIndex = 0;
                 for (Int32 Index = 1; Index < Runs.Count; Index += 1)
                 {
@@ -784,6 +849,30 @@ namespace HaulBuilder
                 // Peel the drive-end tip; that scrap is least useful for lineup.
                 ((Int32 Bx, Int32 By) Cell, Double DepthM) Tip =
                     Selected.Cells[Selected.Cells.Count - 1];
+                Double NeededBcy = TargetBcy - RemovedBcy;
+                Double TipBcy = Tip.DepthM * BcyPerDepthM;
+                // Intent: a whole cell overshoots the balance target, and the caller
+                // then trims the other side again. Defer only the needed depth so
+                // both sides match after one round.
+                if ((Tip.DepthM > 0.0) && (TipBcy > NeededBcy + NUMERIC_TOLERANCE))
+                {
+                    Double DeferredDepthM = NeededBcy / BcyPerDepthM;
+                    // Intent: the run object is shared with the input plan, so build
+                    // a new cell list instead of editing Selected.Cells in place.
+                    List<((Int32 Bx, Int32 By) Cell, Double DepthM)> SplitCells =
+                        Selected.Cells.GetRange(0, Selected.Cells.Count - 1);
+                    SplitCells.Add((Tip.Cell, Tip.DepthM - DeferredDepthM));
+                    // The run keeps every cell, so its centerline does not change.
+                    Runs[RunIndex] = new Run(
+                        SplitCells,
+                        Selected.StartXy,
+                        Selected.EndXy,
+                        Selected.HeadingDeg,
+                        Selected.MaximumLateralErrorM);
+                    ExtraShort.Add((Tip.Cell, DeferredDepthM));
+                    RemovedBcy += NeededBcy;
+                    break;
+                }
                 ExtraShort.Add(Tip);
                 if (Tip.DepthM > 0.0)
                 {

@@ -67,6 +67,29 @@ namespace HaulBuilder
         /// </summary>
         public HaulDeferredWorkSummary? DeferredWorkSummary { get; set; }
 
+        /// <summary>
+        /// Gets or sets the number of cleanup routes appended at the end of the job.
+        /// </summary>
+        public Int32 CleanupRouteCount { get; set; }
+
+        /// <summary>
+        /// Gets or sets the bank cut volume in BCY that the cleanup routes carry.
+        /// </summary>
+        public Double CleanupRouteBcy { get; set; }
+
+        /// <summary>
+        /// Gets or sets the number of passes that the main guidance build deferred
+        /// whole because they could not be sequenced. The cleanup routes take
+        /// their cells.
+        /// </summary>
+        public Int32 GuidanceSequenceFailureCount { get; set; }
+
+        /// <summary>
+        /// Gets or sets the number of passes still deferred whole in the last
+        /// guidance build of the run. No route drives their cells.
+        /// </summary>
+        public Int32 UnsequenceablePassCount { get; set; }
+
         /// <summary>Gets or sets optional multi-route fragment-exchange diagnostics.</summary>
         public HaulMultiRouteExchangeOptimizer.Result? HaulMultiRouteExchange { get; set; }
 

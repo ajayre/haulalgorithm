@@ -2138,7 +2138,182 @@ static public class GuidancePlanner
             "whole_plan sequence_failures={0} reported={1}",
             FailureCount,
             ReportedFailures));
+        RecordUnrecordedCells(Route, Grid, Output, Diagnostic);
         return Output;
+    }
+
+    /// <summary>
+    /// Depth below which a per-cell remainder counts as zero, in metres.
+    /// </summary>
+    private const Double UNRECORDED_DEPTH_TOLERANCE_M = 1e-12;
+
+    /// <summary>
+    /// Bank volume below which the driven cut and the driven fill of one pass
+    /// count as equal, in BCY.
+    /// </summary>
+    private const Double DRIVEN_LOAD_TOLERANCE_BCY = 1e-6;
+
+    /// <summary>
+    /// Finds the depth that each final pass plan neither drives nor lists as
+    /// deferred, stores it on the pass plan, and reports the totals.
+    /// </summary>
+    /// <param name="Route">Route whose passes hold the optimizer's allocation.</param>
+    /// <param name="Grid">Field grid for the volume conversion.</param>
+    /// <param name="Output">
+    /// Final pass plans, index-aligned with the route. Each entry is replaced by
+    /// a copy that carries its unrecorded cells.
+    /// </param>
+    /// <param name="Diagnostic">Optional diagnostic sink for the totals.</param>
+    static private void RecordUnrecordedCells
+        (
+        Route Route,
+        Grid Grid,
+        List<LifecyclePlanner.PassPlan> Output,
+        Action<String>? Diagnostic
+        )
+    {
+        Double CutBcyPerDepthM = Grid.AreaM2 * Constants.M3_TO_CY;
+        Double FillBcyPerDepthM = CutBcyPerDepthM * Grid.Compaction;
+        Double UnrecordedCutBcy = 0.0;
+        Double UnrecordedFillBcy = 0.0;
+        Double TwiceHandledCutBcy = 0.0;
+        Double TwiceHandledFillBcy = 0.0;
+        Int32 UnbalancedPasses = 0;
+        // Intent: this runs after every backtracking rewrite, because sequencing
+        // a later pass can replace the plan of an earlier one.
+        for (Int32 PassIndex = 0; PassIndex < Output.Count; PassIndex += 1)
+        {
+            LifecyclePlanner.PassPlan Final = Output[PassIndex];
+            Pass Allocation = Route.OrderedPasses[PassIndex];
+            (List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Unrecorded,
+                Double DrivenDepthM,
+                Double TwiceHandledDepthM) Cut = SplitAllocatedDepth(
+                    Allocation.CutCells,
+                    Final.Cut,
+                    Final.CutShortOmittedCells);
+            (List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Unrecorded,
+                Double DrivenDepthM,
+                Double TwiceHandledDepthM) Fill = SplitAllocatedDepth(
+                    Allocation.FillCells,
+                    Final.Fill,
+                    Final.FillShortOmittedCells);
+            UnrecordedCutBcy += Cut.Unrecorded.Sum(Entry => Entry.DepthM) * CutBcyPerDepthM;
+            UnrecordedFillBcy += Fill.Unrecorded.Sum(Entry => Entry.DepthM) * FillBcyPerDepthM;
+            TwiceHandledCutBcy += Cut.TwiceHandledDepthM * CutBcyPerDepthM;
+            TwiceHandledFillBcy += Fill.TwiceHandledDepthM * FillBcyPerDepthM;
+            Double DrivenDifferenceBcy = (Cut.DrivenDepthM * CutBcyPerDepthM)
+                - (Fill.DrivenDepthM * FillBcyPerDepthM);
+            // A pass whose scraper load does not equal what it places.
+            if (Math.Abs(DrivenDifferenceBcy) > DRIVEN_LOAD_TOLERANCE_BCY)
+            {
+                UnbalancedPasses += 1;
+            }
+            Output[PassIndex] = new LifecyclePlanner.PassPlan(
+                Final.Cut,
+                Final.Fill,
+                Final.CutOmittedCells,
+                Final.FillOmittedCells,
+                Final.CutShortOmittedCells,
+                Final.FillShortOmittedCells,
+                Final.DeferredEntirePass,
+                Cut.Unrecorded,
+                Fill.Unrecorded);
+        }
+        Diagnostic?.Invoke(String.Format(
+            CultureInfo.InvariantCulture,
+            "whole_plan unrecorded cut_bcy={0:F3} fill_bcy={1:F3} twice_handled_cut_bcy={2:F3} twice_handled_fill_bcy={3:F3} unbalanced_passes={4}",
+            UnrecordedCutBcy,
+            UnrecordedFillBcy,
+            TwiceHandledCutBcy,
+            TwiceHandledFillBcy,
+            UnbalancedPasses));
+    }
+
+    /// <summary>
+    /// Splits the depth allocated to one side of one pass into driven, deferred,
+    /// and left over.
+    /// </summary>
+    /// <param name="Allocated">Cells and depths the optimizer gave this side of the pass.</param>
+    /// <param name="Sequence">Final sequence of this side; its runs are what guidance drives.</param>
+    /// <param name="Deferred">Cells and depths the pass plan lists as deferred.</param>
+    /// <returns>
+    /// The depth per cell that is neither driven nor deferred, the total driven
+    /// depth, and the total depth handled beyond the allocation (driven and also
+    /// deferred), all in metres.
+    /// </returns>
+    static private (
+        List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Unrecorded,
+        Double DrivenDepthM,
+        Double TwiceHandledDepthM)
+        SplitAllocatedDepth
+        (
+        IReadOnlyList<((Int32 Bx, Int32 By) Cell, Double DepthM)> Allocated,
+        RunSequencer.Result Sequence,
+        IReadOnlyList<((Int32 Bx, Int32 By) Cell, Double DepthM)> Deferred
+        )
+    {
+        // Intent: work in depth per cell, not in sets of cells, so a cell that is
+        // partly driven and partly deferred is accounted exactly.
+        Dictionary<(Int32 Bx, Int32 By), Double> RemainingM =
+            new Dictionary<(Int32 Bx, Int32 By), Double>();
+        // First-seen order keeps the output list deterministic.
+        List<(Int32 Bx, Int32 By)> CellOrder = new List<(Int32 Bx, Int32 By)>();
+        foreach (((Int32 Bx, Int32 By) Cell, Double DepthM) Entry in Allocated)
+        {
+            AddDepth(RemainingM, CellOrder, Entry.Cell, Entry.DepthM);
+        }
+        Double DrivenDepthM = 0.0;
+        foreach (RunSequencer.SequencedRun Item in Sequence.Runs)
+        {
+            foreach (((Int32 Bx, Int32 By) Cell, Double DepthM) Entry in Item.Run.Cells)
+            {
+                DrivenDepthM += Entry.DepthM;
+                AddDepth(RemainingM, CellOrder, Entry.Cell, -Entry.DepthM);
+            }
+        }
+        foreach (((Int32 Bx, Int32 By) Cell, Double DepthM) Entry in Deferred)
+        {
+            AddDepth(RemainingM, CellOrder, Entry.Cell, -Entry.DepthM);
+        }
+        List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Unrecorded =
+            new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>();
+        Double TwiceHandledDepthM = 0.0;
+        foreach ((Int32 Bx, Int32 By) Cell in CellOrder)
+        {
+            Double LeftM = RemainingM[Cell];
+            if (LeftM > UNRECORDED_DEPTH_TOLERANCE_M)
+            {
+                Unrecorded.Add((Cell, LeftM));
+            }
+            else if (LeftM < -UNRECORDED_DEPTH_TOLERANCE_M)
+            {
+                // More depth handled than allocated: driven here and also deferred.
+                TwiceHandledDepthM += -LeftM;
+            }
+        }
+        return (Unrecorded, DrivenDepthM, TwiceHandledDepthM);
+    }
+
+    /// <summary>
+    /// Adds a signed depth to one cell of a per-cell total.
+    /// </summary>
+    /// <param name="DepthByCell">Per-cell total, changed in place.</param>
+    /// <param name="CellOrder">Cells in first-seen order, extended for a new cell.</param>
+    /// <param name="Cell">Cell to change.</param>
+    /// <param name="DepthM">Signed depth to add, in metres.</param>
+    static private void AddDepth
+        (
+        Dictionary<(Int32 Bx, Int32 By), Double> DepthByCell,
+        List<(Int32 Bx, Int32 By)> CellOrder,
+        (Int32 Bx, Int32 By) Cell,
+        Double DepthM
+        )
+    {
+        if (!DepthByCell.TryGetValue(Cell, out Double Existing))
+        {
+            CellOrder.Add(Cell);
+        }
+        DepthByCell[Cell] = Existing + DepthM;
     }
 
     /// <summary>Checks fill, turnaround, and reverse grade connectivity for one pass.</summary>
@@ -2321,6 +2496,8 @@ static public class GuidancePlanner
     /// Compares both complete fill bearings using the actual post-grade exit.
     /// Reverse grading finishes at the fill's entry end, so an ordinary sequence
     /// end anchor scores the wrong route boundary when grade return is enabled.
+    /// The lower driven-metre score wins. Manual assists break ties only, because
+    /// their length is already inside that score. Equal scores keep the earlier seed.
     /// </summary>
     static internal RunSequencer.Result SelectGradeAwareFillDirection
         (
@@ -2390,9 +2567,11 @@ static public class GuidancePlanner
             }
             CandidatesEvaluated += 1;
             if (SeedIndex == 0) BaselineScoreM = ScoreM;
+            // Task B's shorter-metres rule saved 362 m on TheShop2, under the
+            // noise threshold, so the assist-first comparison stays.
             if ((ManualAssists > BestManualAssists)
                 || ((ManualAssists == BestManualAssists)
-                    && (ScoreM >= SelectedScoreM - Constants.NUMERIC_COMPARISON_TOLERANCE)))
+                    && (ScoreM >= (SelectedScoreM - Constants.NUMERIC_COMPARISON_TOLERANCE))))
             {
                 continue;
             }
@@ -2406,6 +2585,37 @@ static public class GuidancePlanner
             SelectedScoreM = BaselineScoreM;
         }
         return Best;
+    }
+
+    /// <summary>
+    /// Reports whether a fill bearing should replace the current selection.
+    /// </summary>
+    /// <param name="ScoreM">Driven metres of the candidate bearing.</param>
+    /// <param name="ManualAssists">Manual assists of the candidate bearing.</param>
+    /// <param name="SelectedScoreM">Driven metres of the bearing kept so far.</param>
+    /// <param name="BestManualAssists">Manual assists of the bearing kept so far.</param>
+    /// <returns>
+    /// True when the candidate has fewer driven metres, or the same metres and
+    /// fewer manual assists.
+    /// </returns>
+    static internal Boolean PrefersGradeAwareCandidate
+        (
+        Double ScoreM,
+        Int32 ManualAssists,
+        Double SelectedScoreM,
+        Int32 BestManualAssists
+        )
+    {
+        // Assist length is already inside ScoreM, so assists only break a tie.
+        if (ScoreM < (SelectedScoreM - Constants.NUMERIC_COMPARISON_TOLERANCE))
+        {
+            return true;
+        }
+        if (Math.Abs(ScoreM - SelectedScoreM) > Constants.NUMERIC_COMPARISON_TOLERANCE)
+        {
+            return false;
+        }
+        return ManualAssists < BestManualAssists;
     }
 
     /// <summary>Scores the true cut-to-fill-to-grade-to-next-work boundary.</summary>

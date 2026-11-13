@@ -59,6 +59,39 @@ namespace HaulBuilder.Tests
         }
 
         /// <summary>
+        /// Verifies two feasible bearings: the shorter score wins even with more
+        /// assists, and an equal score keeps fewer assists then the earlier seed.
+        /// </summary>
+        [Fact]
+        public void SelectGradeAwareFillDirection_PrefersShorterMetresOverMoreAssists
+            (
+            )
+        {
+            // Shorter driven metres win even when that bearing needs more assists.
+            Assert.True(GuidancePlanner.PrefersGradeAwareCandidate(
+                ScoreM: 10.0,
+                ManualAssists: 2,
+                SelectedScoreM: 40.0,
+                BestManualAssists: 0));
+            Assert.False(GuidancePlanner.PrefersGradeAwareCandidate(
+                ScoreM: 40.0,
+                ManualAssists: 0,
+                SelectedScoreM: 10.0,
+                BestManualAssists: 2));
+            // Equal metres: fewer assists win, and a tie keeps the earlier seed.
+            Assert.True(GuidancePlanner.PrefersGradeAwareCandidate(
+                ScoreM: 10.0,
+                ManualAssists: 0,
+                SelectedScoreM: 10.0,
+                BestManualAssists: 1));
+            Assert.False(GuidancePlanner.PrefersGradeAwareCandidate(
+                ScoreM: 10.0,
+                ManualAssists: 1,
+                SelectedScoreM: 10.0,
+                BestManualAssists: 1));
+        }
+
+        /// <summary>
         /// Verifies reverse prepared sequence preserves allocation and reverses endpoints.
         /// </summary>
 
