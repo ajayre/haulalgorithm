@@ -62,6 +62,21 @@ namespace HaulBuilder
         /// <summary>Gets or sets route relocation search window; zero disables relocation.</summary>
         public Int32 RouteReorderWindow { get; set; } = 200;
 
+        /// <summary>
+        /// Gets or sets whether routes are driven as one-strip interior loads,
+        /// then other interior loads, then the field-edge batch. The reorder
+        /// window stays inside a band. On by default. Off is one travel sort
+        /// of every load.
+        /// </summary>
+        public Boolean EnableEarlyFullStripBanding { get; set; } = true;
+
+        /// <summary>
+        /// Gets or sets whether the next load is chosen by metres. The score is
+        /// the empty hop plus the turn arc. On by default. Off scores the same
+        /// hop in seconds, with the turn at turn speed.
+        /// </summary>
+        public Boolean OptimizeRouteOrderByDistance { get; set; } = true;
+
         /// <summary>Copies all resolved tuning values.</summary>
         internal HaulOptimizationOptions Clone() => new HaulOptimizationOptions
         {
@@ -82,6 +97,8 @@ namespace HaulBuilder
             CycleChainCandidatesPerRoute = CycleChainCandidatesPerRoute,
             CycleChainMinimumImprovementSeconds = CycleChainMinimumImprovementSeconds,
             RouteReorderWindow = RouteReorderWindow,
+            EnableEarlyFullStripBanding = EnableEarlyFullStripBanding,
+            OptimizeRouteOrderByDistance = OptimizeRouteOrderByDistance,
         };
     }
 }

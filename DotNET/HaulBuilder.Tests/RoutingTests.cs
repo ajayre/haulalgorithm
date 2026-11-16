@@ -68,10 +68,36 @@ namespace HaulBuilder.Tests
             Assert.True(LongSeconds < ShortSeconds);
 
             Route Route = Routing.SequencePasses(
-                new List<Pass> { Anchor, ShortTurn, LongStraight });
+                new List<Pass> { Anchor, ShortTurn, LongStraight },
+                OrderByDistance: false);
             Assert.Equal(0, Route.Order[0]);
-            // Index 2 is the long straight. Ranking by metres was measured and reverted.
+            // Index 2 is the long straight. Time ranks it ahead of the short turn.
             Assert.Equal(2, Route.Order[1]);
+        }
+
+        /// <summary>
+        /// Distance ranking keeps the short turn. Its arc is about 24 m, which
+        /// is less diesel than the 80 m straight hop that wins on time.
+        /// </summary>
+        [Fact]
+        public void SequencePasses_OrderByDistance_PrefersShortTurnOverLongStraight
+            (
+            )
+        {
+            Pass Anchor = MakePass((0.0, 0.0), (0.0, 0.0), (0.0, 10.0));
+            Pass ShortTurn = MakePass((0.0, 10.0), (0.0, 20.0), (0.0, 30.0));
+            Pass LongStraight = MakePass((0.0, -80.0), (0.0, -70.0), (0.0, -60.0));
+            Routing.TransitionCostEvaluator Evaluator = new Routing.TransitionCostEvaluator(
+                OrderByDistance: true);
+            Double ShortMetres = Evaluator.CostSeconds(Anchor, ShortTurn);
+            Double LongMetres = Evaluator.CostSeconds(Anchor, LongStraight);
+            Assert.True(ShortMetres < LongMetres);
+
+            Route Route = Routing.SequencePasses(
+                new List<Pass> { Anchor, ShortTurn, LongStraight },
+                OrderByDistance: true);
+            Assert.Equal(0, Route.Order[0]);
+            Assert.Equal(1, Route.Order[1]);
         }
 
         /// <summary>

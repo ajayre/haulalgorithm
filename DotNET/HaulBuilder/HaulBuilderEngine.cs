@@ -139,6 +139,11 @@ namespace HaulBuilder
             Double HeadingDeg = HaulLaneBuilder.NormalizeAxisHeadingDeg(
                 Opt.LaneAxisHeadingDeg);
             Double ScraperBcy = (Opt.ScraperCapacityLcy / Opt.SwellFactor);
+            // Captured before consolidation can move boundary cells into other loads.
+            HashSet<(Int32 Bx, Int32 By)> EdgeCutCells =
+                new HashSet<(Int32 Bx, Int32 By)>();
+            HashSet<(Int32 Bx, Int32 By)> EdgeFillCells =
+                new HashSet<(Int32 Bx, Int32 By)>();
 
             PassResult PassResult;
             {
@@ -185,6 +190,19 @@ namespace HaulBuilder
                         GradeReturn: true,
                         Obstacles,
                         HeadingDeg);
+                foreach (Pass EdgePass in EdgeCompletion.Passes)
+                {
+                    foreach (((Int32 Bx, Int32 By) Cell, Double DepthM) Entry
+                        in EdgePass.CutCells)
+                    {
+                        EdgeCutCells.Add(Entry.Cell);
+                    }
+                    foreach (((Int32 Bx, Int32 By) Cell, Double DepthM) Entry
+                        in EdgePass.FillCells)
+                    {
+                        EdgeFillCells.Add(Entry.Cell);
+                    }
+                }
                 OptimizedPasses = OptimizedPasses
                     .Concat(EdgeCompletion.Passes)
                     .ToList();
@@ -347,32 +365,56 @@ namespace HaulBuilder
             }
             Result.PassResult = PassResult;
 
-            Route Route = Routing.SequencePasses(
-                PassResult.Passes,
-                1500,
-                GradeReturn: true,
-                DirectionAware: true,
-                Opt.UnloadedTravelSpeedMph,
-                Opt.TurnSpeedMph,
-                Opt.MinimumTurningDiameterFt,
-                Obstacles,
-                StartCandidateCount: 8);
-            Result.Route = Route;
-
             Int32 ActiveReorderWindow = Opt.Optimization.RouteReorderWindow;
-            if (ActiveReorderWindow > 0)
+            Route Route;
+            if (Opt.Optimization.EnableEarlyFullStripBanding)
             {
-                Routing.RefineRouteOrder(
-                    Route,
-                    ActiveReorderWindow,
+                HaulRouteBanding.Result Banded = BandProductionRoute(
+                    PassResult.Passes,
+                    EdgeCutCells,
+                    EdgeFillCells,
+                    Opt,
+                    Obstacles);
+                Route = Banded.Route;
+                Result.Messages.Add(String.Format(
+                    CultureInfo.InvariantCulture,
+                    "Early full-strip banding ordered {0} one-strip interior route(s), then {1} other interior route(s), then {2} field-edge route(s).",
+                    Banded.FullStripCount,
+                    Banded.OtherInteriorCount,
+                    Banded.EdgeCount));
+            }
+            else
+            {
+                Route = Routing.SequencePasses(
+                    PassResult.Passes,
+                    1500,
                     GradeReturn: true,
                     DirectionAware: true,
                     Opt.UnloadedTravelSpeedMph,
                     Opt.TurnSpeedMph,
                     Opt.MinimumTurningDiameterFt,
-                    12,
-                    Obstacles);
+                    Obstacles,
+                    StartCandidateCount: 8,
+                    OrderByDistance: Opt.Optimization.OptimizeRouteOrderByDistance);
+                if (ActiveReorderWindow > 0)
+                {
+                    Routing.RefineRouteOrder(
+                        Route,
+                        ActiveReorderWindow,
+                        GradeReturn: true,
+                        DirectionAware: true,
+                        Opt.UnloadedTravelSpeedMph,
+                        Opt.TurnSpeedMph,
+                        Opt.MinimumTurningDiameterFt,
+                        12,
+                        Obstacles,
+                        OrderByDistance: Opt.Optimization.OptimizeRouteOrderByDistance);
+                }
             }
+            Result.Messages.Add(Opt.Optimization.OptimizeRouteOrderByDistance
+                ? "Route order scored by distance (empty hop plus turn arc)."
+                : "Route order scored by transition time.");
+            Result.Route = Route;
 
             GuidancePlanner.BuildResult? PrecomputedGuidancePlan = null;
             // Exact chain promotion requires full guidance; skip when callers want a fast preview.
@@ -409,25 +451,43 @@ namespace HaulBuilder
                     PassResult.Rounds,
                     PassResult.UnmatchedCutBcy,
                     PassResult.UnmatchedFillBcy);
-                Route CandidateRoute = new Route(
-                    Enumerable.Range(0, Chain.Passes.Count).ToList(),
-                    Chain.Passes,
-                    Routing.CalculateDeadhead(
-                        Chain.Passes,
-                        GradeReturn: true,
-                        Obstacles));
-                if (ActiveReorderWindow > 0)
+                Route CandidateRoute;
+                HaulRouteBanding.Result? BandedCandidate = null;
+                if (Opt.Optimization.EnableEarlyFullStripBanding)
                 {
-                    Routing.RefineRouteOrder(
-                        CandidateRoute,
-                        ActiveReorderWindow,
-                        GradeReturn: true,
-                        DirectionAware: true,
-                        Opt.UnloadedTravelSpeedMph,
-                        Opt.TurnSpeedMph,
-                        Opt.MinimumTurningDiameterFt,
-                        12,
+                    // Fill exchanges can change which load is one strip. Band again
+                    // so the window still cannot pull an edge load forward.
+                    BandedCandidate = BandProductionRoute(
+                        Chain.Passes,
+                        EdgeCutCells,
+                        EdgeFillCells,
+                        Opt,
                         Obstacles);
+                    CandidateRoute = BandedCandidate.Route;
+                }
+                else
+                {
+                    CandidateRoute = new Route(
+                        Enumerable.Range(0, Chain.Passes.Count).ToList(),
+                        Chain.Passes,
+                        Routing.CalculateDeadhead(
+                            Chain.Passes,
+                            GradeReturn: true,
+                            Obstacles));
+                    if (ActiveReorderWindow > 0)
+                    {
+                        Routing.RefineRouteOrder(
+                            CandidateRoute,
+                            ActiveReorderWindow,
+                            GradeReturn: true,
+                            DirectionAware: true,
+                            Opt.UnloadedTravelSpeedMph,
+                            Opt.TurnSpeedMph,
+                            Opt.MinimumTurningDiameterFt,
+                            12,
+                            Obstacles,
+                            OrderByDistance: Opt.Optimization.OptimizeRouteOrderByDistance);
+                    }
                 }
                 Result.HaulCycleChainOptimization = Chain;
                 if (Chain.AcceptedSwaps > 0)
@@ -459,6 +519,15 @@ namespace HaulBuilder
                             Chain.AcceptedSwaps,
                             BaselineExact.DeterministicSeconds,
                             CandidateExact.DeterministicSeconds));
+                        if (BandedCandidate != null)
+                        {
+                            Result.Messages.Add(String.Format(
+                                CultureInfo.InvariantCulture,
+                                "Early full-strip banding reapplied after chain refinement: {0} one-strip interior route(s), then {1} other interior route(s), then {2} field-edge route(s).",
+                                BandedCandidate.FullStripCount,
+                                BandedCandidate.OtherInteriorCount,
+                                BandedCandidate.EdgeCount));
+                        }
                     }
                     else
                     {
@@ -987,7 +1056,8 @@ namespace HaulBuilder
                 Options.TurnSpeedMph,
                 Options.MinimumTurningDiameterFt,
                 HaulBuilder.Obstacles.EMPTY_OBSTACLES,
-                StartCandidateCount: 8);
+                StartCandidateCount: 8,
+                OrderByDistance: Options.Optimization.OptimizeRouteOrderByDistance);
             List<Pass> CombinedPasses = StrippedMain
                 .Concat(CleanupRoute.OrderedPasses)
                 .ToList();
@@ -2285,6 +2355,42 @@ namespace HaulBuilder
         }
 
         /// <summary>
+        /// Sequences one-strip interior loads, then other interior loads, then
+        /// the field-edge batch. The reorder window stays inside each band.
+        /// </summary>
+        /// <param name="Passes">Loads to order.</param>
+        /// <param name="EdgeCutCells">Cut cells owned by the field-edge batch.</param>
+        /// <param name="EdgeFillCells">Fill cells owned by the field-edge batch.</param>
+        /// <param name="Opt">Production options, including the reorder window.</param>
+        /// <param name="Obstacles">Obstacle field.</param>
+        /// <returns>The banded route and the size of each band.</returns>
+        private static HaulRouteBanding.Result BandProductionRoute
+            (
+            IReadOnlyList<Pass> Passes,
+            HashSet<(Int32 Bx, Int32 By)> EdgeCutCells,
+            HashSet<(Int32 Bx, Int32 By)> EdgeFillCells,
+            HaulBuilderOptions Opt,
+            ObstacleField Obstacles
+            )
+        {
+            return HaulRouteBanding.Apply(
+                Passes,
+                EdgeCutCells,
+                EdgeFillCells,
+                TwoOptCap: 1500,
+                GradeReturn: true,
+                DirectionAware: true,
+                UnloadedTravelSpeedMph: Opt.UnloadedTravelSpeedMph,
+                TurnSpeedMph: Opt.TurnSpeedMph,
+                TurningCircleFt: Opt.MinimumTurningDiameterFt,
+                Obstacles: Obstacles,
+                StartCandidateCount: 8,
+                ReorderWindow: Opt.Optimization.RouteReorderWindow,
+                ReorderMaxRounds: 12,
+                OrderByDistance: Opt.Optimization.OptimizeRouteOrderByDistance);
+        }
+
+        /// <summary>
         /// Executes the copy optimization operation.
         /// </summary>
         /// <param name="Source">The source used by the operation.</param>
@@ -2311,6 +2417,8 @@ namespace HaulBuilder
             Destination.CycleChainCandidatesPerRoute = Source.CycleChainCandidatesPerRoute;
             Destination.CycleChainMinimumImprovementSeconds = Source.CycleChainMinimumImprovementSeconds;
             Destination.RouteReorderWindow = Source.RouteReorderWindow;
+            Destination.EnableEarlyFullStripBanding = Source.EnableEarlyFullStripBanding;
+            Destination.OptimizeRouteOrderByDistance = Source.OptimizeRouteOrderByDistance;
         }
 
         /// <summary>

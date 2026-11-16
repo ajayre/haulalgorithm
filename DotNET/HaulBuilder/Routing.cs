@@ -71,7 +71,8 @@ namespace HaulBuilder
                 Double UnloadedTravelSpeedMph = DEFAULT_UNLOADED_TRAVEL_SPEED_MPH,
                 Double TurnSpeedMph = DEFAULT_TURN_SPEED_MPH,
                 Double TurningCircleFt = DEFAULT_TURNING_CIRCLE_FT,
-                ObstacleField? Obstacles = null
+                ObstacleField? Obstacles = null,
+                Boolean OrderByDistance = false
                 )
             {
                 Model = new _TransitionModel(
@@ -80,10 +81,14 @@ namespace HaulBuilder
                     UnloadedTravelSpeedMph * Constants.MPH_TO_MPS,
                     TurnSpeedMph * Constants.MPH_TO_MPS,
                     (TurningCircleFt * Constants.FEET_TO_METERS) / 2.0,
-                    Obstacles ?? EMPTY_OBSTACLES);
+                    Obstacles ?? EMPTY_OBSTACLES,
+                    OrderByDistance);
             }
 
-            /// <summary>Gets transition time in seconds.</summary>
+            /// <summary>
+            /// Gets the transition cost. Seconds, unless this evaluator was
+            /// constructed to score metres.
+            /// </summary>
             public Double CostSeconds(Pass First, Pass Second) =>
                 Model.Cost(First, Second);
         }
@@ -102,6 +107,10 @@ namespace HaulBuilder
         /// <param name="StartCandidateCount">
         /// Maximum deterministic open-route start candidates.
         /// </param>
+        /// <param name="OrderByDistance">
+        /// When true, rank the next load by metres of hop plus turn arc.
+        /// When false, rank it by drive time plus turn time.
+        /// </param>
         /// <returns>Routed order and deadhead total.</returns>
         static public Route SequencePasses
             (
@@ -113,7 +122,8 @@ namespace HaulBuilder
             Double TurnSpeedMph = DEFAULT_TURN_SPEED_MPH,
             Double TurningCircleFt = DEFAULT_TURNING_CIRCLE_FT,
             ObstacleField? Obstacles = null,
-            Int32 StartCandidateCount = 1
+            Int32 StartCandidateCount = 1,
+            Boolean OrderByDistance = false
             )
         {
             // Handle degenerate list sizes up front.
@@ -136,7 +146,8 @@ namespace HaulBuilder
                 UnloadedTravelSpeedMph * Constants.MPH_TO_MPS,
                 TurnSpeedMph * Constants.MPH_TO_MPS,
                 (TurningCircleFt * Constants.FEET_TO_METERS) / 2.0,
-                ActiveObstacles
+                ActiveObstacles,
+                OrderByDistance
                 );
 
             // Open routes have no fixed depot, so evaluate deterministic spatial
@@ -339,6 +350,9 @@ namespace HaulBuilder
         /// <param name="TurningCircleFt">Turning circle diameter.</param>
         /// <param name="MaxRounds">Max refinement rounds.</param>
         /// <param name="Obstacles">Obstacle field.</param>
+        /// <param name="OrderByDistance">
+        /// When true, relocate moves are scored in metres. When false, in seconds.
+        /// </param>
         /// <returns>Before objective, after objective, and move count.</returns>
         static public (Double Before, Double After, Int32 Moves) RefineRouteOrder
             (
@@ -350,7 +364,8 @@ namespace HaulBuilder
             Double TurnSpeedMph = DEFAULT_TURN_SPEED_MPH,
             Double TurningCircleFt = DEFAULT_TURNING_CIRCLE_FT,
             Int32 MaxRounds = 12,
-            ObstacleField? Obstacles = null
+            ObstacleField? Obstacles = null,
+            Boolean OrderByDistance = false
             )
         {
             // Use relocate (or-opt) moves which preserve segment orientation.
@@ -362,7 +377,8 @@ namespace HaulBuilder
                 UnloadedTravelSpeedMph * Constants.MPH_TO_MPS,
                 TurnSpeedMph * Constants.MPH_TO_MPS,
                 (TurningCircleFt * Constants.FEET_TO_METERS) / 2.0,
-                ActiveObstacles
+                ActiveObstacles,
+                OrderByDistance
                 );
 
             List<Pass> Seq = Route.OrderedPasses;
@@ -780,6 +796,7 @@ namespace HaulBuilder
             /// <param name="TurnV">Turn speed m/s.</param>
             /// <param name="R">Turning radius.</param>
             /// <param name="Obstacles">Obstacle field.</param>
+            /// <param name="OrderByDistance">Whether the cost is metres instead of seconds.</param>
             public _TransitionModel
                 (
                 Boolean GradeReturn,
@@ -787,7 +804,8 @@ namespace HaulBuilder
                 Double ReturnV,
                 Double TurnV,
                 Double R,
-                ObstacleField Obstacles
+                ObstacleField Obstacles,
+                Boolean OrderByDistance
                 )
             {
                 // Cache motion parameters for repeated transition evaluations.
@@ -797,6 +815,7 @@ namespace HaulBuilder
                 this.TurnV = TurnV;
                 this.R = R;
                 this.Obstacles = Obstacles;
+                this.OrderByDistance = OrderByDistance;
             }
 
             /// <summary>
@@ -829,20 +848,24 @@ namespace HaulBuilder
             /// </summary>
             public ObstacleField Obstacles { get; }
 
+            /// <summary>Gets whether the cost is metres instead of seconds.</summary>
+            public Boolean OrderByDistance { get; }
+
             /// <summary>
             /// Computes transition cost from one pass to the next.
             /// </summary>
             /// <param name="A">Current pass.</param>
             /// <param name="B">Next pass.</param>
-            /// <returns>Deadhead time plus turn time, in seconds.</returns>
+            /// <returns>
+            /// Deadhead plus turn arc, in metres, or deadhead time plus turn
+            /// time, in seconds, when <see cref="OrderByDistance"/> is false.
+            /// </returns>
             public Double Cost
                 (
                 Pass A,
                 Pass B
                 )
             {
-                // Task A ranked metres and left one unsequenceable pass, so
-                // sequencing stays on deadhead time plus turn time.
                 (Double X, Double Y) Exit = ExitXy(A, this.GradeReturn);
                 (Double X, Double Y) CutStart = B.CutStartXy;
                 Double Dist = this.Obstacles.Active ? this.Obstacles.PathLength(Exit, CutStart) : Distance(Exit, CutStart);
@@ -851,14 +874,25 @@ namespace HaulBuilder
                     return Dist;
                 }
 
+                // A half-turn is about 24 m of arc. Dividing that arc by turn
+                // speed makes it cost the same time as about 80 m of driving.
+                Double Angle = 0.0;
+                if ((Dist >= Constants.GEOMETRY_COMPARISON_TOLERANCE) && (TurnV > 0.0))
+                {
+                    (Double X, Double Y)? DeadDir = Unit(Exit, CutStart);
+                    Angle = TurnAngle(ExitDir(A, this.GradeReturn), DeadDir)
+                        + TurnAngle(DeadDir, CutDir(B));
+                }
+                if (OrderByDistance)
+                {
+                    return Dist + (R * Angle);
+                }
+
                 Double DriveT = (ReturnV > 0.0) ? (Dist / ReturnV) : Dist;
                 if ((Dist < Constants.GEOMETRY_COMPARISON_TOLERANCE) || (TurnV <= 0.0))
                 {
                     return DriveT;
                 }
-
-                (Double X, Double Y)? DeadDir = Unit(Exit, CutStart);
-                Double Angle = TurnAngle(ExitDir(A, this.GradeReturn), DeadDir) + TurnAngle(DeadDir, CutDir(B));
                 Double TurnT = (R * Angle) / TurnV;
                 return DriveT + TurnT;
             }
