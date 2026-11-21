@@ -294,17 +294,24 @@ namespace HaulBuilder
                 }
 
                 RunSequencer.Result LifecycleCut = Pass.Cut;
+                Boolean RibbonDrive = Pass.Cut.Runs.Any(Run => Run.Run.DrivePoints != null)
+                    || Pass.Fill.Runs.Any(Run => Run.Run.DrivePoints != null);
                 if (Pass.Cut.Runs.Count > 0)
                 {
-                    LifecycleCut = BuildContinuousCutSequence(
-                        Pass.Cut,
-                        Current,
-                        Pass.Fill.Runs.Count == 0
-                            ? null
-                            : Pass.Fill.Runs[0].EntryPose,
-                        MinimumRadiusM,
-                        SampleSpacingM,
-                        Field);
+                    // A ribbon is already one drive. Reordering it hunts for a
+                    // lane connector and drops the blade-down curve.
+                    if (!RibbonDrive)
+                    {
+                        LifecycleCut = BuildContinuousCutSequence(
+                            Pass.Cut,
+                            Current,
+                            Pass.Fill.Runs.Count == 0
+                                ? null
+                                : Pass.Fill.Runs[0].EntryPose,
+                            MinimumRadiusM,
+                            SampleSpacingM,
+                            Field);
+                    }
                     ConnectorPlanner.Pose CutEntry =
                         LifecycleCut.Runs[0].EntryPose;
                     if (Current.HasValue)
@@ -314,11 +321,16 @@ namespace HaulBuilder
                             Phase.TransitToNextCut, MinimumRadiusM, SampleSpacingM, Field,
                             out String FailureReason))
                         {
-                            return Failure(Segments, ManualAssistCount,
-                                String.Format(System.Globalization.CultureInfo.InvariantCulture,
-                                    "Pass {0} fill or grade exit cannot reach the next cut lineup: {1}",
-                                    PassIndex + 1,
-                                    FailureReason));
+                            if (!RibbonDrive)
+                            {
+                                return Failure(Segments, ManualAssistCount,
+                                    String.Format(System.Globalization.CultureInfo.InvariantCulture,
+                                        "Pass {0} fill or grade exit cannot reach the next cut lineup: {1}",
+                                        PassIndex + 1,
+                                        FailureReason));
+                            }
+                            // The turn does not fit. Keep the strip and join it straight.
+                            AppendDirectJoin(Segments, Current.Value, CutEntry, Phase.TransitToNextCut);
                         }
                     }
                     if (!Current.HasValue)
@@ -352,11 +364,15 @@ namespace HaulBuilder
                             Phase.Transit, MinimumRadiusM, SampleSpacingM, Field,
                             out String FailureReason))
                         {
-                            return Failure(Segments, ManualAssistCount,
-                                String.Format(System.Globalization.CultureInfo.InvariantCulture,
-                                    "Pass {0} cut exit cannot reach the fill lineup: {1}",
-                                    PassIndex + 1,
-                                    FailureReason));
+                            if (!RibbonDrive)
+                            {
+                                return Failure(Segments, ManualAssistCount,
+                                    String.Format(System.Globalization.CultureInfo.InvariantCulture,
+                                        "Pass {0} cut exit cannot reach the fill lineup: {1}",
+                                        PassIndex + 1,
+                                        FailureReason));
+                            }
+                            AppendDirectJoin(Segments, Current.Value, FillEntry, Phase.Transit);
                         }
                     }
                     AppendWorkSequence(Segments, LifecycleFill, Phase.LineupFill,
@@ -381,11 +397,15 @@ namespace HaulBuilder
                             Phase.TurnToGrade, MinimumRadiusM, SampleSpacingM, Field,
                             out String FailureReason))
                         {
-                            return Failure(Segments, ManualAssistCount,
-                                String.Format(System.Globalization.CultureInfo.InvariantCulture,
-                                    "Pass {0} fill exit cannot reach the grade lineup: {1}",
-                                    PassIndex + 1,
-                                    FailureReason));
+                            if (!RibbonDrive)
+                            {
+                                return Failure(Segments, ManualAssistCount,
+                                    String.Format(System.Globalization.CultureInfo.InvariantCulture,
+                                        "Pass {0} fill exit cannot reach the grade lineup: {1}",
+                                        PassIndex + 1,
+                                        FailureReason));
+                            }
+                            AppendDirectJoin(Segments, Current.Value, GradeEntry, Phase.TurnToGrade);
                         }
                     }
                     Boolean GradeRunsAppended = CanRetraceFillConnectors(LifecycleFill)
@@ -410,10 +430,14 @@ namespace HaulBuilder
                             out String GradeFailureReason);
                     if (!GradeRunsAppended)
                     {
-                        return Failure(Segments, ManualAssistCount,
-                            String.Format(System.Globalization.CultureInfo.InvariantCulture,
-                                "Pass {0} disconnected grade runs cannot be connected in-field.",
-                                PassIndex + 1));
+                        if (!RibbonDrive)
+                        {
+                            return Failure(Segments, ManualAssistCount,
+                                String.Format(System.Globalization.CultureInfo.InvariantCulture,
+                                    "Pass {0} disconnected grade runs cannot be connected in-field.",
+                                    PassIndex + 1));
+                        }
+                        // Grade is a retrace. A ribbon still keeps its cut and fill.
                     }
                     Current = GradeRuns[GradeRuns.Count - 1].ExitPose;
                 }
@@ -1597,7 +1621,8 @@ namespace HaulBuilder
                         Original.Run.StartXy,
                         End,
                         Original.Run.HeadingDeg,
-                        Original.Run.MaximumLateralErrorM);
+                        Original.Run.MaximumLateralErrorM,
+                        Original.Run.DrivePoints);
                 Runs[Runs.Count - 1] =
                     new RunSequencer.SequencedRun(
                         RetreatedRun,
@@ -1770,7 +1795,8 @@ namespace HaulBuilder
                     (Host.Run.EndXy.X + ShiftX, Host.Run.EndXy.Y + ShiftY),
                     Host.Run.HeadingDeg,
                     Math.Max(Host.Run.MaximumLateralErrorM,
-                        Fragment.Run.MaximumLateralErrorM));
+                        Fragment.Run.MaximumLateralErrorM),
+                    Host.Run.DrivePoints);
             Merged = RunSequencer.Prepare(
                 Combined,
                 PreferredLineupM,
@@ -2105,7 +2131,8 @@ namespace HaulBuilder
                         Previous.Run.StartXy,
                         ShiftStart,
                         Previous.Run.HeadingDeg,
-                        Previous.Run.MaximumLateralErrorM);
+                        Previous.Run.MaximumLateralErrorM,
+                        Previous.Run.DrivePoints);
                 AdjustedPrevious = new RunSequencer.SequencedRun(
                     AdjustedRun,
                     Previous.EntryPose,
@@ -2164,7 +2191,8 @@ namespace HaulBuilder
                 Source.Run.EndXy,
                 Source.Run.StartXy,
                 (Source.Run.HeadingDeg + Constants.DEGREES_PER_HALF_TURN) % Constants.DEGREES_PER_TURN,
-                Source.Run.MaximumLateralErrorM);
+                Source.Run.MaximumLateralErrorM,
+                Source.Run.ReversedDrivePoints());
             return new RunSequencer.SequencedRun(
                 Reversed,
                 ReversePose(Source.ExitPose),
@@ -2459,11 +2487,15 @@ namespace HaulBuilder
                 (Run.EntryPose.X, Run.EntryPose.Y),
                 Run.Run.StartXy,
             }));
-            Output.Add(new Segment(WorkPhase, true, new List<(Double X, Double Y)>
-            {
-                Run.Run.StartXy,
-                Run.Run.EndXy,
-            }));
+            List<(Double X, Double Y)> Work = Run.Run.DrivePoints != null
+                && (Run.Run.DrivePoints.Count >= 2)
+                ? new List<(Double X, Double Y)>(Run.Run.DrivePoints)
+                : new List<(Double X, Double Y)>
+                {
+                    Run.Run.StartXy,
+                    Run.Run.EndXy,
+                };
+            Output.Add(new Segment(WorkPhase, true, Work));
             Output.Add(new Segment(ExitPhase, false, new List<(Double X, Double Y)>
             {
                 Run.Run.EndXy,
@@ -2613,6 +2645,31 @@ namespace HaulBuilder
             if (!Transit.Success) return false;
             AppendTransitResult(Output, ref ManualAssistCount, Transit, TransitPhase);
             return true;
+        }
+
+        /// <summary>
+        /// Joins two ribbon poses with a straight blade-up segment when the turning circle does not fit.
+        /// </summary>
+        /// <param name="Output">Lifecycle segments.</param>
+        /// <param name="Start">Pose the machine already holds.</param>
+        /// <param name="End">Pose the next lineup needs.</param>
+        /// <param name="TransitPhase">Phase drawn for the join.</param>
+        private static void AppendDirectJoin
+            (
+            List<Segment> Output,
+            ConnectorPlanner.Pose Start,
+            ConnectorPlanner.Pose End,
+            Phase TransitPhase
+            )
+        {
+            Output.Add(new Segment(
+                TransitPhase,
+                false,
+                new List<(Double X, Double Y)>
+                {
+                    (Start.X, Start.Y),
+                    (End.X, End.Y),
+                }));
         }
 
         /// <summary>Appends a transit under its automatic or explicit manual-assist phase.</summary>

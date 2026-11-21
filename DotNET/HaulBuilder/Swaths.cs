@@ -395,7 +395,7 @@ namespace HaulBuilder
         private const String MOVE = "MOVE";
         private const String MANUAL_MOVE = "MANUAL_MOVE";
         private const Double EPSILON = Constants.STRICT_NUMERIC_COMPARISON_TOLERANCE;
-        private const Double DEFAULT_TURNING_CIRCLE_FT = 50.0;
+        private const Double DEFAULT_TURNING_CIRCLE_FT = Constants.DEFAULT_TURNING_CIRCLE_FT;
 
         /// <summary>
         /// Soft-bend length budget in half-turns of R (1 => πR) plus the chord.

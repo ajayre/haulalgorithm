@@ -1471,7 +1471,8 @@ namespace HaulBuilder
                                 Base.Run.EndXy.X - (UnitX * EndRetreatM),
                                 Base.Run.EndXy.Y - (UnitY * EndRetreatM)),
                             Base.Run.HeadingDeg,
-                            Base.Run.MaximumLateralErrorM);
+                            Base.Run.MaximumLateralErrorM,
+                            Base.Run.DrivePoints);
                     Output.Add(new SequencedRun(
                         AdjustedRun,
                         StartRetreatM > COST_TOLERANCE
@@ -1825,7 +1826,8 @@ namespace HaulBuilder
                     Run.EndXy.X - (UnitX * EndRetreatM),
                     Run.EndXy.Y - (UnitY * EndRetreatM)),
                 Run.HeadingDeg,
-                Run.MaximumLateralErrorM);
+                Run.MaximumLateralErrorM,
+                Run.DrivePoints);
         }
 
         /// <summary>Finds the first inward endpoint whose available lineup can begin a turn.</summary>
@@ -2385,7 +2387,8 @@ namespace HaulBuilder
                 Input.EndXy,
                 Input.StartXy,
                 (Input.HeadingDeg + Constants.DEGREES_PER_HALF_TURN) % Constants.DEGREES_PER_TURN,
-                Input.MaximumLateralErrorM);
+                Input.MaximumLateralErrorM,
+                Input.ReversedDrivePoints());
         }
 
         /// <summary>

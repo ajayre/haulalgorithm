@@ -85,17 +85,31 @@ static public class GuidancePlanner
     /// <param name="Grid">Field grid.</param>
     /// <param name="BladeM">Blade width in metres.</param>
     /// <param name="OrientStartXy">Optional approach anchor.</param>
-    /// <param name="OrientEndXy">Optional exit anchor.</param>
-    /// <returns>Lowest-scoring coverage candidate.</returns>
+        /// <param name="OrientEndXy">Optional exit anchor.</param>
+        /// <param name="RibbonOrder">
+        /// When true, the cell list is already a flow ribbon and must not be retiled.
+        /// </param>
+        /// <returns>Lowest-scoring coverage candidate.</returns>
     private static CoveragePlanner.PlanResult PlanCoverage
         (
         List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Cells,
         Grid Grid,
         Double BladeM,
         (Double X, Double Y)? OrientStartXy = null,
-        (Double X, Double Y)? OrientEndXy = null
+        (Double X, Double Y)? OrientEndXy = null,
+        Boolean RibbonOrder = false
         )
     {
+        // A flow ribbon is already the drive order. Retileing it into lanes
+        // is what turns one curving pass into a knot of circles.
+        if (RibbonOrder)
+        {
+            return CoveragePlanner.PlanRibbon(
+                Cells,
+                Grid,
+                BladeM,
+                PlanningMinimumRadiusM / (Constants.HALF_SCALE * Constants.FEET_TO_METERS));
+        }
         return CoveragePlanner.Plan(
             Cells,
             Grid,
@@ -619,26 +633,41 @@ static public class GuidancePlanner
         if (Grid == null) throw new ArgumentNullException(nameof(Grid));
         // Null inherits the ambient engine minimum so compact preflight matches
         // production guidance; an explicit value overrides that scope.
-        CoveragePlanner.PlanResult Cut = CoveragePlanner.Plan(
-            Pass.CutCells,
-            Grid,
-            BladeM,
-            null,
-            Pass.FillStartXy,
-            MinimumWorkLengthM);
+        CoveragePlanner.PlanResult Cut = Pass.RibbonOrder
+            ? CoveragePlanner.PlanRibbon(
+                Pass.CutCells,
+                Grid,
+                BladeM,
+                PlanningMinimumRadiusM / (Constants.HALF_SCALE * Constants.FEET_TO_METERS))
+            : CoveragePlanner.Plan(
+                Pass.CutCells,
+                Grid,
+                BladeM,
+                null,
+                Pass.FillStartXy,
+                MinimumWorkLengthM);
         (Double X, Double Y)? FillAnchor = Cut.Runs.Count == 0
             ? null
             : Cut.Runs[Cut.Runs.Count - 1].EndXy;
-        CoveragePlanner.PlanResult Fill = CoveragePlanner.Plan(
-            Pass.FillCells,
-            Grid,
-            BladeM,
-            FillAnchor,
-            null,
-            MinimumWorkLengthM);
-        // Intent: short-run scraps on one side must pull matching volume from the other.
-        (Cut, Fill) = CoveragePlanner.BalanceShortRunVolumes(
-            Cut, Fill, Grid, MinimumWorkLengthM);
+        CoveragePlanner.PlanResult Fill = Pass.RibbonOrder
+            ? CoveragePlanner.PlanRibbon(
+                Pass.FillCells,
+                Grid,
+                BladeM,
+                PlanningMinimumRadiusM / (Constants.HALF_SCALE * Constants.FEET_TO_METERS))
+            : CoveragePlanner.Plan(
+                Pass.FillCells,
+                Grid,
+                BladeM,
+                FillAnchor,
+                null,
+                MinimumWorkLengthM);
+        // A ribbon is one flowing pass. Peeling a short tip would break it.
+        if (!Pass.RibbonOrder)
+        {
+            (Cut, Fill) = CoveragePlanner.BalanceShortRunVolumes(
+                Cut, Fill, Grid, MinimumWorkLengthM);
+        }
         RunSequencer.Result FillSequence = BuildSequence(Fill.Runs, Grid);
         if (!FillSequence.Success)
         {
@@ -765,13 +794,16 @@ static public class GuidancePlanner
         {
             Pass Pass = Route.OrderedPasses[PassIndex];
             CoveragePlanner.PlanResult Cut = PlanCoverage(
-                Pass.CutCells, Grid, BladeM, null, Pass.FillStartXy);
+                Pass.CutCells, Grid, BladeM, null, Pass.FillStartXy, Pass.RibbonOrder);
             (Double X, Double Y)? FillAnchor = Cut.Runs.Count == 0
                 ? null
                 : Cut.Runs[Cut.Runs.Count - 1].EndXy;
             CoveragePlanner.PlanResult Fill = PlanCoverage(
-                Pass.FillCells, Grid, BladeM, FillAnchor, null);
-            (Cut, Fill) = CoveragePlanner.BalanceShortRunVolumes(Cut, Fill, Grid);
+                Pass.FillCells, Grid, BladeM, FillAnchor, null, Pass.RibbonOrder);
+            if (!Pass.RibbonOrder)
+            {
+                (Cut, Fill) = CoveragePlanner.BalanceShortRunVolumes(Cut, Fill, Grid);
+            }
             CutPlans[PassIndex] = Cut;
             FillPlans[PassIndex] = Fill;
             Progress?.Invoke(
@@ -807,6 +839,39 @@ static public class GuidancePlanner
                 ?? throw new InvalidOperationException("Parallel coverage construction omitted cut work.");
             CoveragePlanner.PlanResult Fill = FillPlans[PassIndex]
                 ?? throw new InvalidOperationException("Parallel coverage construction omitted fill work.");
+            if (Route.OrderedPasses[PassIndex].RibbonOrder)
+            {
+                // The ribbon is already the drive. Lane recovery either drops
+                // the blade-down work or replaces the strip with a knot.
+                RunSequencer.Result RibbonCut = SequenceRibbon(Cut.Runs, Grid, Current);
+                ConnectorPlanner.Pose? RibbonFillIn = (RibbonCut.Runs.Count > 0)
+                    ? RibbonCut.Runs[RibbonCut.Runs.Count - 1].ExitPose
+                    : null;
+                RunSequencer.Result RibbonFill = SequenceRibbon(Fill.Runs, Grid, RibbonFillIn);
+                AimRibbonHaul(RibbonCut, RibbonFill);
+                Output.Add(new LifecyclePlanner.PassPlan(
+                    RibbonCut,
+                    RibbonFill,
+                    Cut.OmittedCells,
+                    Fill.OmittedCells));
+                if (RibbonFill.Runs.Count > 0)
+                {
+                    Current = RibbonFill.Runs[RibbonFill.Runs.Count - 1].ExitPose;
+                    if (GradeReturn)
+                    {
+                        List<RunSequencer.SequencedRun> GradeRuns =
+                            LifecyclePlanner.BuildGradeRuns(
+                                RibbonFill.Runs,
+                                PlanningPreferredLineupM,
+                                PlanningMinimumRadiusM,
+                                Math.Min(Constants.HALF_SCALE, Grid.GridSizeM),
+                                Grid);
+                        Current = GradeRuns[GradeRuns.Count - 1].ExitPose;
+                    }
+                }
+                Progress?.Invoke("sequencing", PassIndex + 1, PassCount);
+                continue;
+            }
             // Re-assert haul balance after any prior recovery rewrite of either side.
             (Cut, Fill) = CoveragePlanner.BalanceShortRunVolumes(Cut, Fill, Grid);
             CutPlans[PassIndex] = Cut;
@@ -2471,6 +2536,231 @@ static public class GuidancePlanner
             PlanningMinimumRadiusM,
             Math.Min(Constants.HALF_SCALE, Grid.GridSizeM),
             Grid);
+    }
+
+    /// <summary>
+    /// Sequences a flow ribbon without dropping the blade-down work.
+    /// A strip the turning circle cannot enter is still driven along its centerline.
+    /// </summary>
+    /// <param name="Runs">Ribbon runs in drive order.</param>
+    /// <param name="Grid">Field grid.</param>
+    /// <param name="Start">Pose the machine already holds, when one exists.</param>
+    /// <returns>A successful sequence. Strip joins use the turning circle when it fits.</returns>
+    private static RunSequencer.Result SequenceRibbon
+        (
+        List<CoveragePlanner.Run> Runs,
+        Grid Grid,
+        ConnectorPlanner.Pose? Start
+        )
+    {
+        if (Runs.Count == 0)
+        {
+            return BuildSequence(Runs, Grid, Start, null);
+        }
+        Double SpacingM = Math.Min(Constants.HALF_SCALE, Grid.GridSizeM);
+        List<RunSequencer.SequencedRun> Prepared =
+            new List<RunSequencer.SequencedRun>(Runs.Count);
+        foreach (CoveragePlanner.Run Run in Runs)
+        {
+            Prepared.Add(PrepareRibbonRun(Run, SpacingM, Grid));
+        }
+        List<TransitPlanner.Result> Connectors = new List<TransitPlanner.Result>();
+        Double ConnectorM = 0.0;
+        for (Int32 Index = 1; Index < Prepared.Count; Index += 1)
+        {
+            TransitPlanner.Result Link = TransitPlanner.Connect(
+                Prepared[Index - 1].ExitPose,
+                Prepared[Index].EntryPose,
+                PlanningMinimumRadiusM,
+                SpacingM,
+                Grid);
+            if (!Link.Success)
+            {
+                // The turn does not fit. Keep the blade-down strips and
+                // mark the join for the operator instead of deleting the pass.
+                ConnectorPlanner.Pose From = Prepared[Index - 1].ExitPose;
+                ConnectorPlanner.Pose To = Prepared[Index].EntryPose;
+                Double Dx = To.X - From.X;
+                Double Dy = To.Y - From.Y;
+                Double LengthM = Math.Sqrt((Dx * Dx) + (Dy * Dy));
+                List<(Double X, Double Y)> Points = new List<(Double X, Double Y)>
+                {
+                    (From.X, From.Y),
+                    (To.X, To.Y),
+                };
+                Link = new TransitPlanner.Result(
+                    true,
+                    true,
+                    Points,
+                    LengthM,
+                    new List<TransitPlanner.Leg>
+                    {
+                        new TransitPlanner.Leg(true, Points),
+                    },
+                    LengthM,
+                    "RIBBON_STRIP_JOIN",
+                    "");
+            }
+            Connectors.Add(Link);
+            ConnectorM += Link.LengthM;
+        }
+        // The lifecycle transit joins the previous pass to the first lineup.
+        _ = Start;
+        return new RunSequencer.Result(
+            true,
+            Prepared,
+            Connectors,
+            ConnectorM,
+            0.0,
+            "");
+    }
+
+    /// <summary>
+    /// Lineup for one ribbon strip. Entry and exit headings follow the curve,
+    /// so a strip that bends does not arrive at the fill facing backwards.
+    /// </summary>
+    /// <param name="Run">Ribbon run.</param>
+    /// <param name="SpacingM">Lineup sample step.</param>
+    /// <param name="Grid">Field grid.</param>
+    /// <returns>Prepared run whose poses match the centerline ends.</returns>
+    private static RunSequencer.SequencedRun PrepareRibbonRun
+        (
+        CoveragePlanner.Run Run,
+        Double SpacingM,
+        Grid Grid
+        )
+    {
+        IReadOnlyList<(Double X, Double Y)> Points =
+            (Run.DrivePoints != null) && (Run.DrivePoints.Count >= 2)
+                ? Run.DrivePoints
+                : new List<(Double X, Double Y)> { Run.StartXy, Run.EndXy };
+        Double EntryHeadingDeg = RibbonHeading(Points[0], Points[1], Run.HeadingDeg);
+        (Double X, Double Y) Last = Points[Points.Count - 1];
+        (Double X, Double Y) Before = Points[Points.Count - 2];
+        Double ExitHeadingDeg = RibbonHeading(Before, Last, Run.HeadingDeg);
+        Double EntryM = LineupRoom(
+            Points[0],
+            EntryHeadingDeg + Constants.DEGREES_PER_HALF_TURN,
+            PlanningPreferredLineupM,
+            SpacingM,
+            Grid);
+        Double ExitM = LineupRoom(
+            Last,
+            ExitHeadingDeg,
+            PlanningPreferredLineupM,
+            SpacingM,
+            Grid);
+        Double EntryRad = EntryHeadingDeg * Math.PI / Constants.DEGREES_PER_HALF_TURN;
+        Double ExitRad = ExitHeadingDeg * Math.PI / Constants.DEGREES_PER_HALF_TURN;
+        return new RunSequencer.SequencedRun(
+            Run,
+            new ConnectorPlanner.Pose(
+                Points[0].X - (Math.Sin(EntryRad) * EntryM),
+                Points[0].Y - (Math.Cos(EntryRad) * EntryM),
+                EntryHeadingDeg),
+            new ConnectorPlanner.Pose(
+                Last.X + (Math.Sin(ExitRad) * ExitM),
+                Last.Y + (Math.Cos(ExitRad) * ExitM),
+                ExitHeadingDeg),
+            EntryM,
+            ExitM,
+            0.0,
+            0.0);
+    }
+
+    /// <summary>Compass heading of a centerline step.</summary>
+    /// <param name="From">Step start.</param>
+    /// <param name="To">Step end.</param>
+    /// <param name="FallbackDeg">Heading used when the step has no length.</param>
+    /// <returns>Heading in degrees, 0 at north.</returns>
+    private static Double RibbonHeading
+        (
+        (Double X, Double Y) From,
+        (Double X, Double Y) To,
+        Double FallbackDeg
+        )
+    {
+        Double Dx = To.X - From.X;
+        Double Dy = To.Y - From.Y;
+        if (((Dx * Dx) + (Dy * Dy)) <= Constants.STRICT_NUMERIC_COMPARISON_TOLERANCE)
+        {
+            return FallbackDeg;
+        }
+        return (Math.Atan2(Dx, Dy) * Constants.DEGREES_PER_HALF_TURN / Math.PI
+            + Constants.DEGREES_PER_TURN) % Constants.DEGREES_PER_TURN;
+    }
+
+    /// <summary>Straight distance available inside the field along a heading.</summary>
+    /// <param name="Origin">Lineup start.</param>
+    /// <param name="HeadingDeg">Direction to measure.</param>
+    /// <param name="PreferredM">Longest lineup wanted.</param>
+    /// <param name="SpacingM">Sample step.</param>
+    /// <param name="Grid">Field grid.</param>
+    /// <returns>Metres that stay on the field, up to the preferred lineup.</returns>
+    private static Double LineupRoom
+        (
+        (Double X, Double Y) Origin,
+        Double HeadingDeg,
+        Double PreferredM,
+        Double SpacingM,
+        Grid Grid
+        )
+    {
+        Double Radians = HeadingDeg * Math.PI / Constants.DEGREES_PER_HALF_TURN;
+        Double UnitX = Math.Sin(Radians);
+        Double UnitY = Math.Cos(Radians);
+        Double RoomM = 0.0;
+        Double StepM = Math.Max(SpacingM, Grid.GridSizeM * 0.25);
+        while ((RoomM + StepM) <= PreferredM + Constants.NUMERIC_COMPARISON_TOLERANCE)
+        {
+            Double NextM = Math.Min(PreferredM, RoomM + StepM);
+            if (!Grid.ContainsWorldXy(
+                Origin.X + (UnitX * NextM),
+                Origin.Y + (UnitY * NextM)))
+            {
+                break;
+            }
+            RoomM = NextM;
+            if (NextM >= PreferredM - Constants.NUMERIC_COMPARISON_TOLERANCE) break;
+        }
+        return RoomM;
+    }
+
+    /// <summary>
+    /// Points the cut exit and the fill entry along the haul between them.
+    /// A lineup that runs past the fill makes the turning circle face backwards.
+    /// </summary>
+    /// <param name="Cut">Sequenced cut ribbon.</param>
+    /// <param name="Fill">Sequenced fill ribbon.</param>
+    private static void AimRibbonHaul
+        (
+        RunSequencer.Result Cut,
+        RunSequencer.Result Fill
+        )
+    {
+        if ((Cut.Runs.Count == 0) || (Fill.Runs.Count == 0)) return;
+        RunSequencer.SequencedRun CutRun = Cut.Runs[Cut.Runs.Count - 1];
+        RunSequencer.SequencedRun FillRun = Fill.Runs[0];
+        Double BearingDeg = RibbonHeading(
+            CutRun.Run.EndXy,
+            FillRun.Run.StartXy,
+            CutRun.ExitPose.HeadingDeg);
+        Cut.Runs[Cut.Runs.Count - 1] = new RunSequencer.SequencedRun(
+            CutRun.Run,
+            CutRun.EntryPose,
+            new ConnectorPlanner.Pose(CutRun.Run.EndXy.X, CutRun.Run.EndXy.Y, BearingDeg),
+            CutRun.EntryLineupM,
+            0.0,
+            CutRun.StartCoverageShortfallM,
+            0.0);
+        Fill.Runs[0] = new RunSequencer.SequencedRun(
+            FillRun.Run,
+            new ConnectorPlanner.Pose(FillRun.Run.StartXy.X, FillRun.Run.StartXy.Y, BearingDeg),
+            FillRun.ExitPose,
+            0.0,
+            FillRun.ExitLineupM,
+            0.0,
+            FillRun.EndCoverageShortfallM);
     }
 
     /// <summary>Builds a bounded flexible-endpoint sequence after strict ordering fails.</summary>

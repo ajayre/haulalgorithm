@@ -71,6 +71,7 @@ namespace HaulBuilder
         /// <param name="HeadingAxisDeg">Optional user lane heading.</param>
         /// <param name="Obstacles">Optional exclusion obstacles.</param>
         /// <param name="ToleranceMm">Ledger depth tolerance.</param>
+        /// <param name="TurningCircleFt">Turning circle diameter in feet. The edge may turn this tight.</param>
         /// <returns>Cleanup cycles plus any still-unpaired deferred work.</returns>
         static public Result Complete
             (
@@ -82,7 +83,8 @@ namespace HaulBuilder
             Double FlowPenaltyWeight,
             Double? HeadingAxisDeg = null,
             ObstacleField? Obstacles = null,
-            Double ToleranceMm = Constants.DEFAULT_TOLERANCE_MM
+            Double ToleranceMm = Constants.DEFAULT_TOLERANCE_MM,
+            Double TurningCircleFt = Constants.DEFAULT_TURNING_CIRCLE_FT
             )
         {
             if (GuidancePasses == null)
@@ -128,18 +130,19 @@ namespace HaulBuilder
                 ToleranceMm);
             // Intent: group nearby deferred lanes into local area cycles, then accept
             // any scraps that still cannot pair as remaining manual cleanup.
-            HaulOptimizationResult Optimized = HaulCycleOptimizer.Optimize(
+            HaulOptimizationResult Optimized = FlowRibbonSearch.Optimize(
                 Grid,
                 Flow,
                 CleanupLedger,
                 HaulLaneBuilder.LaneAxis.UserHeading,
                 MaximumLoadBcy,
                 MaximumRunsPerKind,
-                DeferEdgeWork: false,
+                false,
                 FlowPenaltyWeight,
                 Obstacles ?? EMPTY_OBSTACLES,
                 HeadingAxisDeg,
-                AllowAnyDeferredRemainder: true);
+                true,
+                TurningCircleFt: TurningCircleFt);
 
             List<HaulDeferredWork> Remaining = Optimized.DeferredWork
                 .Select(Entry => new HaulDeferredWork(

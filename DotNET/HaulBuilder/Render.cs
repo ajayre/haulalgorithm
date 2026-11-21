@@ -404,9 +404,32 @@ namespace HaulBuilder
 
 
         /// <summary>
-        /// Renders one pass guidance pair and returns cropped PNG bytes.
-        /// Thick red = blade-down CUT only; thick blue = blade-down FILL only.
+        /// Renders one pass guidance pair and returns PNG bytes.
+        /// Every cut cell is painted red and every fill cell blue. The white
+        /// line on those cells is the blade centerline. The picture is cropped
+        /// to that haul unless the whole field is requested.
         /// </summary>
+        /// <param name="Grid">Field grid.</param>
+        /// <param name="Points">Guidance points, including the smoothed blade path.</param>
+        /// <param name="BladeWidthM">Displayed blade width in metres.</param>
+        /// <param name="PixelsPerBin">Pixels per grid cell.</param>
+        /// <param name="PadCells">Crop padding in grid cells.</param>
+        /// <param name="ShowRoute">Whether to draw the thin GPS trace.</param>
+        /// <param name="CutCells">Cut cells to paint. Null leaves the cells unmarked.</param>
+        /// <param name="FillCells">Fill cells to paint. Null leaves the cells unmarked.</param>
+        /// <param name="ArrowX">Smoothed east component of the Poisson arrow. Null draws no arrows.</param>
+        /// <param name="ArrowY">Smoothed north component of the Poisson arrow.</param>
+        /// <param name="ArrowStride">Cells between arrows. One puts an arrow on every cell.</param>
+        /// <param name="Surface">
+        /// Existing-minus-target depth still in the ground, in metres, indexed
+        /// [row, column]. Null paints the original survey. A route sheet passes
+        /// the ground left after the loads already found.
+        /// </param>
+        /// <param name="EntireField">
+        /// When true, arrows cover every cell and the picture keeps the whole
+        /// grid. When false, the sheet is cropped to the haul.
+        /// </param>
+        /// <returns>PNG bytes.</returns>
         static public Byte[] RenderSinglePairPng
             (
             Grid Grid,
@@ -414,16 +437,44 @@ namespace HaulBuilder
             Double BladeWidthM = 2.271,
             Int32 PixelsPerBin = 26,
             Int32 PadCells = 4,
-            Boolean ShowRoute = true
+            Boolean ShowRoute = true,
+            IReadOnlyList<((Int32 Bx, Int32 By) Cell, Double DepthM)>? CutCells = null,
+            IReadOnlyList<((Int32 Bx, Int32 By) Cell, Double DepthM)>? FillCells = null,
+            Double[,]? ArrowX = null,
+            Double[,]? ArrowY = null,
+            Int32 ArrowStride = 1,
+            Double[,]? Surface = null,
+            Boolean EntireField = false
             )
         {
-            // Single-pair render: thick red = blade-down CUT only, thick blue = blade-down FILL only;
-            // HAUL/MOVE/START/RETURN stay on the thin GPS route so cut/fill overlays match the grade map.
+            // Cells are the work. The thick line is only the smoothed path the machine drives.
             Int32 Ppb = Math.Max(1, PixelsPerBin);
-            using Image<Rgba32> Base = DiffToImageDigitize(Grid.Delta(), Grid.Valid, Ppb);
+            // The sheet shows the ground this load is about to touch. Later loads
+            // have not been taken off yet.
+            using Image<Rgba32> Base = DiffToImageDigitize(Surface ?? Grid.Delta(), Grid.Valid, Ppb);
             DimTowardsWhite(Base, 0.45);
+            PaintWorkCells(Base, Grid, CutCells, Ppb, new Rgba32(200, 0, 0, Constants.MAX_COLOR_CHANNEL));
+            PaintWorkCells(Base, Grid, FillCells, Ppb, new Rgba32(0, 90, 220, Constants.MAX_COLOR_CHANNEL));
+            // Arrows sit on the grade and on the work cells. The centerline is drawn
+            // afterwards so the blade path stays visible on top of them.
+            // Only the crop is stroked. An arrow on every cell of the whole field
+            // is the same direction data and a much larger picture.
+            if ((ArrowX != null) && (ArrowY != null) && (ArrowStride > 0))
+            {
+                // A haul crop would throw away the arrows on the rest of the field.
+                (Int32 X0, Int32 Y0, Int32 X1, Int32 Y1) Window = EntireField
+                    ? (0, 0, Grid.Width - 1, Grid.Height - 1)
+                    : ArrowWindow(Grid, Points, CutCells, FillCells, PadCells);
+                DrawSmoothedArrows(Base, Grid, ArrowX, ArrowY, Ppb, ArrowStride, Window);
+            }
 
             Int32 BladePx = Math.Max(3, (Int32)Math.Round((BladeWidthM / Grid.GridSizeM) * Ppb, MidpointRounding.AwayFromZero));
+            // The cells are the work. Once they are painted, the line is the
+            // blade centerline, not a second copy of the blade width.
+            Boolean CellsPainted = (CutCells != null) || (FillCells != null);
+            Int32 PathPx = CellsPainted
+                ? Math.Max(2, BladePx / 4)
+                : BladePx;
             List<GuidancePoint> CutPts = new List<GuidancePoint>();
             List<GuidancePoint> FillPts = new List<GuidancePoint>();
             for (Int32 Iter = 0; Iter < Points.Count; Iter += 1)
@@ -440,15 +491,17 @@ namespace HaulBuilder
                 }
             }
 
-            if (CutPts.Count >= 2)
-            {
-                DrawPolyline(Base, Grid, CutPts, Ppb, new Rgba32(200, 0, 0, Constants.MAX_COLOR_CHANNEL), BladePx);
-            }
-
-            if (FillPts.Count >= 2)
-            {
-                DrawPolyline(Base, Grid, FillPts, Ppb, new Rgba32(0, 90, 220, Constants.MAX_COLOR_CHANNEL), BladePx);
-            }
+            // Separate blade-down runs stay separate. Joining them across a
+            // blade-up turn draws the V the smoother just removed.
+            // White sits on both the red cut and the blue fill.
+            Rgba32 CutPath = CellsPainted
+                ? new Rgba32(Constants.MAX_COLOR_CHANNEL, Constants.MAX_COLOR_CHANNEL, Constants.MAX_COLOR_CHANNEL, Constants.MAX_COLOR_CHANNEL)
+                : new Rgba32(200, 0, 0, Constants.MAX_COLOR_CHANNEL);
+            Rgba32 FillPath = CellsPainted
+                ? new Rgba32(Constants.MAX_COLOR_CHANNEL, Constants.MAX_COLOR_CHANNEL, Constants.MAX_COLOR_CHANNEL, Constants.MAX_COLOR_CHANNEL)
+                : new Rgba32(0, 90, 220, Constants.MAX_COLOR_CHANNEL);
+            DrawWorkStrokes(Base, Grid, Points, "CUT", Ppb, CutPath, PathPx);
+            DrawWorkStrokes(Base, Grid, Points, "FILL", Ppb, FillPath, PathPx);
 
             if ((CutPts.Count > 0) && (FillPts.Count > 0))
             {
@@ -523,6 +576,13 @@ namespace HaulBuilder
                 (Double Px, Double Py) = WorldToPixel(Grid, Points[Iter].X, Points[Iter].Y, Ppb);
                 Xs.Add(Px);
                 Ys.Add(Py);
+            }
+            IncludeWorkCells(Xs, Ys, Grid, CutCells, Ppb);
+            IncludeWorkCells(Xs, Ys, Grid, FillCells, Ppb);
+
+            if (EntireField)
+            {
+                return ToPng(Base);
             }
 
             Int32 Pad = PadCells * Ppb;
@@ -940,6 +1000,72 @@ namespace HaulBuilder
         }
 
         /// <summary>
+        /// Paints each allocated cell as its own block. Nothing here is smoothed.
+        /// The equipment path is drawn afterwards from the guidance points.
+        /// </summary>
+        /// <param name="Image">Image being drawn.</param>
+        /// <param name="Grid">Field grid.</param>
+        /// <param name="Cells">Cells to paint. Null paints nothing.</param>
+        /// <param name="Ppb">Pixels per grid cell.</param>
+        /// <param name="Color">Solid colour for every cell.</param>
+        private static void PaintWorkCells
+            (
+            Image<Rgba32> Image,
+            Grid Grid,
+            IReadOnlyList<((Int32 Bx, Int32 By) Cell, Double DepthM)>? Cells,
+            Int32 Ppb,
+            Rgba32 Color
+            )
+        {
+            if (Cells == null) return;
+            foreach (((Int32 Bx, Int32 By) Cell, Double DepthM) Entry in Cells)
+            {
+                Int32 Bx = Entry.Cell.Bx;
+                Int32 By = Entry.Cell.By;
+                if ((Bx < 0) || (By < 0) || (Bx >= Grid.Width) || (By >= Grid.Height)) continue;
+                // Same bin the terrain image uses, so the block is that cell and no other.
+                Int32 X0 = Bx * Ppb;
+                Int32 Y0 = (Grid.Height - 1 - By) * Ppb;
+                for (Int32 Y = Y0; Y < Y0 + Ppb; Y += 1)
+                {
+                    if ((Y < 0) || (Y >= Image.Height)) continue;
+                    for (Int32 X = X0; X < X0 + Ppb; X += 1)
+                    {
+                        if ((X < 0) || (X >= Image.Width)) continue;
+                        Image[X, Y] = Color;
+                    }
+                }
+            }
+        }
+
+        /// <summary>
+        /// Adds cell centers to the crop so a cell off the smoothed path is not clipped.
+        /// </summary>
+        /// <param name="Xs">Pixel columns already included.</param>
+        /// <param name="Ys">Pixel rows already included.</param>
+        /// <param name="Grid">Field grid.</param>
+        /// <param name="Cells">Cells to keep in frame. Null adds nothing.</param>
+        /// <param name="Ppb">Pixels per grid cell.</param>
+        private static void IncludeWorkCells
+            (
+            List<Double> Xs,
+            List<Double> Ys,
+            Grid Grid,
+            IReadOnlyList<((Int32 Bx, Int32 By) Cell, Double DepthM)>? Cells,
+            Int32 Ppb
+            )
+        {
+            if (Cells == null) return;
+            foreach (((Int32 Bx, Int32 By) Cell, Double DepthM) Entry in Cells)
+            {
+                (Double X, Double Y) Center = Grid.CellCenterXy(Entry.Cell.Bx, Entry.Cell.By);
+                (Double Px, Double Py) = WorldToPixel(Grid, Center.X, Center.Y, Ppb);
+                Xs.Add(Px);
+                Ys.Add(Py);
+            }
+        }
+
+        /// <summary>
         /// Executes the world to pixel operation.
         /// </summary>
         /// <param name="Grid">Field grid used by the operation.</param>
@@ -960,6 +1086,165 @@ namespace HaulBuilder
             Double Px = ((X - Grid.MinX) / Grid.GridSizeM) * Ppb;
             Double Py = (Grid.Height - ((Y - Grid.MinY) / Grid.GridSizeM)) * Ppb;
             return (Px, Py);
+        }
+
+        /// <summary>
+        /// Cell window of one route, padded the same way the picture is cropped.
+        /// Arrows outside this window would be cut off.
+        /// </summary>
+        /// <param name="Grid">Field grid.</param>
+        /// <param name="Points">Blade path, in world metres.</param>
+        /// <param name="CutCells">Cut cells. Null when the cut is not painted.</param>
+        /// <param name="FillCells">Fill cells. Null when the fill is not painted.</param>
+        /// <param name="PadCells">Extra cells kept around the work.</param>
+        /// <returns>Inclusive cell bounds.</returns>
+        private static (Int32 X0, Int32 Y0, Int32 X1, Int32 Y1) ArrowWindow
+            (
+            Grid Grid,
+            IReadOnlyList<GuidancePoint> Points,
+            IReadOnlyList<((Int32 Bx, Int32 By) Cell, Double DepthM)>? CutCells,
+            IReadOnlyList<((Int32 Bx, Int32 By) Cell, Double DepthM)>? FillCells,
+            Int32 PadCells
+            )
+        {
+            Int32 MinX = Grid.Width;
+            Int32 MinY = Grid.Height;
+            Int32 MaxX = 0;
+            Int32 MaxY = 0;
+            Boolean Any = false;
+            if (CutCells != null)
+            {
+                foreach (((Int32 Bx, Int32 By) Cell, Double DepthM) Entry in CutCells)
+                {
+                    IncludeArrowCell(Entry.Cell.Bx, Entry.Cell.By, ref MinX, ref MinY, ref MaxX, ref MaxY, ref Any);
+                }
+            }
+            if (FillCells != null)
+            {
+                foreach (((Int32 Bx, Int32 By) Cell, Double DepthM) Entry in FillCells)
+                {
+                    IncludeArrowCell(Entry.Cell.Bx, Entry.Cell.By, ref MinX, ref MinY, ref MaxX, ref MaxY, ref Any);
+                }
+            }
+            foreach (GuidancePoint Point in Points)
+            {
+                Int32 Bx = (Int32)Math.Floor((Point.X - Grid.MinX) / Grid.GridSizeM);
+                Int32 By = (Int32)Math.Floor((Point.Y - Grid.MinY) / Grid.GridSizeM);
+                IncludeArrowCell(Bx, By, ref MinX, ref MinY, ref MaxX, ref MaxY, ref Any);
+            }
+            if (!Any)
+            {
+                return (0, 0, Grid.Width - 1, Grid.Height - 1);
+            }
+            Int32 Pad = Math.Max(0, PadCells);
+            return (
+                Math.Max(0, MinX - Pad),
+                Math.Max(0, MinY - Pad),
+                Math.Min(Grid.Width - 1, MaxX + Pad),
+                Math.Min(Grid.Height - 1, MaxY + Pad));
+        }
+
+        /// <summary>Grows a cell window to include one cell.</summary>
+        /// <param name="Bx">Column.</param>
+        /// <param name="By">Row.</param>
+        /// <param name="MinX">Smallest column so far.</param>
+        /// <param name="MinY">Smallest row so far.</param>
+        /// <param name="MaxX">Largest column so far.</param>
+        /// <param name="MaxY">Largest row so far.</param>
+        /// <param name="Any">True once one cell has been included.</param>
+        private static void IncludeArrowCell
+            (
+            Int32 Bx,
+            Int32 By,
+            ref Int32 MinX,
+            ref Int32 MinY,
+            ref Int32 MaxX,
+            ref Int32 MaxY,
+            ref Boolean Any
+            )
+        {
+            if (Bx < MinX) MinX = Bx;
+            if (By < MinY) MinY = By;
+            if (Bx > MaxX) MaxX = Bx;
+            if (By > MaxY) MaxY = By;
+            Any = true;
+        }
+
+        /// <summary>
+        /// Draws one downhill arrow on each cell. The shaft is shorter than a
+        /// cell so neighboring arrows stay apart. A white edge keeps the mark
+        /// visible on both the red cut and the pale grade bands.
+        /// </summary>
+        /// <param name="Image">Image the arrows are drawn onto.</param>
+        /// <param name="Grid">Field grid. Arrow rows match this grid.</param>
+        /// <param name="ArrowX">East component of the arrow.</param>
+        /// <param name="ArrowY">North component of the arrow.</param>
+        /// <param name="Ppb">Pixels per cell.</param>
+        /// <param name="ArrowStride">Cells between arrows.</param>
+        /// <param name="Window">Inclusive cell bounds to stroke. Outside this the crop will discard them.</param>
+        private static void DrawSmoothedArrows
+            (
+            Image<Rgba32> Image,
+            Grid Grid,
+            Double[,] ArrowX,
+            Double[,] ArrowY,
+            Int32 Ppb,
+            Int32 ArrowStride,
+            (Int32 X0, Int32 Y0, Int32 X1, Int32 Y1) Window
+            )
+        {
+            // Downstream is the Poisson direction: east to the right, north up the image.
+            // The halo stays two pixels. A wider stroke at this scale paints over the grade band.
+            Double Length = Ppb * 0.55;
+            Double HalfBase = Ppb * 0.14;
+            Int32 Outline = 2;
+            Int32 Inner = 1;
+            Rgba32 Halo = new Rgba32(Constants.MAX_COLOR_CHANNEL, Constants.MAX_COLOR_CHANNEL, Constants.MAX_COLOR_CHANNEL, Constants.MAX_COLOR_CHANNEL);
+            Rgba32 Ink = new Rgba32(0, 0, 0, Constants.MAX_COLOR_CHANNEL);
+            Int32 Height = Grid.Height;
+            Int32 Width = Grid.Width;
+            Int32 By0 = Math.Max(0, Window.Y0);
+            Int32 By1 = Math.Min(Height - 1, Window.Y1);
+            Int32 Bx0 = Math.Max(0, Window.X0);
+            Int32 Bx1 = Math.Min(Width - 1, Window.X1);
+            for (Int32 By = By0; By <= By1; By += ArrowStride)
+            {
+                for (Int32 Bx = Bx0; Bx <= Bx1; Bx += ArrowStride)
+                {
+                    if (!Grid.Valid[By, Bx]) continue;
+                    if ((By >= ArrowY.GetLength(0)) || (Bx >= ArrowX.GetLength(1))) continue;
+                    Double Ux = ArrowX[By, Bx];
+                    Double Uy = ArrowY[By, Bx];
+                    Double Mag = Math.Sqrt((Ux * Ux) + (Uy * Uy));
+                    if (Mag <= Constants.STRICT_NUMERIC_COMPARISON_TOLERANCE) continue;
+                    Ux /= Mag;
+                    Uy /= Mag;
+                    Double Dx = Ux;
+                    Double Dy = -Uy;
+                    Double Px = (Bx + Constants.HALF_SCALE) * Ppb;
+                    Double Py = (Height - Constants.HALF_SCALE - By) * Ppb;
+                    Double TipX = Px + (Length * Dx);
+                    Double TipY = Py + (Length * Dy);
+                    Double TailX = Px - (0.35 * Length * Dx);
+                    Double TailY = Py - (0.35 * Length * Dy);
+                    Double BaseX = Px + (0.05 * Length * Dx);
+                    Double BaseY = Py + (0.05 * Length * Dy);
+                    Double PerpX = -Dy;
+                    Double PerpY = Dx;
+                    Double LeftX = BaseX + (HalfBase * PerpX);
+                    Double LeftY = BaseY + (HalfBase * PerpY);
+                    Double RightX = BaseX - (HalfBase * PerpX);
+                    Double RightY = BaseY - (HalfBase * PerpY);
+                    DrawLine(Image, TailX, TailY, BaseX, BaseY, Halo, Outline);
+                    DrawLine(Image, TipX, TipY, LeftX, LeftY, Halo, Outline);
+                    DrawLine(Image, TipX, TipY, RightX, RightY, Halo, Outline);
+                    DrawLine(Image, LeftX, LeftY, RightX, RightY, Halo, Outline);
+                    DrawLine(Image, TailX, TailY, BaseX, BaseY, Ink, Inner);
+                    DrawLine(Image, TipX, TipY, LeftX, LeftY, Ink, Inner);
+                    DrawLine(Image, TipX, TipY, RightX, RightY, Ink, Inner);
+                    DrawLine(Image, LeftX, LeftY, RightX, RightY, Ink, Inner);
+                }
+            }
         }
 
         /// <summary>
@@ -1154,15 +1439,66 @@ namespace HaulBuilder
         }
 
         /// <summary>
-        /// Renders polyline.
+        /// Draws one blade-down action as separate strokes.
+        /// A blade-up join between two strips is not part of the cut, so the
+        /// stroke breaks there instead of cutting a corner across the gap.
         /// </summary>
-        /// <param name="Image">The image used by the operation.</param>
-        /// <param name="Grid">Field grid used by the operation.</param>
-        /// <param name="Points">The points used by the operation.</param>
-        /// <param name="Ppb">The ppb used by the operation.</param>
-        /// <param name="Color">The color used by the operation.</param>
-        /// <param name="Width">The width used by the operation.</param>
+        /// <param name="Image">Image being drawn.</param>
+        /// <param name="Grid">Field grid.</param>
+        /// <param name="Points">Guidance points in drive order.</param>
+        /// <param name="Action">Action to draw, CUT or FILL.</param>
+        /// <param name="Ppb">Pixels per grid cell.</param>
+        /// <param name="Color">Stroke color.</param>
+        /// <param name="Width">Stroke width in pixels.</param>
+        private static void DrawWorkStrokes
+            (
+            Image<Rgba32> Image,
+            Grid Grid,
+            IReadOnlyList<GuidancePoint> Points,
+            String Action,
+            Int32 Ppb,
+            Rgba32 Color,
+            Int32 Width
+            )
+        {
+            List<GuidancePoint> Stroke = new List<GuidancePoint>();
+            Int32 Previous = -2;
+            for (Int32 Index = 0; Index < Points.Count; Index += 1)
+            {
+                if (Points[Index].Action != Action)
+                {
+                    if (Stroke.Count >= 2)
+                    {
+                        DrawPolyline(Image, Grid, Stroke, Ppb, Color, Width);
+                    }
+                    Stroke = new List<GuidancePoint>();
+                    continue;
+                }
+                // A gap in the guidance list is a blade-up turn between strips.
+                if ((Stroke.Count > 0) && (Index != (Previous + 1)))
+                {
+                    if (Stroke.Count >= 2)
+                    {
+                        DrawPolyline(Image, Grid, Stroke, Ppb, Color, Width);
+                    }
+                    Stroke = new List<GuidancePoint>();
+                }
+                Stroke.Add(Points[Index]);
+                Previous = Index;
+            }
+            if (Stroke.Count >= 2)
+            {
+                DrawPolyline(Image, Grid, Stroke, Ppb, Color, Width);
+            }
+        }
 
+        /// <summary>Draws a guidance polyline in world space.</summary>
+        /// <param name="Image">Image being drawn.</param>
+        /// <param name="Grid">Field grid.</param>
+        /// <param name="Points">Points of one stroke.</param>
+        /// <param name="Ppb">Pixels per grid cell.</param>
+        /// <param name="Color">Stroke color.</param>
+        /// <param name="Width">Stroke width in pixels.</param>
         private static void DrawPolyline
             (
             Image<Rgba32> Image,
@@ -2147,6 +2483,296 @@ namespace HaulBuilder
             Byte B = (Byte)Math.Round(((Source.B * Sa) + (Dest.B * Da * (1.0 - Sa))) / OutA, MidpointRounding.AwayFromZero);
             Byte A = (Byte)Math.Round(OutA * Constants.MAX_COLOR_CHANNEL, MidpointRounding.AwayFromZero);
             Image[X, Y] = new Rgba32(R, G, B, A);
+        }
+
+        /// <summary>
+        /// Copies a whole-field sheet and rings two cells.
+        /// Rows match the terrain image: column across, and row 0 at the bottom.
+        /// </summary>
+        /// <param name="SourcePath">Sheet to copy.</param>
+        /// <param name="DestPath">Sheet to write.</param>
+        /// <param name="PixelsPerCell">Pixels along one grid cell.</param>
+        /// <param name="HighBx">Column of the highest cell.</param>
+        /// <param name="HighBy">Row of the highest cell.</param>
+        /// <param name="HighLabel">Text beside the highest cell.</param>
+        /// <param name="LowBx">Column of the lowest cell.</param>
+        /// <param name="LowBy">Row of the lowest cell.</param>
+        /// <param name="LowLabel">Text beside the lowest cell.</param>
+        internal static void MarkSpotsOnSheet
+            (
+            String SourcePath,
+            String DestPath,
+            Int32 PixelsPerCell,
+            Int32 HighBx,
+            Int32 HighBy,
+            String HighLabel,
+            Int32 LowBx,
+            Int32 LowBy,
+            String LowLabel
+            )
+        {
+            if (String.IsNullOrEmpty(SourcePath)) throw new ArgumentNullException(nameof(SourcePath));
+            if (String.IsNullOrEmpty(DestPath)) throw new ArgumentNullException(nameof(DestPath));
+            if (PixelsPerCell < 1) throw new ArgumentOutOfRangeException(nameof(PixelsPerCell));
+            using (Image<Rgba32> Sheet = Image.Load<Rgba32>(SourcePath))
+            {
+                Int32 GridHeight = Sheet.Height / PixelsPerCell;
+                // The ring is several cells wide so it survives a look at the whole field.
+                MarkOneSpot(Sheet, PixelsPerCell, GridHeight, HighBx, HighBy, HighLabel);
+                MarkOneSpot(Sheet, PixelsPerCell, GridHeight, LowBx, LowBy, LowLabel);
+                Sheet.Save(DestPath);
+            }
+        }
+
+        /// <summary>
+        /// Rings one cell and writes its label beside the ring.
+        /// </summary>
+        /// <param name="Sheet">Image being marked.</param>
+        /// <param name="PixelsPerCell">Pixels along one grid cell.</param>
+        /// <param name="GridHeight">Rows in the sheet.</param>
+        /// <param name="Bx">Column.</param>
+        /// <param name="By">Row, with row 0 at the bottom of the sheet.</param>
+        /// <param name="Label">Text beside the ring.</param>
+        private static void MarkOneSpot
+            (
+            Image<Rgba32> Sheet,
+            Int32 PixelsPerCell,
+            Int32 GridHeight,
+            Int32 Bx,
+            Int32 By,
+            String Label
+            )
+        {
+            Int32 X0 = Bx * PixelsPerCell;
+            Int32 Y0 = (GridHeight - 1 - By) * PixelsPerCell;
+            Int32 Cx = X0 + (PixelsPerCell / 2);
+            Int32 Cy = Y0 + (PixelsPerCell / 2);
+            Rgba32 White = new Rgba32(255, 255, 255, 255);
+            Rgba32 Black = new Rgba32(0, 0, 0, 255);
+            // A ring this size stays on the sheet even when the cell is one row off the south edge.
+            const Int32 RingOuter = 36;
+            Int32 Scale = 4;
+            Int32 PlateW = (Label.Length * 6 * Scale) + 16;
+            Int32 PlateH = (7 * Scale) + 16;
+            // Keep the plate clear of the ring. Spots near the south edge take the plate to the north.
+            Int32 PlateX = Cx + RingOuter + 12;
+            Int32 PlateY = Cy - RingOuter - PlateH - 8;
+            if (PlateX + PlateW > Sheet.Width - 8)
+            {
+                PlateX = Cx - RingOuter - PlateW - 12;
+            }
+            if (PlateX < 8)
+            {
+                PlateX = 8;
+            }
+            if (PlateY < 8)
+            {
+                PlateY = Cy + RingOuter + 8;
+            }
+            if (PlateY + PlateH > Sheet.Height - 8)
+            {
+                PlateY = Sheet.Height - 8 - PlateH;
+            }
+            DrawLine(Sheet, Cx, Cy, PlateX, PlateY + (PlateH / 2), White, 5);
+            DrawLine(Sheet, Cx, Cy, PlateX, PlateY + (PlateH / 2), Black, 2);
+            // Halo first, then the black ring, so the mark reads on red cut and blue fill.
+            DrawRing(Sheet, Cx, Cy, RingOuter, 5, White);
+            DrawRing(Sheet, Cx, Cy, 30, 3, Black);
+            DrawCellFrame(Sheet, X0, Y0, PixelsPerCell, White, 3);
+            DrawCellFrame(Sheet, X0 + 3, Y0 + 3, PixelsPerCell - 6, Black, 2);
+            FillRect(Sheet, PlateX, PlateY, PlateW, PlateH, Black);
+            DrawRect(Sheet, PlateX, PlateY, PlateW, PlateH, White, 2);
+            DrawLabel(Sheet, PlateX + 8, PlateY + 8, Label, Scale, White);
+        }
+
+        /// <summary>
+        /// Paints a ring. The hole in the middle leaves the cell colour visible.
+        /// </summary>
+        /// <param name="Sheet">Image being marked.</param>
+        /// <param name="Cx">Centre column.</param>
+        /// <param name="Cy">Centre row.</param>
+        /// <param name="Radius">Outer radius in pixels.</param>
+        /// <param name="Thickness">Ring width in pixels.</param>
+        /// <param name="Color">Ring colour.</param>
+        private static void DrawRing
+            (
+            Image<Rgba32> Sheet,
+            Int32 Cx,
+            Int32 Cy,
+            Int32 Radius,
+            Int32 Thickness,
+            Rgba32 Color
+            )
+        {
+            Int32 Outer = Radius * Radius;
+            Int32 Inner = Math.Max(0, Radius - Thickness);
+            Int32 InnerSq = Inner * Inner;
+            for (Int32 Y = Cy - Radius; Y <= Cy + Radius; Y += 1)
+            {
+                for (Int32 X = Cx - Radius; X <= Cx + Radius; X += 1)
+                {
+                    Int32 Dx = X - Cx;
+                    Int32 Dy = Y - Cy;
+                    Int32 Dist = (Dx * Dx) + (Dy * Dy);
+                    if ((Dist <= Outer) && (Dist >= InnerSq))
+                    {
+                        Plot(Sheet, X, Y, Color);
+                    }
+                }
+            }
+        }
+
+        /// <summary>
+        /// Outlines one grid cell.
+        /// </summary>
+        /// <param name="Sheet">Image being marked.</param>
+        /// <param name="X0">Left pixel of the cell.</param>
+        /// <param name="Y0">Top pixel of the cell.</param>
+        /// <param name="Size">Cell size in pixels.</param>
+        /// <param name="Color">Frame colour.</param>
+        /// <param name="Thickness">Frame width in pixels.</param>
+        private static void DrawCellFrame
+            (
+            Image<Rgba32> Sheet,
+            Int32 X0,
+            Int32 Y0,
+            Int32 Size,
+            Rgba32 Color,
+            Int32 Thickness
+            )
+        {
+            if (Size <= 0)
+            {
+                return;
+            }
+            FillRect(Sheet, X0, Y0, Size, Thickness, Color);
+            FillRect(Sheet, X0, Y0 + Size - Thickness, Size, Thickness, Color);
+            FillRect(Sheet, X0, Y0, Thickness, Size, Color);
+            FillRect(Sheet, X0 + Size - Thickness, Y0, Thickness, Size, Color);
+        }
+
+        /// <summary>
+        /// Fills a rectangle, clipped to the sheet.
+        /// </summary>
+        /// <param name="Sheet">Image being marked.</param>
+        /// <param name="X0">Left pixel.</param>
+        /// <param name="Y0">Top pixel.</param>
+        /// <param name="Width">Width in pixels.</param>
+        /// <param name="Height">Height in pixels.</param>
+        /// <param name="Color">Fill colour.</param>
+        private static void FillRect
+            (
+            Image<Rgba32> Sheet,
+            Int32 X0,
+            Int32 Y0,
+            Int32 Width,
+            Int32 Height,
+            Rgba32 Color
+            )
+        {
+            for (Int32 Y = Y0; Y < Y0 + Height; Y += 1)
+            {
+                for (Int32 X = X0; X < X0 + Width; X += 1)
+                {
+                    Plot(Sheet, X, Y, Color);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Strokes the edge of a rectangle.
+        /// </summary>
+        /// <param name="Sheet">Image being marked.</param>
+        /// <param name="X0">Left pixel.</param>
+        /// <param name="Y0">Top pixel.</param>
+        /// <param name="Width">Width in pixels.</param>
+        /// <param name="Height">Height in pixels.</param>
+        /// <param name="Color">Stroke colour.</param>
+        /// <param name="Thickness">Stroke width in pixels.</param>
+        private static void DrawRect
+            (
+            Image<Rgba32> Sheet,
+            Int32 X0,
+            Int32 Y0,
+            Int32 Width,
+            Int32 Height,
+            Rgba32 Color,
+            Int32 Thickness
+            )
+        {
+            FillRect(Sheet, X0, Y0, Width, Thickness, Color);
+            FillRect(Sheet, X0, Y0 + Height - Thickness, Width, Thickness, Color);
+            FillRect(Sheet, X0, Y0, Thickness, Height, Color);
+            FillRect(Sheet, X0 + Width - Thickness, Y0, Thickness, Height, Color);
+        }
+
+        /// <summary>
+        /// Writes a label in a 5 by 7 pixel face, scaled up.
+        /// </summary>
+        /// <param name="Sheet">Image being marked.</param>
+        /// <param name="X0">Left pixel of the first character.</param>
+        /// <param name="Y0">Top pixel of the first character.</param>
+        /// <param name="Label">Text to write. Unknown letters are skipped as blanks.</param>
+        /// <param name="Scale">Pixels per font pixel.</param>
+        /// <param name="Color">Ink colour.</param>
+        private static void DrawLabel
+            (
+            Image<Rgba32> Sheet,
+            Int32 X0,
+            Int32 Y0,
+            String Label,
+            Int32 Scale,
+            Rgba32 Color
+            )
+        {
+            Int32 Cursor = X0;
+            foreach (Char Letter in Label)
+            {
+                String[] Rows = SpotGlyph(Letter);
+                for (Int32 Row = 0; Row < Rows.Length; Row += 1)
+                {
+                    for (Int32 Col = 0; Col < Rows[Row].Length; Col += 1)
+                    {
+                        if (Rows[Row][Col] != '1')
+                        {
+                            continue;
+                        }
+                        FillRect(Sheet, Cursor + (Col * Scale), Y0 + (Row * Scale), Scale, Scale, Color);
+                    }
+                }
+                Cursor += 6 * Scale;
+            }
+        }
+
+        /// <summary>
+        /// Five-pixel rows of one character. A 1 is ink.
+        /// </summary>
+        /// <param name="Letter">Character to look up.</param>
+        /// <returns>Seven rows. A blank face is used for a character this face does not have.</returns>
+        private static String[] SpotGlyph
+            (
+            Char Letter
+            )
+        {
+            switch (Letter)
+            {
+                case 'H': return new[] { "10001", "10001", "10001", "11111", "10001", "10001", "10001" };
+                case 'I': return new[] { "11111", "00100", "00100", "00100", "00100", "00100", "11111" };
+                case 'G': return new[] { "01110", "10001", "10000", "10111", "10001", "10001", "01110" };
+                case 'L': return new[] { "10000", "10000", "10000", "10000", "10000", "10000", "11111" };
+                case 'O': return new[] { "01110", "10001", "10001", "10001", "10001", "10001", "01110" };
+                case 'W': return new[] { "10001", "10001", "10001", "10101", "10101", "10101", "01010" };
+                case 'M': return new[] { "10001", "11011", "10101", "10101", "10001", "10001", "10001" };
+                case 'm': return new[] { "00000", "00000", "11011", "10101", "10101", "10101", "10101" };
+                case '+': return new[] { "00000", "00100", "00100", "11111", "00100", "00100", "00000" };
+                case '-': return new[] { "00000", "00000", "00000", "11111", "00000", "00000", "00000" };
+                case '4': return new[] { "00100", "01100", "10100", "10100", "11111", "00100", "00100" };
+                case '5': return new[] { "11111", "10000", "11110", "00001", "00001", "10001", "01110" };
+                case '8': return new[] { "01110", "10001", "10001", "01110", "10001", "10001", "01110" };
+                case '9': return new[] { "01110", "10001", "10001", "01111", "00001", "00001", "01110" };
+                case ' ': return new[] { "00000", "00000", "00000", "00000", "00000", "00000", "00000" };
+                default: return new[] { "00000", "00000", "00000", "00000", "00000", "00000", "00000" };
+            }
         }
     }
 }

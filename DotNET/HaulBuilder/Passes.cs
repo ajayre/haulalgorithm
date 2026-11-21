@@ -96,6 +96,18 @@ namespace HaulBuilder
         public Double? FillHeadingDeg { get; set; }
 
         /// <summary>
+        /// Gets or sets whether the cell lists are already a blade-wide flow ribbon.
+        /// Guidance then follows that order instead of retileing the cells into lanes.
+        /// </summary>
+        public Boolean RibbonOrder { get; set; }
+
+        /// <summary>
+        /// Gets or sets whether one cell may appear once per lift.
+        /// A cluster haul records each lift, and a cell deeper than one pass has several.
+        /// </summary>
+        public Boolean StackedLifts { get; set; }
+
+        /// <summary>
         /// Gets or sets a value indicating whether cut knot was reduced.
         /// </summary>
         public Boolean CutKnotReduced { get; set; }

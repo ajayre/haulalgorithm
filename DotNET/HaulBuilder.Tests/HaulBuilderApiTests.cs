@@ -111,6 +111,8 @@ namespace HaulBuilder.Tests
                 nameof(HaulOptimizationOptions.MultiRouteExchangeRounds),
                 nameof(HaulOptimizationOptions.OptimizeRouteOrderByDistance),
                 nameof(HaulOptimizationOptions.PairRefinementRounds),
+                nameof(HaulOptimizationOptions.ClusterModeAverageWindow),
+                nameof(HaulOptimizationOptions.ClusterModeLoadFraction),
                 nameof(HaulOptimizationOptions.RouteConsolidationGroupSize),
                 nameof(HaulOptimizationOptions.RouteConsolidationMaximumCycles),
                 nameof(HaulOptimizationOptions.RouteReorderWindow),

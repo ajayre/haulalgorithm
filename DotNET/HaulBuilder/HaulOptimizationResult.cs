@@ -92,5 +92,65 @@ namespace HaulBuilder
 
         /// <summary>Gets residual compact-failing cycles left for cleanup.</summary>
         public Int32 EdgeOmittedCycles { get; }
+
+        /// <summary>
+        /// Gets or sets the search state. Hauling is the flow ribbon.
+        /// Clusters, thin-cut, and correcting build no flow loads. Later rebuilds must
+        /// keep the state, because the residual flow pass would otherwise
+        /// scrape the dirt those states leave.
+        /// </summary>
+        public HaulSearchState State { get; set; }
+
+        /// <summary>
+        /// Gets or sets whether the search left hauling. Later rebuilds of
+        /// this result must keep the flag, because the residual flow pass
+        /// would otherwise scrape the dirt clusters or correcting leave.
+        /// </summary>
+        public Boolean EnteredClusterMode { get; set; }
+
+        /// <summary>
+        /// Gets or sets the found-order route where hauling handed off to clusters.
+        /// That route is not built. Zero when the trailing mean never falls
+        /// below the cluster fraction.
+        /// </summary>
+        public Int32 ClusterModeStartsAtRoute { get; set; }
+
+        /// <summary>
+        /// Gets or sets the found-order route where clusters handed off to thin-cut.
+        /// That route is not built. Zero when cluster hauling did not stop
+        /// with no haulable work.
+        /// </summary>
+        public Int32 ThinCutStartsAtRoute { get; set; }
+
+        /// <summary>
+        /// Gets or sets the found-order route where thin-cut handed off to correcting.
+        /// That route is not built. Zero when thin-cut did not finish.
+        /// </summary>
+        public Int32 CorrectingStartsAtRoute { get; set; }
+
+        /// <summary>
+        /// Gets or sets the field after the coverage passes, in metres.
+        /// Positive is high. Invalid cells are NaN. Null when correcting did not run.
+        /// A rebuild of this result must keep it, because surplus spread is not a haul.
+        /// </summary>
+        public Double[,]? CorrectingSurfaceM { get; set; }
+
+        /// <summary>
+        /// Copies the search state onto a rebuilt result.
+        /// </summary>
+        /// <param name="Previous">The result that recorded the state.</param>
+        public void CopyClusterModeFrom
+            (
+            HaulOptimizationResult Previous
+            )
+        {
+            // Rebuilding the pass list must not forget which state the search reached.
+            State = Previous.State;
+            EnteredClusterMode = Previous.EnteredClusterMode;
+            ClusterModeStartsAtRoute = Previous.ClusterModeStartsAtRoute;
+            ThinCutStartsAtRoute = Previous.ThinCutStartsAtRoute;
+            CorrectingStartsAtRoute = Previous.CorrectingStartsAtRoute;
+            CorrectingSurfaceM = Previous.CorrectingSurfaceM;
+        }
     }
 }

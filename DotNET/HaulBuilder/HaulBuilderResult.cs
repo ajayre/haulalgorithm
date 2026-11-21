@@ -57,6 +57,35 @@ namespace HaulBuilder
         /// </summary>
         public PassResult? PassResult { get; set; }
 
+        /// <summary>
+        /// Gets or sets the search state. Hauling is the flow ribbon.
+        /// Clusters follows the short-load trigger. Thin-cut follows cluster
+        /// hauling. Correcting follows thin-cut.
+        /// </summary>
+        public HaulSearchState State { get; set; }
+
+        /// <summary>
+        /// Gets or sets the found-order route where hauling handed off to
+        /// clusters. Zero when the trailing mean never falls below the
+        /// cluster fraction of bowl capacity. That route is not built.
+        /// The mean covers <see cref="HaulOptimizationOptions.ClusterModeAverageWindow"/>
+        /// loads ending on the haul before it.
+        /// </summary>
+        public Int32 ClusterModeStartsAtRoute { get; set; }
+
+        /// <summary>
+        /// Gets or sets the found-order route where clusters handed off to
+        /// thin-cut. Zero when cluster hauling did not stop with no haulable
+        /// work. That route is not built.
+        /// </summary>
+        public Int32 ThinCutStartsAtRoute { get; set; }
+
+        /// <summary>
+        /// Gets or sets the found-order route where thin-cut handed off to
+        /// correcting. Zero when thin-cut did not finish. That route is not built.
+        /// </summary>
+        public Int32 CorrectingStartsAtRoute { get; set; }
+
         /// <summary>Gets or sets the global optimizer allocation and ledger diagnostics.</summary>
         public HaulOptimizationResult? HaulOptimization { get; set; }
 

@@ -77,6 +77,20 @@ namespace HaulBuilder
         /// </summary>
         public Boolean OptimizeRouteOrderByDistance { get; set; } = true;
 
+        /// <summary>
+        /// Gets or sets how many recent haul loads form the mean that moves
+        /// hauling to clusters. The default is the last 20 loads. Clusters
+        /// starts on the first found-order haul where that mean is below
+        /// <see cref="ClusterModeLoadFraction"/> of bowl capacity.
+        /// </summary>
+        public Int32 ClusterModeAverageWindow { get; set; } = 20;
+
+        /// <summary>
+        /// Gets or sets the share of bowl capacity below which the trailing
+        /// mean moves hauling to clusters. The default is one half.
+        /// </summary>
+        public Double ClusterModeLoadFraction { get; set; } = 0.5;
+
         /// <summary>Copies all resolved tuning values.</summary>
         internal HaulOptimizationOptions Clone() => new HaulOptimizationOptions
         {
@@ -99,6 +113,8 @@ namespace HaulBuilder
             RouteReorderWindow = RouteReorderWindow,
             EnableEarlyFullStripBanding = EnableEarlyFullStripBanding,
             OptimizeRouteOrderByDistance = OptimizeRouteOrderByDistance,
+            ClusterModeAverageWindow = ClusterModeAverageWindow,
+            ClusterModeLoadFraction = ClusterModeLoadFraction,
         };
     }
 }

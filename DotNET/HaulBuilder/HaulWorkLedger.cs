@@ -171,11 +171,28 @@ namespace HaulBuilder
                         - AssignedCut[By, Bx];
                     Double FillRemainingM = RequiredFillDepthM[By, Bx]
                         - AssignedFill[By, Bx];
-                    if ((CutRemainingM < -DEPTH_TOLERANCE_M)
-                        || (FillRemainingM < -DEPTH_TOLERANCE_M))
+                    if (CutRemainingM < -DEPTH_TOLERANCE_M)
                     {
-                        throw new InvalidOperationException(
-                            "Assigned work exceeds the source ledger.");
+                        throw new InvalidOperationException(String.Format(
+                            System.Globalization.CultureInfo.InvariantCulture,
+                            "Assigned work exceeds the source ledger. kind=Cut cell=({0},{1}) required={2:R} assigned={3:R}",
+                            Bx,
+                            By,
+                            RequiredCutDepthM[By, Bx],
+                            AssignedCut[By, Bx]));
+                    }
+                    // Finish-band spread on at-grade ground is recorded fill.
+                    // It is not required work, and it stays inside the tolerance.
+                    if ((FillRemainingM < -DEPTH_TOLERANCE_M)
+                        && !WithinGradeBand(By, Bx, AssignedFill[By, Bx]))
+                    {
+                        throw new InvalidOperationException(String.Format(
+                            System.Globalization.CultureInfo.InvariantCulture,
+                            "Assigned work exceeds the source ledger. kind=Fill cell=({0},{1}) required={2:R} assigned={3:R}",
+                            Bx,
+                            By,
+                            RequiredFillDepthM[By, Bx],
+                            AssignedFill[By, Bx]));
                     }
                     Cut[By, Bx] = Math.Max(0.0, CutRemainingM);
                     Fill[By, Bx] = Math.Max(0.0, FillRemainingM);
@@ -251,8 +268,24 @@ namespace HaulBuilder
                         Double RemainingM = Required[By, Bx] - Assigned[By, Bx];
                         if (RemainingM < -DEPTH_TOLERANCE_M)
                         {
-                            throw new InvalidOperationException(
-                                "Assigned work exceeds the required work ledger.");
+                            // The spread is already inside the finish band, so the
+                            // deferred ledger treats that cell as finished.
+                            if ((Kind == HaulLaneBuilder.WorkKind.Fill)
+                                && WithinGradeBand(By, Bx, Assigned[By, Bx]))
+                            {
+                                RemainingM = 0.0;
+                            }
+                            else
+                            {
+                                throw new InvalidOperationException(String.Format(
+                                    System.Globalization.CultureInfo.InvariantCulture,
+                                    "Assigned work exceeds the required work ledger. kind={0} cell=({1},{2}) required={3:R} assigned={4:R}",
+                                    Kind,
+                                    Bx,
+                                    By,
+                                    Required[By, Bx],
+                                    Assigned[By, Bx]));
+                            }
                         }
                         RemainingM = Math.Max(0.0, RemainingM);
                         Int32 LayerIndex = (Int32)Math.Floor(
@@ -305,8 +338,9 @@ namespace HaulBuilder
                     MaximumFillErrorM = Math.Max(MaximumFillErrorM, FillErrorM);
                     Boolean CutExcess = AssignedCut[By, Bx]
                         > RequiredCutDepthM[By, Bx] + DEPTH_TOLERANCE_M;
-                    Boolean FillExcess = AssignedFill[By, Bx]
-                        > RequiredFillDepthM[By, Bx] + DEPTH_TOLERANCE_M;
+                    Boolean FillExcess = (AssignedFill[By, Bx]
+                        > RequiredFillDepthM[By, Bx] + DEPTH_TOLERANCE_M)
+                        && !WithinGradeBand(By, Bx, AssignedFill[By, Bx]);
                     if (CutExcess
                         || (!AllowDeferredWork
                             && (CutErrorM > DEPTH_TOLERANCE_M)))
@@ -354,8 +388,11 @@ namespace HaulBuilder
                         System.Globalization.CultureInfo.InvariantCulture,
                         "MAX_DEPTH pass={0}", PassIndex));
                 }
-                if (Pass.CutCells.GroupBy(Entry => Entry.Cell).Any(Group => Group.Count() > 1)
-                    || Pass.FillCells.GroupBy(Entry => Entry.Cell).Any(Group => Group.Count() > 1))
+                // A cluster haul keeps one entry per lift. The same cell may
+                // appear again for the next lift. Each entry is still depth-capped.
+                if (!Pass.StackedLifts
+                    && (Pass.CutCells.GroupBy(Entry => Entry.Cell).Any(Group => Group.Count() > 1)
+                        || Pass.FillCells.GroupBy(Entry => Entry.Cell).Any(Group => Group.Count() > 1)))
                 {
                     Issues.Add(String.Format(
                         System.Globalization.CultureInfo.InvariantCulture,
@@ -368,6 +405,38 @@ namespace HaulBuilder
                 Issues.Take(1000).ToList(),
                 MaximumCutErrorM,
                 MaximumFillErrorM);
+        }
+
+        /// <summary>
+        /// True when assigned fill is finish-band spread on a cell the design called at grade.
+        /// The room is from that surface up to target plus the finish tolerance.
+        /// </summary>
+        /// <param name="By">Row.</param>
+        /// <param name="Bx">Column.</param>
+        /// <param name="AssignedM">Fill depth recorded on the cell.</param>
+        /// <returns>True when the depth stays inside the band and the cell had no required work.</returns>
+        private Boolean WithinGradeBand
+            (
+            Int32 By,
+            Int32 Bx,
+            Double AssignedM
+            )
+        {
+            if (this.RequiredCutDepthM[By, Bx] > DEPTH_TOLERANCE_M)
+            {
+                return false;
+            }
+            if (this.RequiredFillDepthM[By, Bx] > DEPTH_TOLERANCE_M)
+            {
+                return false;
+            }
+            Double DeltaM = this.Grid.Existing[By, Bx] - this.Grid.Target[By, Bx];
+            Double Room = this.ToleranceM - DeltaM;
+            if (Room < 0.0)
+            {
+                Room = 0.0;
+            }
+            return AssignedM <= (Room + DEPTH_TOLERANCE_M);
         }
 
         /// <summary>

@@ -54,7 +54,11 @@ namespace HaulBuilder
             public Int32 PairRepairSwaps { get; }
         }
 
-        /// <summary>Builds and validates the residual edge batch.</summary>
+        /// <summary>
+        /// Builds and validates the residual edge batch.
+        /// Ribbon loads keep the fill they were grown with.
+        /// The field edge may turn on the turning circle. A bend inside the work is wider.
+        /// </summary>
         static public Result Complete
             (
             IReadOnlyList<Pass> InteriorPasses,
@@ -70,7 +74,8 @@ namespace HaulBuilder
             Double BladeWidthM,
             Boolean GradeReturn,
             ObstacleField? Obstacles = null,
-            Double? HeadingAxisDeg = null
+            Double? HeadingAxisDeg = null,
+            Double TurningCircleFt = Constants.DEFAULT_TURNING_CIRCLE_FT
             )
         {
             if (InteriorPasses == null)
@@ -80,20 +85,24 @@ namespace HaulBuilder
             ObstacleField ActiveObstacles = Obstacles ?? EMPTY_OBSTACLES;
             HaulWorkLedger ResidualLedger =
                 FullLedger.BuildResidual(InteriorPasses);
-            HaulOptimizationResult Generated = HaulCycleOptimizer.Optimize(
+            HaulOptimizationResult Generated = FlowRibbonSearch.Optimize(
                 Grid,
                 Flow,
                 ResidualLedger,
                 Axis,
                 MaximumLoadBcy,
                 MaximumRunsPerKind,
-                DeferEdgeWork: false,
+                false,
                 FlowPenaltyWeight,
                 ActiveObstacles,
-                HeadingAxisDeg);
+                HeadingAxisDeg,
+                false,
+                BladeWidthM,
+                TurningCircleFt);
             List<Pass> EdgePasses = Generated.PassResult.Passes;
             Int32 PairSwaps = 0;
-            if ((PairRefinementRounds > 0) && (EdgePasses.Count > 1))
+            Boolean FlowRibbons = EdgePasses.Exists(Pass => Pass.RibbonOrder);
+            if (!FlowRibbons && (PairRefinementRounds > 0) && (EdgePasses.Count > 1))
             {
                 HaulPairDistanceRefiner.Result Refined =
                     HaulPairDistanceRefiner.Refine(
@@ -106,12 +115,16 @@ namespace HaulBuilder
                 EdgePasses = Refined.Passes;
                 PairSwaps = Refined.Swaps;
             }
-            HaulPairRepair.Result PairRepair = HaulPairRepair.Repair(
-                EdgePasses,
-                Grid,
-                BladeWidthM,
-                GradeReturn,
-                Obstacles: ActiveObstacles);
+            // A ribbon fill belongs to the cut it was grown with. Swapping it
+            // for another load's fill leaves the two volumes a speck apart.
+            HaulPairRepair.Result PairRepair = FlowRibbons
+                ? new HaulPairRepair.Result(EdgePasses, 0, 0, 0, 0)
+                : HaulPairRepair.Repair(
+                    EdgePasses,
+                    Grid,
+                    BladeWidthM,
+                    GradeReturn,
+                    Obstacles: ActiveObstacles);
             EdgePasses = PairRepair.Passes;
             Int32 FailureCount = PairRepair.FinalFailures;
             Int32 OmittedCycles = 0;

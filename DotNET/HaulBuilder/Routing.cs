@@ -53,7 +53,7 @@ namespace HaulBuilder
     {
         private const Double DEFAULT_UNLOADED_TRAVEL_SPEED_MPH = 13.0;
         private const Double DEFAULT_TURN_SPEED_MPH = 4.0;
-        private const Double DEFAULT_TURNING_CIRCLE_FT = 50.0;
+        private const Double DEFAULT_TURNING_CIRCLE_FT = Constants.DEFAULT_TURNING_CIRCLE_FT;
 
         /// <summary>
         /// Reusable direction-aware transition evaluator for field-wide audits
@@ -241,14 +241,15 @@ namespace HaulBuilder
         }
 
         /// <summary>
-        /// Executes the nearest neighbor order operation.
+        /// Orders the remaining loads by the cheapest hop from the load just driven.
+        /// A straight hop longer than the best full cost cannot win, so those
+        /// loads skip the turn-arc cost. The load that wins is the same one a full scan picks.
         /// </summary>
-        /// <param name="Passes">The passes used by the operation.</param>
-        /// <param name="Model">The model used by the operation.</param>
-        /// <param name="Start">The start used by the operation.</param>
-        /// <param name="PreserveLegacyTies">The preserve legacy ties used by the operation.</param>
-        /// <returns>The resulting nearest neighbor order.</returns>
-
+        /// <param name="Passes">Loads still to order.</param>
+        /// <param name="Model">Hop cost, including the turn arc.</param>
+        /// <param name="Start">Index of the first load.</param>
+        /// <param name="PreserveLegacyTies">When true, an equal cost keeps the earlier index already chosen.</param>
+        /// <returns>Load indexes in drive order.</returns>
         private static List<Int32> NearestNeighborOrder
             (
             IReadOnlyList<Pass> Passes,
@@ -257,20 +258,170 @@ namespace HaulBuilder
             Boolean PreserveLegacyTies
             )
         {
+            return NeighborOrder(Passes, Model, Start, PreserveLegacyTies, SkipFarHops: true);
+        }
+
+        /// <summary>
+        /// Checks the far-hop skip against a full cost scan.
+        /// A miss here would drive the loads in a different order.
+        /// </summary>
+        /// <returns>A description of the first order that disagrees, or null when every case matches.</returns>
+        internal static String? NeighborOrderMismatch
+            (
+            )
+        {
+            List<Pass> Passes = new List<Pass>();
+            for (Int32 Index = 0; Index < 36; Index += 1)
+            {
+                Double X = (Index % 6) * 40.0;
+                Double Y = (Index / 6) * 35.0;
+                // Two loads share a start so an equal hop has to keep the same index.
+                if (Index == 8)
+                {
+                    X = 0.0;
+                    Y = 0.0;
+                }
+                Double Heading = (Index % 5) * 0.4;
+                Passes.Add(new Pass(
+                    new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>(),
+                    new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>(),
+                    1.0,
+                    0.0,
+                    (X, Y),
+                    (X + (10.0 * Math.Cos(Heading)), Y + (10.0 * Math.Sin(Heading))),
+                    (X + 12.0, Y + 4.0),
+                    (X + 18.0, Y + (6.0 * Math.Cos(Heading)))));
+            }
+            _TransitionModel[] Models =
+            {
+                new _TransitionModel(
+                    GradeReturn: true,
+                    DirectionAware: true,
+                    ReturnV: 4.0,
+                    TurnV: 1.5,
+                    R: 6.0,
+                    Obstacles: EMPTY_OBSTACLES,
+                    OrderByDistance: true),
+                new _TransitionModel(
+                    GradeReturn: true,
+                    DirectionAware: true,
+                    ReturnV: 4.0,
+                    TurnV: 1.5,
+                    R: 6.0,
+                    Obstacles: EMPTY_OBSTACLES,
+                    OrderByDistance: false),
+            };
+            Boolean[] TieModes = { true, false };
+            foreach (_TransitionModel Model in Models)
+            {
+                foreach (Boolean PreserveLegacyTies in TieModes)
+                {
+                    for (Int32 Start = 0; Start < Passes.Count; Start += 1)
+                    {
+                        List<Int32> Fast = NeighborOrder(
+                            Passes, Model, Start, PreserveLegacyTies, SkipFarHops: true);
+                        List<Int32> Full = NeighborOrder(
+                            Passes, Model, Start, PreserveLegacyTies, SkipFarHops: false);
+                        for (Int32 Index = 0; Index < Fast.Count; Index += 1)
+                        {
+                            if (Fast[Index] == Full[Index]) continue;
+                            return String.Format(
+                                System.Globalization.CultureInfo.InvariantCulture,
+                                "distance={0} legacy={1} start={2} index={3} fast={4} full={5}",
+                                Model.OrderByDistance,
+                                PreserveLegacyTies,
+                                Start,
+                                Index,
+                                Fast[Index],
+                                Full[Index]);
+                        }
+                    }
+                }
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// Builds one nearest-neighbor order. The far-hop skip is the picture-run
+        /// path. The full scan is the check that the skip did not change the winner.
+        /// </summary>
+        /// <param name="Passes">Loads still to order.</param>
+        /// <param name="Model">Hop cost, including the turn arc.</param>
+        /// <param name="Start">Index of the first load.</param>
+        /// <param name="PreserveLegacyTies">When true, an equal cost keeps the earlier index already chosen.</param>
+        /// <param name="SkipFarHops">When true, a straight hop past the best full cost is not priced.</param>
+        /// <returns>Load indexes in drive order.</returns>
+        private static List<Int32> NeighborOrder
+            (
+            IReadOnlyList<Pass> Passes,
+            _TransitionModel Model,
+            Int32 Start,
+            Boolean PreserveLegacyTies,
+            Boolean SkipFarHops
+            )
+        {
             Boolean[] Unvisited = Enumerable.Repeat(true, Passes.Count)
                 .ToArray();
             List<Int32> Order = new List<Int32>(Passes.Count) { Start };
             Unvisited[Start] = false;
             Int32 Current = Start;
+            // Extra metres kept in the hop test so a rounding error cannot
+            // drop the load a full scan would have picked.
+            const Double HopMarginM = 1e-4;
             for (Int32 Step = 1; Step < Passes.Count; Step += 1)
             {
                 Double BestCost = Double.PositiveInfinity;
                 Int32 Best = -1;
-                for (Int32 Candidate = 0;
-                    Candidate < Passes.Count;
-                    Candidate += 1)
+                Double Ceiling = Double.PositiveInfinity;
+                (Double X, Double Y) Exit = default;
+                if (SkipFarHops)
+                {
+                    // The closest straight hop has a full cost. Any load farther
+                    // than that cost is a longer drive even before its turn arc.
+                    Exit = ExitXy(Passes[Current], Model.GradeReturn);
+                    Int32 Near = -1;
+                    Double NearSq = Double.PositiveInfinity;
+                    for (Int32 Candidate = 0; Candidate < Passes.Count; Candidate += 1)
+                    {
+                        if (!Unvisited[Candidate]) continue;
+                        (Double X, Double Y) Cut = Passes[Candidate].CutStartXy;
+                        Double Dx = Cut.X - Exit.X;
+                        Double Dy = Cut.Y - Exit.Y;
+                        Double DistSq = (Dx * Dx) + (Dy * Dy);
+                        if (DistSq < NearSq)
+                        {
+                            NearSq = DistSq;
+                            Near = Candidate;
+                        }
+                    }
+                    Ceiling = Model.Cost(Passes[Current], Passes[Near]);
+                }
+                // A time cost is seconds. The straight hop is metres, so the
+                // bound is how long that hop takes to drive. A distance cost
+                // is already metres, and the turn arc only adds to it.
+                Double MetresPerCost = 1.0;
+                if (SkipFarHops
+                    && Model.DirectionAware
+                    && !Model.OrderByDistance
+                    && (Model.ReturnV > 0.0))
+                {
+                    MetresPerCost = Model.ReturnV;
+                }
+                for (Int32 Candidate = 0; Candidate < Passes.Count; Candidate += 1)
                 {
                     if (!Unvisited[Candidate]) continue;
+                    if (SkipFarHops)
+                    {
+                        Double Cap = (Best < 0) ? Ceiling : Math.Min(Ceiling, BestCost);
+                        Double Limit = Cap
+                            + Constants.STRICT_NUMERIC_COMPARISON_TOLERANCE
+                            + HopMarginM;
+                        (Double X, Double Y) Cut = Passes[Candidate].CutStartXy;
+                        Double Dx = Cut.X - Exit.X;
+                        Double Dy = Cut.Y - Exit.Y;
+                        Double LimitMetres = Limit * MetresPerCost;
+                        if (((Dx * Dx) + (Dy * Dy)) > (LimitMetres * LimitMetres)) continue;
+                    }
                     Double Cost = Model.Cost(
                         Passes[Current], Passes[Candidate]);
                     Boolean Better = PreserveLegacyTies
@@ -395,18 +546,21 @@ namespace HaulBuilder
             }
 
             Int32 Moves = 0;
+            // One sequence for the whole refine. Rebuilding it at every stop
+            // copied every load once per load, and that copy was the wait
+            // before a picture run could draw. A move is written here too,
+            // so the next stop still sees the same order.
+            List<Pass> Cur = new List<Pass>(Tagged.Count);
+            for (Int32 Index = 0; Index < Tagged.Count; Index += 1)
+            {
+                Cur.Add(Tagged[Index].Pass);
+            }
             for (Int32 Round = 0; Round < MaxRounds; Round += 1)
             {
                 Boolean Improved = false;
                 Int32 K = 0;
                 while (K < Tagged.Count)
                 {
-                    List<Pass> Cur = new List<Pass>();
-                    foreach ((Pass Pass, Int32 Id) Item in Tagged)
-                    {
-                        Cur.Add(Item.Pass);
-                    }
-
                     Int32 Lo = Math.Max(0, K - Window);
                     Int32 Hi = Math.Min(Tagged.Count - 1, K + Window);
                     Int32 BestD = K;
@@ -431,6 +585,11 @@ namespace HaulBuilder
                         (Pass Pass, Int32 Id) Item = Tagged[K];
                         Tagged.RemoveAt(K);
                         Tagged.Insert(BestD, Item);
+                        // Same shift as the tagged route, so the next delta
+                        // reads the order a rebuilt list would have had.
+                        Pass Moved = Cur[K];
+                        Cur.RemoveAt(K);
+                        Cur.Insert(BestD, Moved);
                         Moves += 1;
                         Improved = true;
                     }

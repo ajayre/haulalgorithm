@@ -150,20 +150,28 @@ namespace HaulBuilder
                 HaulWorkLedger Ledger = HaulWorkLedger.Build(
                     Grid, Opt.ToleranceMm);
                 HaulOptimizationResult Optimized =
-                    HaulCycleOptimizer.Optimize(
+                    FlowRibbonSearch.Optimize(
                         Grid,
                         Flow,
                         Ledger,
                         HaulLaneBuilder.LaneAxis.UserHeading,
                         ScraperBcy,
                         Opt.Optimization.MaxLaneSlicesPerCycle,
-                        DeferEdgeWork: true,
+                        true,
                         Opt.Optimization.FlowPenaltyWeight,
                         Obstacles,
-                        HeadingDeg);
+                        HeadingDeg,
+                        false,
+                        Opt.BladeWidthMm / Constants.MILLIMETERS_PER_METER,
+                        Opt.MinimumTurningDiameterFt,
+                        Opt.Optimization.ClusterModeAverageWindow,
+                        Opt.Optimization.ClusterModeLoadFraction);
                 List<Pass> OptimizedPasses = Optimized.PassResult.Passes;
                 HaulPairDistanceRefiner.Result? PairRefinement = null;
-                if (Opt.Optimization.PairRefinementRounds > 0)
+                // A ribbon already hauls along the flow. Swapping its fill for a
+                // nearer centroid would send the soil off that streamline.
+                Boolean FlowRibbons = OptimizedPasses.Exists(Pass => Pass.RibbonOrder);
+                if (!FlowRibbons && (Opt.Optimization.PairRefinementRounds > 0))
                 {
                     PairRefinement = HaulPairDistanceRefiner.Refine(
                         OptimizedPasses,
@@ -175,6 +183,10 @@ namespace HaulBuilder
                     OptimizedPasses = PairRefinement.Passes;
                 }
                 HaulResidualEdgeCompleter.Result? EdgeCompletion = null;
+                // The search has left hauling. The residual flow pass would
+                // scrape the dirt clusters or correcting leave.
+                if (!Optimized.EnteredClusterMode)
+                {
                 EdgeCompletion = HaulResidualEdgeCompleter.Complete(
                         OptimizedPasses,
                         Grid,
@@ -189,7 +201,8 @@ namespace HaulBuilder
                         Opt.BladeWidthMm / Constants.MILLIMETERS_PER_METER,
                         GradeReturn: true,
                         Obstacles,
-                        HeadingDeg);
+                        HeadingDeg,
+                        Opt.MinimumTurningDiameterFt);
                 foreach (Pass EdgePass in EdgeCompletion.Passes)
                 {
                     foreach (((Int32 Bx, Int32 By) Cell, Double DepthM) Entry
@@ -206,9 +219,15 @@ namespace HaulBuilder
                 OptimizedPasses = OptimizedPasses
                     .Concat(EdgeCompletion.Passes)
                     .ToList();
+                }
                 HaulMultiRouteExchangeOptimizer.Result? MultiRouteExchange = null;
                 HaulRouteConsolidationOptimizer.Result? RouteConsolidation = null;
-                if (Opt.Optimization.EnableRouteConsolidation)
+                // Consolidation rebuilds passes as unordered cell groups. That
+                // throws away the ribbon and the guidance falls back to lanes.
+                Boolean FlowRibbonsForConsolidation =
+                    OptimizedPasses.Exists(Pass => Pass.RibbonOrder);
+                if (Opt.Optimization.EnableRouteConsolidation
+                    && !FlowRibbonsForConsolidation)
                 {
                     RouteConsolidation =
                         HaulRouteConsolidationOptimizer.Optimize(
@@ -265,10 +284,11 @@ namespace HaulBuilder
                         ScraperBcy,
                         Grid.MaxDepthMm / Constants.MILLIMETERS_PER_METER,
                         AllowDeferredWork: Deferred.Count > 0);
+                    HaulOptimizationResult PreviousOptimized = Optimized;
                     Optimized = new HaulOptimizationResult(
                         new PassResult(
                             OptimizedPasses,
-                            Optimized.PassResult.Rounds,
+                            PreviousOptimized.PassResult.Rounds,
                             UnmatchedCutBcy,
                             UnmatchedFillBcy),
                         Optimized.Axis,
@@ -286,6 +306,7 @@ namespace HaulBuilder
                         0,
                         EdgeCompletion?.Passes.Count ?? 0,
                         EdgeCompletion?.OmittedCycles ?? 0);
+                    Optimized.CopyClusterModeFrom(PreviousOptimized);
                 }
                 if (!Optimized.Validation.Success)
                 {
@@ -378,10 +399,11 @@ namespace HaulBuilder
                 Route = Banded.Route;
                 Result.Messages.Add(String.Format(
                     CultureInfo.InvariantCulture,
-                    "Early full-strip banding ordered {0} one-strip interior route(s), then {1} other interior route(s), then {2} field-edge route(s).",
+                    "Early full-strip banding ordered {0} one-strip interior route(s), then {1} other interior route(s), then {2} field-edge route(s), then {3} scrap route(s).",
                     Banded.FullStripCount,
                     Banded.OtherInteriorCount,
-                    Banded.EdgeCount));
+                    Banded.EdgeCount,
+                    Banded.ScrapCount));
             }
             else
             {
@@ -523,10 +545,11 @@ namespace HaulBuilder
                         {
                             Result.Messages.Add(String.Format(
                                 CultureInfo.InvariantCulture,
-                                "Early full-strip banding reapplied after chain refinement: {0} one-strip interior route(s), then {1} other interior route(s), then {2} field-edge route(s).",
+                                "Early full-strip banding reapplied after chain refinement: {0} one-strip interior route(s), then {1} other interior route(s), then {2} field-edge route(s), then {3} scrap route(s).",
                                 BandedCandidate.FullStripCount,
                                 BandedCandidate.OtherInteriorCount,
-                                BandedCandidate.EdgeCount));
+                                BandedCandidate.EdgeCount,
+                                BandedCandidate.ScrapCount));
                         }
                     }
                     else
@@ -626,6 +649,16 @@ namespace HaulBuilder
 
             BuildTimingAndMetrics(Result, Grid, PassResult, Route, HeadingDeg, Opt);
             BuildAnimations(Result, Grid, Route, Opt);
+            // Found order, not the drive tour. The routes are where hauling
+            // handed off to clusters, where clusters handed off to thin-cut,
+            // and where thin-cut handed off to correcting.
+            if (Result.HaulOptimization != null)
+            {
+                Result.State = Result.HaulOptimization.State;
+                Result.ClusterModeStartsAtRoute = Result.HaulOptimization.ClusterModeStartsAtRoute;
+                Result.ThinCutStartsAtRoute = Result.HaulOptimization.ThinCutStartsAtRoute;
+                Result.CorrectingStartsAtRoute = Result.HaulOptimization.CorrectingStartsAtRoute;
+            }
 
             return Result;
         }
@@ -697,6 +730,7 @@ namespace HaulBuilder
                 Previous.CompactOmittedCycles,
                 Previous.EdgeCompletionCycles,
                 Previous.EdgeOmittedCycles);
+            Result.HaulOptimization.CopyClusterModeFrom(Previous);
         }
 
         /// <summary>
@@ -1013,7 +1047,8 @@ namespace HaulBuilder
                     Options.Optimization.FlowPenaltyWeight,
                     HeadingDeg,
                     HaulBuilder.Obstacles.EMPTY_OBSTACLES,
-                    Options.ToleranceMm);
+                    Options.ToleranceMm,
+                    Options.MinimumTurningDiameterFt);
             // Intent: typed values, so a caller does not parse message text. With
             // no cleanup build, the main build is also the last build.
             Result.GuidanceSequenceFailureCount =
@@ -1414,6 +1449,7 @@ namespace HaulBuilder
                     Previous.CompactOmittedCycles,
                     Previous.EdgeCompletionCycles,
                     Previous.EdgeOmittedCycles);
+                Result.HaulOptimization.CopyClusterModeFrom(Previous);
             }
             Result.DeferredWorkSummary = HaulDeferredWorkSummary.Create(
                 RequiredCutBcy,
@@ -2419,6 +2455,8 @@ namespace HaulBuilder
             Destination.RouteReorderWindow = Source.RouteReorderWindow;
             Destination.EnableEarlyFullStripBanding = Source.EnableEarlyFullStripBanding;
             Destination.OptimizeRouteOrderByDistance = Source.OptimizeRouteOrderByDistance;
+            Destination.ClusterModeAverageWindow = Source.ClusterModeAverageWindow;
+            Destination.ClusterModeLoadFraction = Source.ClusterModeLoadFraction;
         }
 
         /// <summary>
@@ -2605,6 +2643,16 @@ namespace HaulBuilder
             if (Optimization.RouteReorderWindow < 0)
                 throw new ArgumentOutOfRangeException(
                     nameof(Optimization.RouteReorderWindow));
+            if (Optimization.ClusterModeAverageWindow < 1)
+                throw new ArgumentOutOfRangeException(
+                    nameof(Optimization.ClusterModeAverageWindow));
+            // Zero keeps the mean from ever leaving hauling. Above one bowl
+            // is not a share of capacity.
+            if (!Double.IsFinite(Optimization.ClusterModeLoadFraction)
+                || (Optimization.ClusterModeLoadFraction < 0.0)
+                || (Optimization.ClusterModeLoadFraction > 1.0))
+                throw new ArgumentOutOfRangeException(
+                    nameof(Optimization.ClusterModeLoadFraction));
             if (Optimization.EnableRouteConsolidation
                 && (Optimization.RouteConsolidationGroupSize < 3))
                 throw new ArgumentOutOfRangeException(

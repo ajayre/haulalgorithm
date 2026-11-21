@@ -34,6 +34,42 @@ namespace HaulBuilder
         private const Double EDGE_PARALLEL_TOLERANCE_DEG = 7.5;
         private const Double NUMERIC_TOLERANCE = Constants.NUMERIC_COMPARISON_TOLERANCE;
         private const Double ENDPOINT_EXTENSION_GRID_FRACTION = 0.49;
+        /// <summary>
+        /// Blade-down corner, in degrees, that starts another run.
+        /// A wave or a staircase stays one path and is filleted. Only a
+        /// fold that turns back is a reversal the scraper must not cut through.
+        /// Splitting a milder bend left a gap in the driving line.
+        /// </summary>
+        private const Double FLOW_BEND_DEG = 120.0;
+        /// <summary>
+        /// Neighbor-average passes applied to the blade spine.
+        /// Two ease a short kink, such as the jog at the start of a cut.
+        /// More than that pulls the line off a staircase of cells.
+        /// </summary>
+        private const Int32 FLOW_SMOOTH_PASSES = 2;
+        /// <summary>
+        /// A bend harder than this is opened into a short arc. Gentler
+        /// bends stay on the cells. The arc itself never steps harder
+        /// than <see cref="FLOW_MAX_TURN_DEG"/>.
+        /// </summary>
+        private const Double FLOW_FILLET_DEG = 35.0;
+        /// <summary>
+        /// Sharpest single step of a blade-down arc, in degrees.
+        /// </summary>
+        private const Double FLOW_MAX_TURN_DEG = 60.0;
+        /// <summary>
+        /// Shortest piece that may be split off at a reversal.
+        /// A shorter piece has no room for the turning circle, so the corner
+        /// stays on one path and is rounded instead.
+        /// </summary>
+        private const Double FLOW_MIN_PIECE_M = 20.0;
+        /// <summary>
+        /// How many grid sizes a cell may sit off the current spine heading
+        /// and still belong to that blade step. The footprint is a little
+        /// over two cells across. A turn runs past this, and that cell
+        /// starts the next step so the line follows the cut.
+        /// </summary>
+        private const Double FLOW_STATION_SIDE_GRIDS = 2.5;
         private static readonly AsyncLocal<Double?> AmbientMinimumWorkLengthM =
             new AsyncLocal<Double?>();
 
@@ -113,13 +149,18 @@ namespace HaulBuilder
             /// <param name="EndXy">Centerline end coordinate.</param>
             /// <param name="HeadingDeg">Compass heading in degrees.</param>
             /// <param name="MaximumLateralErrorM">Maximum assigned-cell distance from the centerline.</param>
+            /// <param name="DrivePoints">
+            /// Blade-down centerline. Null keeps the straight chord from
+            /// <paramref name="StartXy"/> to <paramref name="EndXy"/>.
+            /// </param>
             public Run
                 (
                 List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Cells,
                 (Double X, Double Y) StartXy,
                 (Double X, Double Y) EndXy,
                 Double HeadingDeg,
-                Double MaximumLateralErrorM
+                Double MaximumLateralErrorM,
+                IReadOnlyList<(Double X, Double Y)>? DrivePoints = null
                 )
             {
                 // Keep cell ownership explicit so later connector work cannot alter material allocation.
@@ -128,6 +169,7 @@ namespace HaulBuilder
                 this.EndXy = EndXy;
                 this.HeadingDeg = HeadingDeg;
                 this.MaximumLateralErrorM = MaximumLateralErrorM;
+                this.DrivePoints = DrivePoints;
             }
 
             /// <summary>Gets the material cells assigned to this run.</summary>
@@ -144,6 +186,24 @@ namespace HaulBuilder
 
             /// <summary>Gets the farthest assigned-cell offset from the centerline.</summary>
             public Double MaximumLateralErrorM { get; }
+
+            /// <summary>
+            /// Gets the blade-down centerline. Null means drive the straight chord.
+            /// </summary>
+            public IReadOnlyList<(Double X, Double Y)>? DrivePoints { get; }
+
+            /// <summary>Drive polyline in the opposite direction.</summary>
+            /// <returns>Reversed points, or null when this run is a chord.</returns>
+            public IReadOnlyList<(Double X, Double Y)>? ReversedDrivePoints
+                (
+                )
+            {
+                if (DrivePoints == null) return null;
+                List<(Double X, Double Y)> Copy =
+                    new List<(Double X, Double Y)>(DrivePoints);
+                Copy.Reverse();
+                return Copy;
+            }
 
             /// <summary>Gets straight blade-down centerline length in metres.</summary>
             public Double LengthM
@@ -323,6 +383,923 @@ namespace HaulBuilder
                 OrientEndXy,
                 MinimumWorkLengthM);
             return Candidates[0];
+        }
+
+        /// <summary>
+        /// Walks cells in the order the flow ribbon stored them. A hop starts a
+        /// new run, and so does a corner the scraper cannot cut through. Each
+        /// piece is smoothed so the blade-down path bends instead of kinking.
+        /// Splitting every gentle bend produced chords the turning circle could
+        /// not enter, so only a real reversal is split.
+        /// </summary>
+        /// <param name="Cells">Ribbon cells, ridge end first.</param>
+        /// <param name="Grid">Field grid.</param>
+        /// <param name="BladeWidthM">Blade width in metres.</param>
+        /// <param name="TurningCircleFt">
+        /// Turning circle diameter in feet. Zero uses the default circle.
+        /// The field edge may turn this tight. A bend inside the cut or the
+        /// fill uses a wider radius, because a tight turn is slow.
+        /// </param>
+        /// <returns>One plan whose runs follow the ribbon.</returns>
+        static public PlanResult PlanRibbon
+            (
+            List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Cells,
+            Grid Grid,
+            Double BladeWidthM,
+            Double TurningCircleFt = Constants.DEFAULT_TURNING_CIRCLE_FT
+            )
+        {
+            if (Cells == null) throw new ArgumentNullException(nameof(Cells));
+            if (Grid == null) throw new ArgumentNullException(nameof(Grid));
+            if (BladeWidthM <= 0.0) throw new ArgumentOutOfRangeException(nameof(BladeWidthM));
+            if (TurningCircleFt <= 0.0) TurningCircleFt = Constants.DEFAULT_TURNING_CIRCLE_FT;
+            // Half the circle. The edge may use this. The interior uses more.
+            Double MinimumRadiusM = TurningCircleFt
+                * Constants.FEET_TO_METERS
+                * Constants.HALF_SCALE;
+            if (Cells.Count == 0)
+            {
+                return new PlanResult(
+                    0.0,
+                    new List<Run>(),
+                    0.0,
+                    0.0,
+                    0.0,
+                    new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>());
+            }
+
+            List<Run> Runs = new List<Run>();
+            List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Current =
+                new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>();
+            Double HeadingDeg = 0.0;
+            Boolean HasHeading = false;
+            foreach (((Int32 Bx, Int32 By) Cell, Double DepthM) Entry in Cells)
+            {
+                (Double X, Double Y) Point = Grid.CellCenterXy(Entry.Cell.Bx, Entry.Cell.By);
+                if (Current.Count == 0)
+                {
+                    Current.Add(Entry);
+                    HasHeading = false;
+                    continue;
+                }
+                (Double X, Double Y) Previous = Grid.CellCenterXy(
+                    Current[Current.Count - 1].Cell.Bx,
+                    Current[Current.Count - 1].Cell.By);
+                Double Dx = Point.X - Previous.X;
+                Double Dy = Point.Y - Previous.Y;
+                Double StepM = Math.Sqrt((Dx * Dx) + (Dy * Dy));
+                // A neighbor strip stays on this run. Only a real hop lifts the blade.
+                Boolean Gap = StepM > (Grid.GridSizeM * 6.0);
+                if (Gap)
+                {
+                    AddFlowingRuns(Runs, Current, Grid, HeadingDeg, MinimumRadiusM);
+                    Current = new List<((Int32 Bx, Int32 By) Cell, Double DepthM)> { Entry };
+                    HasHeading = false;
+                    continue;
+                }
+                if (!HasHeading && (StepM > Constants.STRICT_NUMERIC_COMPARISON_TOLERANCE))
+                {
+                    HeadingDeg = HeadingOf(Dx, Dy);
+                    HasHeading = true;
+                }
+                Current.Add(Entry);
+            }
+            if (Current.Count > 0)
+            {
+                AddFlowingRuns(Runs, Current, Grid, HeadingDeg, MinimumRadiusM);
+            }
+            // A hop that keeps the same heading is still one cut. Lifting the
+            // blade there inserts a turn in the middle of a straight strip.
+            MergeAlignedRuns(Runs);
+            Double ConnectorM = 0.0;
+            for (Int32 Index = 1; Index < Runs.Count; Index += 1)
+            {
+                Double Dx = Runs[Index].StartXy.X - Runs[Index - 1].EndXy.X;
+                Double Dy = Runs[Index].StartXy.Y - Runs[Index - 1].EndXy.Y;
+                ConnectorM += Math.Sqrt((Dx * Dx) + (Dy * Dy));
+            }
+            Double WorkM = Runs.Sum(Run => Run.LengthM);
+            return new PlanResult(
+                Runs.Count == 0 ? 0.0 : Runs[0].HeadingDeg,
+                Runs,
+                ConnectorM,
+                0.0,
+                WorkM + ConnectorM,
+                new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>());
+        }
+
+        /// <summary>One blade footprint on a flow ribbon.</summary>
+        private struct FlowStation
+        {
+            /// <summary>Footprint center, easting.</summary>
+            public Double X;
+
+            /// <summary>Footprint center, northing.</summary>
+            public Double Y;
+
+            /// <summary>First ribbon cell in this footprint.</summary>
+            public Int32 FirstCell;
+
+            /// <summary>Cell index just past this footprint.</summary>
+            public Int32 LastCell;
+        }
+
+        /// <summary>
+        /// Splits a ribbon where it folds back, then smooths each piece.
+        /// The cell list records the whole blade, so a raw join from the mouth
+        /// of one strip to the ridge of the next is a V the scraper cannot cut.
+        /// A corner on the field edge stays in the same run and stays sharp.
+        /// </summary>
+        /// <param name="Runs">Runs already accepted for this ribbon.</param>
+        /// <param name="Cells">Cells of one continuous visit, in drive order.</param>
+        /// <param name="Grid">Field grid.</param>
+        /// <param name="HeadingDeg">Fallback heading when the piece is a single cell.</param>
+        /// <param name="MinimumRadiusM">Turning-circle radius in metres.</param>
+        private static void AddFlowingRuns
+            (
+            List<Run> Runs,
+            List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Cells,
+            Grid Grid,
+            Double HeadingDeg,
+            Double MinimumRadiusM
+            )
+        {
+            List<FlowStation> Stations = DropSideSteps(BladeStations(Cells, Grid), Grid.GridSizeM);
+            if (Stations.Count == 0) return;
+            // Built once. A corner on this boundary stays a sharp headland turn.
+            FieldEdgePolicy Edge = new FieldEdgePolicy(Grid, Grid.GridSizeM);
+            Int32 Piece = 0;
+            for (Int32 Index = 1; Index < Stations.Count - 1; Index += 1)
+            {
+                // A fold that turns back is a new run only when both pieces are
+                // long enough for the turning circle. A wave is rounded in
+                // place. Splitting that wave left a gap through the cells.
+                // A corner on the field edge is left sharp, in this same run.
+                if (Edge.IsFieldPointNearOuterEdge(Stations[Index].X, Stations[Index].Y))
+                {
+                    continue;
+                }
+                if (StationTurnDeg(Stations[Index - 1], Stations[Index], Stations[Index + 1])
+                    <= FLOW_BEND_DEG)
+                {
+                    continue;
+                }
+                if ((StationLengthM(Stations, Piece, Index) < FLOW_MIN_PIECE_M)
+                    || (StationLengthM(Stations, Index, Stations.Count - 1) < FLOW_MIN_PIECE_M))
+                {
+                    continue;
+                }
+                EmitFlowRun(Runs, Cells, Grid, Stations, Piece, Index, HeadingDeg, Edge, MinimumRadiusM);
+                Piece = Index;
+            }
+            EmitFlowRun(Runs, Cells, Grid, Stations, Piece, Stations.Count - 1, HeadingDeg, Edge, MinimumRadiusM);
+        }
+
+        /// <summary>Adds one smoothed blade-down run for a station range.</summary>
+        /// <param name="Runs">Runs already accepted for this ribbon.</param>
+        /// <param name="Cells">Cells of the visit.</param>
+        /// <param name="Grid">Field grid.</param>
+        /// <param name="Stations">Blade footprints in drive order.</param>
+        /// <param name="From">First station of this piece.</param>
+        /// <param name="To">Last station of this piece.</param>
+        /// <param name="HeadingDeg">Fallback heading when the piece is a single cell.</param>
+        /// <param name="Edge">Outer boundary. A corner on it may use the turning circle.</param>
+        /// <param name="MinimumRadiusM">Turning-circle radius in metres.</param>
+        private static void EmitFlowRun
+            (
+            List<Run> Runs,
+            List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Cells,
+            Grid Grid,
+            List<FlowStation> Stations,
+            Int32 From,
+            Int32 To,
+            Double HeadingDeg,
+            FieldEdgePolicy Edge,
+            Double MinimumRadiusM
+            )
+        {
+            // The corner station already belongs to the previous piece.
+            // Starting again on it would redraw the kink.
+            Int32 DrawFrom = (From == 0) ? From : From + 1;
+            if (DrawFrom > To) return;
+            Int32 CellFrom = Stations[DrawFrom].FirstCell;
+            Int32 CellTo = Stations[To].LastCell;
+            if ((CellFrom < 0) || (CellTo > Cells.Count) || (CellFrom >= CellTo)) return;
+            List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Slice =
+                Cells.GetRange(CellFrom, CellTo - CellFrom);
+            List<(Double X, Double Y)> Spine = new List<(Double X, Double Y)>();
+            for (Int32 Index = DrawFrom; Index <= To; Index += 1)
+            {
+                Spine.Add((Stations[Index].X, Stations[Index].Y));
+            }
+            // Round the spine, then replace any leftover corner with an arc
+            // the turning circle can actually drive.
+            Double SpacingM = Math.Max(0.5, Grid.GridSizeM * 0.5);
+            List<(Double X, Double Y)> Flowing = ResampleFlow(
+                FilletFlow(SmoothFlow(Spine, Edge), MinimumRadiusM, SpacingM, Edge),
+                SpacingM);
+            Runs.Add(MakeRibbonRun(Slice, Grid, HeadingDeg, Flowing));
+        }
+
+        /// <summary>Builds one run from a ribbon segment.</summary>
+        /// <param name="Cells">Cells in drive order.</param>
+        /// <param name="Grid">Field grid.</param>
+        /// <param name="HeadingDeg">Segment heading. Zero when the segment is a single cell.</param>
+        /// <param name="Centerline">
+        /// Smoothed blade-down path. Null rebuilds a spine from the cells.
+        /// </param>
+        /// <returns>The run.</returns>
+        private static Run MakeRibbonRun
+            (
+            List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Cells,
+            Grid Grid,
+            Double HeadingDeg,
+            List<(Double X, Double Y)>? Centerline = null
+            )
+        {
+            (Double X, Double Y) Start = Grid.CellCenterXy(Cells[0].Cell.Bx, Cells[0].Cell.By);
+            (Double X, Double Y) End = Grid.CellCenterXy(
+                Cells[Cells.Count - 1].Cell.Bx,
+                Cells[Cells.Count - 1].Cell.By);
+            List<(Double X, Double Y)> Points = Centerline
+                ?? RibbonCenterline(Cells, Grid, Start, End);
+            if (Points.Count >= 1) Start = Points[0];
+            if (Points.Count >= 2)
+            {
+                End = Points[Points.Count - 1];
+            }
+            else
+            {
+                // A single cell still needs a direction so the turning circle can enter it.
+                End = (Start.X + Math.Sin(HeadingDeg * Math.PI / Constants.DEGREES_PER_HALF_TURN),
+                    Start.Y + Math.Cos(HeadingDeg * Math.PI / Constants.DEGREES_PER_HALF_TURN));
+                Points.Add(End);
+            }
+            (Double X, Double Y) Tail = Points[Points.Count - 1];
+            (Double X, Double Y) Before = Points[Points.Count - 2];
+            Double StepX = Tail.X - Before.X;
+            Double StepY = Tail.Y - Before.Y;
+            if (((StepX * StepX) + (StepY * StepY))
+                > Constants.STRICT_NUMERIC_COMPARISON_TOLERANCE)
+            {
+                // The haul leaves the strip at this end, so the stored
+                // heading has to be the arrival heading, not the first step.
+                HeadingDeg = HeadingOf(StepX, StepY);
+            }
+            return new Run(
+                new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>(Cells),
+                Start,
+                End,
+                HeadingDeg,
+                0.0,
+                Points);
+        }
+
+        /// <summary>
+        /// Joins two ribbon runs when the step between them continues.
+        /// The check uses where the next run starts, not where it finishes,
+        /// so a later curve does not leave a gap through the cells.
+        /// The blade stays down instead of lifting for a few metres.
+        /// </summary>
+        /// <param name="Runs">Runs in drive order. Updated in place.</param>
+        private static void MergeAlignedRuns
+            (
+            List<Run> Runs
+            )
+        {
+            Int32 Index = 1;
+            while (Index < Runs.Count)
+            {
+                Run Previous = Runs[Index - 1];
+                Run Next = Runs[Index];
+                if ((Previous.DrivePoints == null) || (Next.DrivePoints == null)
+                    || (Previous.DrivePoints.Count < 2) || (Next.DrivePoints.Count < 2))
+                {
+                    Index += 1;
+                    continue;
+                }
+                Double Dx = Next.StartXy.X - Previous.EndXy.X;
+                Double Dy = Next.StartXy.Y - Previous.EndXy.Y;
+                Double GapM = Math.Sqrt((Dx * Dx) + (Dy * Dy));
+                if (GapM <= Constants.STRICT_NUMERIC_COMPARISON_TOLERANCE)
+                {
+                    Index += 1;
+                    continue;
+                }
+                // The last drawn step can be a hook aimed off the strip. The
+                // two pieces still travel the same way, and the hole between
+                // them is the break in the cut. A fold that turns back stays
+                // two runs.
+                Double ArrivalDeg = PathHeadingDeg(Previous.DrivePoints, FromEnd: true);
+                Double DepartDeg = PathHeadingDeg(Next.DrivePoints, FromEnd: false);
+                if ((GapM > 12.0)
+                    || (HeadingGapDeg(ArrivalDeg, DepartDeg) > 120.0))
+                {
+                    Index += 1;
+                    continue;
+                }
+                List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Cells =
+                    new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>(Previous.Cells);
+                Cells.AddRange(Next.Cells);
+                List<(Double X, Double Y)> Points =
+                    new List<(Double X, Double Y)>(Previous.DrivePoints);
+                Points.AddRange(Next.DrivePoints);
+                Runs[Index - 1] = new Run(
+                    Cells,
+                    Points[0],
+                    Points[Points.Count - 1],
+                    Next.HeadingDeg,
+                    0.0,
+                    Points);
+                Runs.RemoveAt(Index);
+            }
+        }
+
+        /// <summary>
+        /// Heading of a drive path, measured over a few metres so one short
+        /// fillet sample does not decide it.
+        /// </summary>
+        /// <param name="Points">Path in drive order.</param>
+        /// <param name="FromEnd">True reads back from the last point. False reads forward from the first.</param>
+        /// <returns>Compass heading in degrees.</returns>
+        private static Double PathHeadingDeg
+            (
+            IReadOnlyList<(Double X, Double Y)> Points,
+            Boolean FromEnd
+            )
+        {
+            // One cell of a normal grid. Far enough to get off a fillet sample.
+            const Double LookM = 3.0;
+            if (FromEnd)
+            {
+                (Double X, Double Y) End = Points[Points.Count - 1];
+                for (Int32 Index = Points.Count - 2; Index >= 0; Index -= 1)
+                {
+                    Double StepX = End.X - Points[Index].X;
+                    Double StepY = End.Y - Points[Index].Y;
+                    if (((StepX * StepX) + (StepY * StepY)) >= (LookM * LookM))
+                    {
+                        return HeadingOf(StepX, StepY);
+                    }
+                }
+                (Double X, Double Y) Start = Points[0];
+                return HeadingOf(End.X - Start.X, End.Y - Start.Y);
+            }
+            (Double X, Double Y) Begin = Points[0];
+            for (Int32 Index = 1; Index < Points.Count; Index += 1)
+            {
+                Double StepX = Points[Index].X - Begin.X;
+                Double StepY = Points[Index].Y - Begin.Y;
+                if (((StepX * StepX) + (StepY * StepY)) >= (LookM * LookM))
+                {
+                    return HeadingOf(StepX, StepY);
+                }
+            }
+            (Double X, Double Y) Last = Points[Points.Count - 1];
+            return HeadingOf(Last.X - Begin.X, Last.Y - Begin.Y);
+        }
+
+        /// <summary>Smallest angle between two compass headings.</summary>
+        /// <param name="FirstDeg">First heading.</param>
+        /// <param name="SecondDeg">Second heading.</param>
+        /// <returns>Degrees from 0 to 180.</returns>
+        private static Double HeadingGapDeg
+            (
+            Double FirstDeg,
+            Double SecondDeg
+            )
+        {
+            Double Gap = Math.Abs(FirstDeg - SecondDeg) % FULL_CIRCLE_DEG;
+            if (Gap > Constants.DEGREES_PER_HALF_TURN) Gap = FULL_CIRCLE_DEG - Gap;
+            return Gap;
+        }
+
+        /// <summary>Compass heading of a step, with 0 at north and 90 at east.</summary>
+        /// <param name="Dx">East component.</param>
+        /// <param name="Dy">North component.</param>
+        /// <returns>Heading in degrees.</returns>
+        private static Double HeadingOf
+            (
+            Double Dx,
+            Double Dy
+            )
+        {
+            return (Math.Atan2(Dx, Dy) * Constants.DEGREES_PER_HALF_TURN / Math.PI
+                + Constants.DEGREES_PER_TURN) % Constants.DEGREES_PER_TURN;
+        }
+
+        /// <summary>
+        /// Collapses a blade-wide ribbon to the spine the scraper actually drives.
+        /// Each step records the whole blade, so drawing every cell scribbles sideways.
+        /// The ends stay on the spine. Pinning them to the outer blade cells forks the cut.
+        /// </summary>
+        /// <param name="Cells">Ribbon cells in drive order.</param>
+        /// <param name="Grid">Field grid.</param>
+        /// <param name="Start">Unused. Kept so callers that have no spine still compile.</param>
+        /// <param name="End">Unused. The spine end is the last footprint, not an edge cell.</param>
+        /// <returns>Smoothed centerline.</returns>
+        private static List<(Double X, Double Y)> RibbonCenterline
+            (
+            List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Cells,
+            Grid Grid,
+            (Double X, Double Y) Start,
+            (Double X, Double Y) End
+            )
+        {
+            _ = Start;
+            _ = End;
+            List<FlowStation> Stations = DropSideSteps(BladeStations(Cells, Grid), Grid.GridSizeM);
+            List<(Double X, Double Y)> Spine = new List<(Double X, Double Y)>();
+            foreach (FlowStation Station in Stations)
+            {
+                Spine.Add((Station.X, Station.Y));
+            }
+            if (Spine.Count == 0) Spine.Add(Start);
+            Double SpacingM = Math.Max(0.5, Grid.GridSizeM * 0.5);
+            FieldEdgePolicy Edge = new FieldEdgePolicy(Grid, Grid.GridSizeM);
+            return ResampleFlow(
+                FilletFlow(SmoothFlow(Spine, Edge), COVERAGE_MINIMUM_RADIUS_M, SpacingM, Edge),
+                SpacingM);
+        }
+
+        /// <summary>
+        /// Groups the blade's left, center, and right cells into one station.
+        /// A station ends when the next cell has moved about one cell forward,
+        /// or has left the blade to the side. Cells beside the blade stay in
+        /// the same station, so the line is the middle of the cut. A turn
+        /// starts a new step, so the line follows the cut instead of keeping
+        /// the opening heading.
+        /// </summary>
+        /// <param name="Cells">Ribbon cells in drive order.</param>
+        /// <param name="Grid">Field grid.</param>
+        /// <returns>Footprints in drive order.</returns>
+        private static List<FlowStation> BladeStations
+            (
+            List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Cells,
+            Grid Grid
+            )
+        {
+            // One cell of travel is a new step. Averaging several steps
+            // together is what pulled the line inside a staircase.
+            Double StepM = Grid.GridSizeM * 0.85;
+            // Wider than the blade, narrower than the next leg of a turn.
+            Double SideM = Grid.GridSizeM * FLOW_STATION_SIDE_GRIDS;
+            List<FlowStation> Stations = new List<FlowStation>();
+            Int32 StartIndex = 0;
+            (Double X, Double Y) Origin = (0.0, 0.0);
+            (Double X, Double Y) Forward = RibbonForward(Cells, Grid);
+            Double SumX = 0.0;
+            Double SumY = 0.0;
+            Int32 Count = 0;
+            for (Int32 Index = 0; Index < Cells.Count; Index += 1)
+            {
+                (Double X, Double Y) Point = Grid.CellCenterXy(
+                    Cells[Index].Cell.Bx,
+                    Cells[Index].Cell.By);
+                if (Count > 0)
+                {
+                    Double Along = ((Point.X - Origin.X) * Forward.X)
+                        + ((Point.Y - Origin.Y) * Forward.Y);
+                    // Perpendicular to the heading. The other edge of the
+                    // blade stays inside SideM. A turn does not, and the
+                    // opening heading must not keep averaging that leg
+                    // into one footprint.
+                    Double Across = Math.Abs(
+                        ((Point.X - Origin.X) * Forward.Y)
+                        - ((Point.Y - Origin.Y) * Forward.X));
+                    if ((Along > StepM) || (Across > SideM))
+                    {
+                        Stations.Add(new FlowStation
+                        {
+                            X = SumX / Count,
+                            Y = SumY / Count,
+                            FirstCell = StartIndex,
+                            LastCell = Index,
+                        });
+                        // The next step faces from this station toward the cell
+                        // that just left it, so a curve is not stuck on the
+                        // opening heading.
+                        Double StepX = Point.X - Origin.X;
+                        Double StepY = Point.Y - Origin.Y;
+                        Double StepLen = Math.Sqrt((StepX * StepX) + (StepY * StepY));
+                        if (StepLen > Constants.STRICT_NUMERIC_COMPARISON_TOLERANCE)
+                        {
+                            Forward = (StepX / StepLen, StepY / StepLen);
+                        }
+                        StartIndex = Index;
+                        Origin = Point;
+                        SumX = 0.0;
+                        SumY = 0.0;
+                        Count = 0;
+                    }
+                }
+                else
+                {
+                    Origin = Point;
+                }
+                SumX += Point.X;
+                SumY += Point.Y;
+                Count += 1;
+            }
+            if (Count > 0)
+            {
+                Stations.Add(new FlowStation
+                {
+                    X = SumX / Count,
+                    Y = SumY / Count,
+                    FirstCell = StartIndex,
+                    LastCell = Cells.Count,
+                });
+            }
+            return Stations;
+        }
+
+        /// <summary>
+        /// Opening direction of a ribbon. A cell a couple of widths ahead is
+        /// down the cut. The first neighbour can be the other edge of the blade.
+        /// </summary>
+        /// <param name="Cells">Ribbon cells in drive order.</param>
+        /// <param name="Grid">Field grid.</param>
+        /// <returns>A unit step along the cut.</returns>
+        private static (Double X, Double Y) RibbonForward
+            (
+            List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Cells,
+            Grid Grid
+            )
+        {
+            if (Cells.Count < 2) return (1.0, 0.0);
+            (Double X, Double Y) Start = Grid.CellCenterXy(Cells[0].Cell.Bx, Cells[0].Cell.By);
+            Double ReachM = Grid.GridSizeM * 2.0;
+            for (Int32 Index = 1; Index < Cells.Count; Index += 1)
+            {
+                (Double X, Double Y) Point = Grid.CellCenterXy(
+                    Cells[Index].Cell.Bx,
+                    Cells[Index].Cell.By);
+                Double Dx = Point.X - Start.X;
+                Double Dy = Point.Y - Start.Y;
+                Double Length = Math.Sqrt((Dx * Dx) + (Dy * Dy));
+                if (Length > ReachM)
+                {
+                    return (Dx / Length, Dy / Length);
+                }
+            }
+            (Double X, Double Y) End = Grid.CellCenterXy(
+                Cells[Cells.Count - 1].Cell.Bx,
+                Cells[Cells.Count - 1].Cell.By);
+            Double EndX = End.X - Start.X;
+            Double EndY = End.Y - Start.Y;
+            Double EndLen = Math.Sqrt((EndX * EndX) + (EndY * EndY));
+            if (EndLen <= Constants.STRICT_NUMERIC_COMPARISON_TOLERANCE)
+            {
+                return (1.0, 0.0);
+            }
+            return (EndX / EndLen, EndY / EndLen);
+        }
+
+        /// <summary>
+        /// Drops a footprint that steps sideways and comes straight back.
+        /// That step is the blade edge, and drawing it makes the cut zigzag.
+        /// A staircase corner turns through a right angle and is kept, so the
+        /// line still visits that cell.
+        /// </summary>
+        /// <param name="Stations">Footprints in drive order.</param>
+        /// <param name="GridM">Grid size in metres.</param>
+        /// <returns>Spine with the sideways steps removed.</returns>
+        private static List<FlowStation> DropSideSteps
+            (
+            List<FlowStation> Stations,
+            Double GridM
+            )
+        {
+            if (Stations.Count < 3) return Stations;
+            Double MaxLegM = GridM * 2.5;
+            List<FlowStation> Kept = new List<FlowStation> { Stations[0] };
+            for (Int32 Index = 1; Index < Stations.Count - 1; Index += 1)
+            {
+                FlowStation Prev = Kept[Kept.Count - 1];
+                Double InX = Stations[Index].X - Prev.X;
+                Double InY = Stations[Index].Y - Prev.Y;
+                Double OutX = Stations[Index + 1].X - Stations[Index].X;
+                Double OutY = Stations[Index + 1].Y - Stations[Index].Y;
+                Double InM = Math.Sqrt((InX * InX) + (InY * InY));
+                Double OutM = Math.Sqrt((OutX * OutX) + (OutY * OutY));
+                Double Turn = StationTurnDeg(Prev, Stations[Index], Stations[Index + 1]);
+                // A turn past a right angle on a short leg came back on itself.
+                // That is the blade edge. The staircase of the cut is a
+                // right angle or less, and the line has to follow it.
+                if ((Turn > 90.0) && (InM < MaxLegM) && (OutM < MaxLegM))
+                {
+                    continue;
+                }
+                Kept.Add(Stations[Index]);
+            }
+            Kept.Add(Stations[Stations.Count - 1]);
+            return Kept;
+        }
+
+        /// <summary>Length of a station range, measured along the footprints.</summary>
+        /// <param name="Stations">Footprints in drive order.</param>
+        /// <param name="From">First station index.</param>
+        /// <param name="To">Last station index.</param>
+        /// <returns>Metres along the spine.</returns>
+        private static Double StationLengthM
+            (
+            List<FlowStation> Stations,
+            Int32 From,
+            Int32 To
+            )
+        {
+            Double Length = 0.0;
+            for (Int32 Index = From + 1; Index <= To; Index += 1)
+            {
+                Double Dx = Stations[Index].X - Stations[Index - 1].X;
+                Double Dy = Stations[Index].Y - Stations[Index - 1].Y;
+                Length += Math.Sqrt((Dx * Dx) + (Dy * Dy));
+            }
+            return Length;
+        }
+
+        /// <summary>Turn at the middle point, in degrees. Zero is straight.</summary>
+        /// <param name="Before">Previous point.</param>
+        /// <param name="At">Corner point.</param>
+        /// <param name="After">Next point.</param>
+        /// <returns>Heading change in degrees, from 0 to 180.</returns>
+        private static Double PointTurnDeg
+            (
+            (Double X, Double Y) Before,
+            (Double X, Double Y) At,
+            (Double X, Double Y) After
+            )
+        {
+            Double Ux = At.X - Before.X;
+            Double Uy = At.Y - Before.Y;
+            Double Vx = After.X - At.X;
+            Double Vy = After.Y - At.Y;
+            Double ULen = Math.Sqrt((Ux * Ux) + (Uy * Uy));
+            Double VLen = Math.Sqrt((Vx * Vx) + (Vy * Vy));
+            if ((ULen <= Constants.STRICT_NUMERIC_COMPARISON_TOLERANCE)
+                || (VLen <= Constants.STRICT_NUMERIC_COMPARISON_TOLERANCE))
+            {
+                return 0.0;
+            }
+            Double Dot = ((Ux * Vx) + (Uy * Vy)) / (ULen * VLen);
+            Dot = Math.Max(-1.0, Math.Min(1.0, Dot));
+            return Math.Acos(Dot) * Constants.DEGREES_PER_HALF_TURN / Math.PI;
+        }
+
+        /// <summary>Turn at the middle station, in degrees. Zero is straight.</summary>
+        /// <param name="Before">Previous footprint.</param>
+        /// <param name="At">Corner footprint.</param>
+        /// <param name="After">Next footprint.</param>
+        /// <returns>Heading change in degrees, from 0 to 180.</returns>
+        private static Double StationTurnDeg
+            (
+            FlowStation Before,
+            FlowStation At,
+            FlowStation After
+            )
+        {
+            Double Ux = At.X - Before.X;
+            Double Uy = At.Y - Before.Y;
+            Double Vx = After.X - At.X;
+            Double Vy = After.Y - At.Y;
+            Double ULen = Math.Sqrt((Ux * Ux) + (Uy * Uy));
+            Double VLen = Math.Sqrt((Vx * Vx) + (Vy * Vy));
+            if ((ULen <= Constants.STRICT_NUMERIC_COMPARISON_TOLERANCE)
+                || (VLen <= Constants.STRICT_NUMERIC_COMPARISON_TOLERANCE))
+            {
+                return 0.0;
+            }
+            Double Dot = ((Ux * Vx) + (Uy * Vy)) / (ULen * VLen);
+            Dot = Math.Max(-1.0, Math.Min(1.0, Dot));
+            return Math.Acos(Dot) * Constants.DEGREES_PER_HALF_TURN / Math.PI;
+        }
+
+        /// <summary>
+        /// Pulls each interior point toward the chord of its neighbors.
+        /// Endpoints stay so the haul still leaves the end of the strip.
+        /// Two passes take the point off a short kink. The cells still
+        /// hold the line.
+        /// </summary>
+        /// <param name="Points">Spine in drive order.</param>
+        /// <param name="Edge">Outer boundary. A point on it is left where it is.</param>
+        /// <returns>A less kinked copy. Fewer than three points are unchanged.</returns>
+        private static List<(Double X, Double Y)> SmoothFlow
+            (
+            List<(Double X, Double Y)> Points,
+            FieldEdgePolicy? Edge = null
+            )
+        {
+            if ((Points.Count < 3) || (FLOW_SMOOTH_PASSES <= 0))
+            {
+                return new List<(Double X, Double Y)>(Points);
+            }
+            List<(Double X, Double Y)> Current = Points;
+            for (Int32 Pass = 0; Pass < FLOW_SMOOTH_PASSES; Pass += 1)
+            {
+                List<(Double X, Double Y)> Next =
+                    new List<(Double X, Double Y)> { Current[0] };
+                for (Int32 Index = 1; Index < Current.Count - 1; Index += 1)
+                {
+                    // The headland corner stays sharp. Smoothing it pulls the blade inside the field.
+                    if ((Edge != null) && Edge.IsFieldPointNearOuterEdge(Current[Index].X, Current[Index].Y))
+                    {
+                        Next.Add(Current[Index]);
+                        continue;
+                    }
+                    Next.Add((
+                        (Current[Index - 1].X * 0.25)
+                            + (Current[Index].X * 0.5)
+                            + (Current[Index + 1].X * 0.25),
+                        (Current[Index - 1].Y * 0.25)
+                            + (Current[Index].Y * 0.5)
+                            + (Current[Index + 1].Y * 0.25)));
+                }
+                Next.Add(Current[Current.Count - 1]);
+                Current = Next;
+            }
+            return Current;
+        }
+
+        /// <summary>
+        /// Opens a corner sharper than <see cref="FLOW_FILLET_DEG"/> into an arc.
+        /// The field edge may use the turning circle. A bend inside a cut or a
+        /// fill uses a wider radius, because a tight turn is slow. An arc that
+        /// would have to be tighter than that is left on the cells.
+        /// </summary>
+        /// <param name="Points">Spine in drive order.</param>
+        /// <param name="RadiusM">Turning-circle radius in metres. The edge may use this.</param>
+        /// <param name="SpacingM">Distance between arc samples.</param>
+        /// <param name="Edge">Outer boundary. A corner on it may use <paramref name="RadiusM"/>.</param>
+        /// <returns>Spine whose bends are no tighter than the radius allowed there.</returns>
+        private static List<(Double X, Double Y)> FilletFlow
+            (
+            List<(Double X, Double Y)> Points,
+            Double RadiusM,
+            Double SpacingM,
+            FieldEdgePolicy? Edge = null
+            )
+        {
+            if (Points.Count < 3) return new List<(Double X, Double Y)>(Points);
+            // A short kink, including the jog where a cut starts, is opened.
+            // Bends gentler than this stay on the cells.
+            Double MinTurn = FLOW_FILLET_DEG * Math.PI / Constants.DEGREES_PER_HALF_TURN;
+            List<(Double X, Double Y)> Output =
+                new List<(Double X, Double Y)> { Points[0] };
+            for (Int32 Index = 1; Index < Points.Count - 1; Index += 1)
+            {
+                (Double X, Double Y) A = Points[Index - 1];
+                (Double X, Double Y) B = Points[Index];
+                (Double X, Double Y) C = Points[Index + 1];
+                Double Ux = B.X - A.X;
+                Double Uy = B.Y - A.Y;
+                Double Vx = C.X - B.X;
+                Double Vy = C.Y - B.Y;
+                Double ULen = Math.Sqrt((Ux * Ux) + (Uy * Uy));
+                Double VLen = Math.Sqrt((Vx * Vx) + (Vy * Vy));
+                if ((ULen < (SpacingM * 0.25)) || (VLen < (SpacingM * 0.25)))
+                {
+                    Output.Add(B);
+                    continue;
+                }
+                Ux /= ULen;
+                Uy /= ULen;
+                Vx /= VLen;
+                Vy /= VLen;
+                Double Dot = Math.Max(-1.0, Math.Min(1.0, (Ux * Vx) + (Uy * Vy)));
+                Double Turn = Math.Acos(Dot);
+                if (Turn < MinTurn)
+                {
+                    Output.Add(B);
+                    continue;
+                }
+                Double TanHalf = Math.Tan(Turn * 0.5);
+                if (TanHalf <= Constants.STRICT_NUMERIC_COMPARISON_TOLERANCE)
+                {
+                    Output.Add(B);
+                    continue;
+                }
+                // The edge may use the turning circle. Inside the work the
+                // bend is wider, because a tight turn is slow.
+                Boolean OnEdge = (Edge != null) && Edge.IsFieldPointNearOuterEdge(B.X, B.Y);
+                Double Allowed = OnEdge
+                    ? RadiusM
+                    : RadiusM * Constants.INTERIOR_BLADE_TURN_SCALE;
+                Double Tangent = Allowed * TanHalf;
+                Double MaxTangent = 0.45 * Math.Min(ULen, VLen);
+                if (Tangent > MaxTangent)
+                {
+                    // The allowed radius does not fit on these legs. A shorter
+                    // arc would be tighter than the pan may turn here.
+                    Output.Add(B);
+                    continue;
+                }
+                Double UsedRadius = Allowed;
+                // A corner with no leg left is already a point. Skip it.
+                if (Tangent < 0.3)
+                {
+                    Output.Add(B);
+                    continue;
+                }
+                (Double X, Double Y) T1 = (B.X - (Ux * Tangent), B.Y - (Uy * Tangent));
+                (Double X, Double Y) T2 = (B.X + (Vx * Tangent), B.Y + (Vy * Tangent));
+                // Left of the incoming step is the center of a left turn.
+                Double Cross = (Ux * Vy) - (Uy * Vx);
+                Double Side = Cross >= 0.0 ? 1.0 : -1.0;
+                Double Nx = -Uy * Side;
+                Double Ny = Ux * Side;
+                (Double X, Double Y) Center = (T1.X + (Nx * UsedRadius), T1.Y + (Ny * UsedRadius));
+                Double StartAng = Math.Atan2(T1.Y - Center.Y, T1.X - Center.X);
+                // The arc sweep is the heading change. Unwrapping the end
+                // angle can take the long way around the circle.
+                Double Sweep = Side * Turn;
+                // Each sample turns by less than the cap. A 60 degree sample
+                // is the sharpest bend the radius check still has to reject.
+                Double MaxStep = (FLOW_MAX_TURN_DEG - 0.5) * Math.PI / Constants.DEGREES_PER_HALF_TURN;
+                Int32 Steps = Math.Max(
+                    2,
+                    (Int32)Math.Ceiling(Math.Abs(Sweep) / MaxStep));
+                Output.Add(T1);
+                for (Int32 Step = 1; Step < Steps; Step += 1)
+                {
+                    Double Ang = StartAng + (Sweep * Step / Steps);
+                    Output.Add((
+                        Center.X + (Math.Cos(Ang) * UsedRadius),
+                        Center.Y + (Math.Sin(Ang) * UsedRadius)));
+                }
+                Output.Add(T2);
+            }
+            Output.Add(Points[Points.Count - 1]);
+            return Output;
+        }
+
+        /// <summary>Spaces a path so a curve is drawn as small steps, not one chord.</summary>
+        /// <param name="Points">Path in drive order.</param>
+        /// <param name="SpacingM">Distance between kept points.</param>
+        /// <returns>Resampled path. The ends are kept.</returns>
+        private static List<(Double X, Double Y)> ResampleFlow
+            (
+            List<(Double X, Double Y)> Points,
+            Double SpacingM
+            )
+        {
+            if (Points.Count < 2) return new List<(Double X, Double Y)>(Points);
+            List<(Double X, Double Y)> Output =
+                new List<(Double X, Double Y)> { Points[0] };
+            Double Acc = 0.0;
+            (Double X, Double Y) Previous = Points[0];
+            for (Int32 Index = 1; Index < Points.Count; Index += 1)
+            {
+                (Double X, Double Y) Point = Points[Index];
+                Double Dx = Point.X - Previous.X;
+                Double Dy = Point.Y - Previous.Y;
+                Double Length = Math.Sqrt((Dx * Dx) + (Dy * Dy));
+                if (Length <= Constants.STRICT_NUMERIC_COMPARISON_TOLERANCE)
+                {
+                    continue;
+                }
+                Acc += Length;
+                // Keep a point once the step is long enough to see the bend.
+                // Also keep it when skipping it would leave a corner sharper
+                // than 60 degrees. The fillet samples are often shorter than
+                // the spacing, and dropping them restores the kink.
+                Boolean KeepsTheCorner = (Index == (Points.Count - 1));
+                if (!KeepsTheCorner && (Index + 1 < Points.Count))
+                {
+                    (Double X, Double Y) Held = Output[Output.Count - 1];
+                    (Double X, Double Y) Next = Points[Index + 1];
+                    // This sample is itself a corner the cap does not allow.
+                    Double AtPoint = PointTurnDeg(Held, Point, Next);
+                    Double Skip = 0.0;
+                    if (Output.Count >= 2)
+                    {
+                        // Jumping past this sample would sharpen the corner already kept.
+                        (Double X, Double Y) Incoming = Output[Output.Count - 2];
+                        Skip = PointTurnDeg(Incoming, Held, Next);
+                    }
+                    if ((Skip > (FLOW_MAX_TURN_DEG - 0.5))
+                        || (AtPoint > (FLOW_MAX_TURN_DEG - 0.5)))
+                    {
+                        KeepsTheCorner = true;
+                    }
+                }
+                if ((Acc >= SpacingM) || KeepsTheCorner)
+                {
+                    Output.Add(Point);
+                    Acc = 0.0;
+                }
+                Previous = Point;
+            }
+            (Double X, Double Y) Last = Points[Points.Count - 1];
+            (Double X, Double Y) Kept = Output[Output.Count - 1];
+            Double EndX = Last.X - Kept.X;
+            Double EndY = Last.Y - Kept.Y;
+            if (((EndX * EndX) + (EndY * EndY))
+                > Constants.STRICT_NUMERIC_COMPARISON_TOLERANCE)
+            {
+                Output.Add(Last);
+            }
+            return Output;
         }
 
         /// <summary>
@@ -1257,7 +2234,13 @@ namespace HaulBuilder
                 new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>(Input.Cells);
             Cells.Reverse();
             Double HeadingDeg = (Input.HeadingDeg + Constants.DEGREES_PER_HALF_TURN) % Constants.DEGREES_PER_TURN;
-            return new Run(Cells, Input.EndXy, Input.StartXy, HeadingDeg, Input.MaximumLateralErrorM);
+            return new Run(
+                Cells,
+                Input.EndXy,
+                Input.StartXy,
+                HeadingDeg,
+                Input.MaximumLateralErrorM,
+                Input.ReversedDrivePoints());
         }
 
         /// <summary>

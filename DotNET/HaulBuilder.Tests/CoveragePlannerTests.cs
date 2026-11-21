@@ -559,6 +559,128 @@ namespace HaulBuilder.Tests
         }
 
         /// <summary>
+        /// A cut that starts west and then turns south keeps the centerline on
+        /// both legs. The opening heading used to average the south leg into
+        /// one footprint, so the line left the cells and stopped short.
+        /// </summary>
+        [Fact]
+        public void PlanRibbon_FollowsACutThatTurnsOffItsOpeningHeading
+            (
+            )
+        {
+            Grid Grid = MakeOpenGrid();
+            // The same shape as found-order route 1036: a short west leg,
+            // then a south leg with the blade's side cells mixed in.
+            (Int32 Bx, Int32 By)[] Shape =
+            {
+                (24, 30), (23, 30), (22, 30), (21, 30),
+                (20, 31), (20, 30), (20, 29), (19, 29),
+                (20, 28), (19, 28), (19, 27), (19, 26),
+                (19, 25), (18, 25), (19, 24), (18, 24),
+                (19, 23), (18, 23), (19, 22), (18, 22),
+                (18, 21), (18, 20), (18, 19), (18, 18),
+                (18, 17), (18, 16), (18, 15), (18, 14),
+            };
+            List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Cells =
+                new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>();
+            foreach ((Int32 Bx, Int32 By) Cell in Shape)
+            {
+                Cells.Add((Cell, 0.061));
+            }
+            CoveragePlanner.PlanResult Plan = CoveragePlanner.PlanRibbon(Cells, Grid, BLADE_WIDTH_M);
+            Assert.NotEmpty(Plan.Runs);
+            List<(Double X, Double Y)> Drive = new List<(Double X, Double Y)>();
+            foreach (CoveragePlanner.Run Run in Plan.Runs)
+            {
+                Assert.NotNull(Run.DrivePoints);
+                Drive.AddRange(Run.DrivePoints!);
+            }
+            Assert.True(Drive.Count >= 2);
+            (Double X, Double Y) FirstStep = (
+                Drive[1].X - Drive[0].X,
+                Drive[1].Y - Drive[0].Y);
+            Double FirstHeading = (Math.Atan2(FirstStep.X, FirstStep.Y) * 180.0 / Math.PI + 360.0) % 360.0;
+            // The pan starts along the west leg. The turn comes after that.
+            Double FromWest = Math.Abs(FirstHeading - 270.0);
+            if (FromWest > 180.0) FromWest = 360.0 - FromWest;
+            Assert.True(FromWest < 20.0, FirstHeading.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            (Double X, Double Y) LastCell = Grid.CellCenterXy(18, 14);
+            (Double X, Double Y) LastPoint = Drive[Drive.Count - 1];
+            Double EndGap = Math.Sqrt(
+                ((LastPoint.X - LastCell.X) * (LastPoint.X - LastCell.X))
+                + ((LastPoint.Y - LastCell.Y) * (LastPoint.Y - LastCell.Y)));
+            // The line reaches the mouth. Stopping on the opening heading left a gap of many cells.
+            Assert.True(EndGap < Grid.GridSizeM, EndGap.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            foreach ((Double X, Double Y) Point in Drive)
+            {
+                Double Nearest = Double.MaxValue;
+                foreach ((Int32 Bx, Int32 By) Cell in Shape)
+                {
+                    (Double X, Double Y) Center = Grid.CellCenterXy(Cell.Bx, Cell.By);
+                    Double Dist = Math.Sqrt(
+                        ((Point.X - Center.X) * (Point.X - Center.X))
+                        + ((Point.Y - Center.Y) * (Point.Y - Center.Y)));
+                    if (Dist < Nearest) Nearest = Dist;
+                }
+                // A fillet may leave the corner by about one cell. It may not chord off the strip.
+                Assert.True(Nearest < (Grid.GridSizeM * 1.6), Nearest.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            }
+        }
+
+        /// <summary>
+        /// A strip two cells wider than the center still draws one line down
+        /// the middle. Treating every side cell as a new step scribbles across the blade.
+        /// </summary>
+        [Fact]
+        public void PlanRibbon_KeepsABladeWideStripOnOneSpine
+            (
+            )
+        {
+            Grid Grid = MakeOpenGrid();
+            List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Cells =
+                new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>();
+            for (Int32 Row = 30; Row >= 18; Row -= 1)
+            {
+                for (Int32 Column = 15; Column <= 17; Column += 1)
+                {
+                    Cells.Add(((Column, Row), 0.061));
+                }
+            }
+            CoveragePlanner.PlanResult Plan = CoveragePlanner.PlanRibbon(Cells, Grid, BLADE_WIDTH_M);
+            List<(Double X, Double Y)> Drive = new List<(Double X, Double Y)>();
+            foreach (CoveragePlanner.Run Run in Plan.Runs)
+            {
+                Assert.NotNull(Run.DrivePoints);
+                Drive.AddRange(Run.DrivePoints!);
+            }
+            Assert.True(Drive.Count >= 2);
+            Int32 OffSouth = 0;
+            for (Int32 Index = 1; Index < Drive.Count; Index += 1)
+            {
+                Double Dx = Drive[Index].X - Drive[Index - 1].X;
+                Double Dy = Drive[Index].Y - Drive[Index - 1].Y;
+                if (((Dx * Dx) + (Dy * Dy)) < 1e-6) continue;
+                Double Heading = (Math.Atan2(Dx, Dy) * 180.0 / Math.PI + 360.0) % 360.0;
+                Double FromSouth = Math.Abs(Heading - 180.0);
+                if (FromSouth > 180.0) FromSouth = 360.0 - FromSouth;
+                // The first step can cross the blade. Later steps go down the strip.
+                if ((Index > 1) && (FromSouth > 35.0)) OffSouth += 1;
+            }
+            Assert.Equal(0, OffSouth);
+            (Double X, Double Y) Start = Grid.CellCenterXy(15, 30);
+            (Double X, Double Y) End = Grid.CellCenterXy(17, 18);
+            Double Straight = Math.Abs(Start.Y - End.Y);
+            Double Path = 0.0;
+            for (Int32 Index = 1; Index < Drive.Count; Index += 1)
+            {
+                Double Dx = Drive[Index].X - Drive[Index - 1].X;
+                Double Dy = Drive[Index].Y - Drive[Index - 1].Y;
+                Path += Math.Sqrt((Dx * Dx) + (Dy * Dy));
+            }
+            Assert.True(Path < (Straight * 1.6), Path.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        }
+
+        /// <summary>
         /// Creates a deterministic cell pattern whose supplied ordering repeatedly reverses direction.
         /// </summary>
         private static List<((Int32 Bx, Int32 By) Cell, Double DepthM)> MakeKnottedCells
@@ -627,6 +749,41 @@ namespace HaulBuilder.Tests
                         Cell.Cell.Bx,
                         Cell.Cell.By,
                         Cell.DepthM))))));
+        }
+
+        /// <summary>
+        /// Creates a large all-valid grid so a turned ribbon sits away from the field edge.
+        /// </summary>
+        private static Grid MakeOpenGrid
+            (
+            )
+        {
+            const Int32 SIZE = 40;
+            Boolean[,] Valid = new Boolean[SIZE, SIZE];
+            for (Int32 By = 0; By < SIZE; By += 1)
+            {
+                for (Int32 Bx = 0; Bx < SIZE; Bx += 1)
+                {
+                    Valid[By, Bx] = true;
+                }
+            }
+            return new Grid(
+                1.0,
+                SIZE,
+                SIZE,
+                500000.0,
+                4000000.0,
+                12,
+                true,
+                0.0,
+                0.0,
+                new Double[SIZE, SIZE],
+                new Double[SIZE, SIZE],
+                Valid,
+                1.3,
+                1.2,
+                61.0,
+                new List<List<(Double X, Double Y)>>());
         }
 
         /// <summary>

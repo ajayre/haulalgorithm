@@ -201,9 +201,17 @@ namespace HaulBuilder
         public const Double DEFAULT_GRADE_SPEED_MPH = 8.0;
 
         /// <summary>
-        /// Default tractor+scraper turning circle diameter in feet (radius 25 ft).
+        /// Default tractor+scraper turning circle diameter in feet (radius 22.5 ft).
+        /// This is the tightest blade-down turn, and only on the field edge.
         /// </summary>
-        public const Double DEFAULT_TURNING_CIRCLE_FT = 50.0;
+        public const Double DEFAULT_TURNING_CIRCLE_FT = 45.0;
+
+        /// <summary>
+        /// Blade-down bends inside a cut or a fill use this many turning circles.
+        /// The field edge may use one. A tight turn is slow, so the pan
+        /// keeps the wider radius while it is cutting or filling inside the field.
+        /// </summary>
+        public const Double INTERIOR_BLADE_TURN_SCALE = 2.0;
 
         /// <summary>
         /// Default tractor+scraper overall length in feet (lineup before/after CUT/FILL).
