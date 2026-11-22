@@ -249,6 +249,8 @@ namespace HaulBuilder.Tests
             };
             Options.Optimization.EnableCycleChainOptimization = false;
             Options.Optimization.PairRefinementRounds = 0;
+            // The recorded route-2888 sheet used a 20-load mean. Keep that window here.
+            Options.Optimization.ClusterModeAverageWindow = 20;
             HaulBuilderResult Result = new HaulBuilderEngine().Run(Options);
             Assert.NotNull(Result.PassResult);
             Assert.NotNull(Result.Grid);

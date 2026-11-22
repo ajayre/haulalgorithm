@@ -79,11 +79,11 @@ namespace HaulBuilder
 
         /// <summary>
         /// Gets or sets how many recent haul loads form the mean that moves
-        /// hauling to clusters. The default is the last 20 loads. Clusters
+        /// hauling to clusters. The default is the last 3 loads. Clusters
         /// starts on the first found-order haul where that mean is below
         /// <see cref="ClusterModeLoadFraction"/> of bowl capacity.
         /// </summary>
-        public Int32 ClusterModeAverageWindow { get; set; } = 20;
+        public Int32 ClusterModeAverageWindow { get; set; } = 3;
 
         /// <summary>
         /// Gets or sets the share of bowl capacity below which the trailing

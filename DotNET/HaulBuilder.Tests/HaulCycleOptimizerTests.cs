@@ -33,7 +33,7 @@ namespace HaulBuilder.Tests
             Assert.False(Options.Optimization.EnableCycleChainOptimization);
             Assert.True(Options.Optimization.EnableEarlyFullStripBanding);
             Assert.True(Options.Optimization.OptimizeRouteOrderByDistance);
-            Assert.Equal(20, Options.Optimization.ClusterModeAverageWindow);
+            Assert.Equal(3, Options.Optimization.ClusterModeAverageWindow);
             Assert.Equal(0.5, Options.Optimization.ClusterModeLoadFraction);
             Assert.Equal(1, Options.Optimization.CycleChainRounds);
             Assert.Equal(1,
