@@ -356,11 +356,13 @@ namespace HaulBuilder
                 FillXy.Add(Grid.CellCenterXy(Cell.Cell.Bx, Cell.Cell.By));
             }
 
-            Double CutLen = SegmentLength(CutXy);
-            Double FillLen = SegmentLength(FillXy);
+            Double CutLen = Pass.StripLoadDistanceM ?? SegmentLength(CutXy);
+            Double FillLen = Pass.StripSpreadDistanceM ?? SegmentLength(FillXy);
             Double HaulLen = Pass.HaulDistanceM;
-            Double TLoad = (LoadV > 0.0) ? (CutLen / LoadV) : 0.0;
-            Double TDump = (DumpV > 0.0) ? (FillLen / DumpV) : 0.0;
+            // A strip trip already counted its lane turns. The polyline would miss them
+            // and would also charge the jump between lanes as if the blade stayed down.
+            Double TLoad = Pass.StripLoadTimeS ?? ((LoadV > 0.0) ? (CutLen / LoadV) : 0.0);
+            Double TDump = Pass.StripSpreadTimeS ?? ((DumpV > 0.0) ? (FillLen / DumpV) : 0.0);
             Double THaul = MoveTime(HaulLen, HaulVMax, AccelS, DecelS);
             Double TReturn = MoveTime(CutLen, ReturnVMax, AccelS, DecelS)
                 + MoveTime(HaulLen, ReturnVMax, AccelS, DecelS)

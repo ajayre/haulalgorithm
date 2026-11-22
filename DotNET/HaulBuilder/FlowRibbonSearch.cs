@@ -188,6 +188,10 @@ namespace HaulBuilder
         /// Share of bowl capacity. Hauling hands off to clusters when the
         /// trailing mean falls below this share. Zero never leaves hauling.
         /// </param>
+        /// <param name="StopAfterClusterTrips">
+        /// When greater than zero, cluster hauling stops after this many trips
+        /// and thin-cut does not start. Zero runs the normal cluster loop.
+        /// </param>
         /// <returns>The ribbon loads and the ledger check.</returns>
         static public HaulOptimizationResult Optimize
             (
@@ -205,7 +209,8 @@ namespace HaulBuilder
             Double BladeWidthM = 0.0,
             Double TurningCircleFt = Constants.DEFAULT_TURNING_CIRCLE_FT,
             Int32 ClusterModeAverageWindow = 0,
-            Double ClusterModeLoadFraction = 0.0
+            Double ClusterModeLoadFraction = 0.0,
+            Int32 StopAfterClusterTrips = 0
             )
         {
             if (Grid == null) throw new ArgumentNullException(nameof(Grid));
@@ -517,14 +522,31 @@ namespace HaulBuilder
             // work enters thin-cut. A 500-trip repeat halts instead.
             if (State == HaulSearchState.Clusters)
             {
+                (Double[,] ArrowX, Double[,] ArrowY) Arrows = SmoothedArrows(Flow, Grid);
                 ClusterHaulStop Stop = ClusterHauling.Run(
-                    Grid, Ledger, CutLeft, FillLeft, MaximumLoadBcy, Passes);
-                State = ClusterHauling.Handoff(Stop);
+                    Grid,
+                    Ledger,
+                    CutLeft,
+                    FillLeft,
+                    MaximumLoadBcy,
+                    Passes,
+                    Arrows.ArrowX,
+                    Arrows.ArrowY,
+                    StopAfterClusterTrips);
+                // The first routes are already on the list. Thin-cut stays closed.
+                if (Stop.Reason == ClusterHauling.PICTURE_STOP)
+                {
+                    State = HaulSearchState.Clusters;
+                }
+                else
+                {
+                    State = ClusterHauling.Handoff(Stop);
+                }
                 if (State == HaulSearchState.ThinCut)
                 {
                     ThinCutStartsAtRoute = Passes.Count + 1;
                     ThinCutStop ThinStop = ThinCut.Run(
-                        Grid, Ledger, CutLeft, FillLeft, MaximumLoadBcy, Passes);
+                        Grid, Ledger, CutLeft, FillLeft, MaximumLoadBcy, Passes, Arrows.ArrowX, Arrows.ArrowY);
                     State = ThinCut.Handoff(ThinStop);
                     if (State == HaulSearchState.Correcting)
                     {

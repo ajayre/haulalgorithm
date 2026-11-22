@@ -96,6 +96,53 @@ namespace HaulBuilder
         public Double? FillHeadingDeg { get; set; }
 
         /// <summary>
+        /// Gets or sets the cut seconds from the strip builder, including turns.
+        /// Null uses the cell-polyline time.
+        /// </summary>
+        public Double? StripLoadTimeS { get; set; }
+
+        /// <summary>
+        /// Gets or sets the spread seconds from the strip builder, including turns.
+        /// Null uses the cell-polyline time.
+        /// </summary>
+        public Double? StripSpreadTimeS { get; set; }
+
+        /// <summary>
+        /// Gets or sets the blade-down cut distance in metres.
+        /// Null uses the cell polyline, which counts the jump from one lane to the next.
+        /// </summary>
+        public Double? StripLoadDistanceM { get; set; }
+
+        /// <summary>
+        /// Gets or sets the blade-down fill distance in metres.
+        /// </summary>
+        public Double? StripSpreadDistanceM { get; set; }
+
+        /// <summary>Gets or sets how many cut passes the area estimate used. Zero on a flow haul.</summary>
+        public Int32 AreaCutPasses { get; set; }
+
+        /// <summary>Gets or sets how many fill passes the area estimate used. Zero on a flow haul.</summary>
+        public Int32 AreaFillPasses { get; set; }
+
+        /// <summary>Gets or sets the haul heading east. Zero on a flow haul.</summary>
+        public Double AreaDirX { get; set; }
+
+        /// <summary>Gets or sets the haul heading north. Zero on a flow haul.</summary>
+        public Double AreaDirY { get; set; }
+
+        /// <summary>Gets or sets the cut piece outline. Null on a flow haul.</summary>
+        public List<(Int32 Bx, Int32 By)>? AreaCutOutline { get; set; }
+
+        /// <summary>Gets or sets the fill piece outline. Null on a flow haul.</summary>
+        public List<(Int32 Bx, Int32 By)>? AreaFillOutline { get; set; }
+
+        /// <summary>Gets or sets the cut piece id. Empty on a flow haul.</summary>
+        public String AreaCutPiece { get; set; } = "";
+
+        /// <summary>Gets or sets the fill piece ids. Empty on a flow haul.</summary>
+        public String AreaFillPiece { get; set; } = "";
+
+        /// <summary>
         /// Gets or sets whether the cell lists are already a blade-wide flow ribbon.
         /// Guidance then follows that order instead of retileing the cells into lanes.
         /// </summary>

@@ -67,13 +67,19 @@ namespace HaulBuilder
         /// <param name="CellSizeM">Cell edge in metres. Centroid indexes are multiplied by this.</param>
         /// <param name="BowlBcy">Pan capacity in bank cubic yards.</param>
         /// <param name="PanWidthM">Pan width in metres.</param>
+        /// <param name="Ground">
+        /// Residual the pieces were cut from. When set, each cut piece is charged the
+        /// strip-lane seconds for one full bowl, once per piece. Null keeps the old
+        /// length estimate so a caller with no grid still plans.
+        /// </param>
         /// <returns>The flows, the trips, and the diagnostic totals.</returns>
         public static ResidualPairPlan Plan
             (
             IReadOnlyList<ResidualPairPiece> Pieces,
             Double CellSizeM,
             Double BowlBcy,
-            Double PanWidthM
+            Double PanWidthM,
+            StripLanes.Ground? Ground = null
             )
         {
             if (Pieces == null) throw new ArgumentNullException(nameof(Pieces));
@@ -570,6 +576,31 @@ namespace HaulBuilder
                 return new Rgba32(204, 128, 0, 255);
             }
             return new Rgba32(255, 214, 130, 255);
+        }
+
+        /// <summary>
+        /// Seconds to cut one bowl from a piece. A ground uses the straight bowl run.
+        /// Without one, the cost stays the long-axis estimate. The fill is not known yet, so there is no loop.
+        /// </summary>
+        /// <param name="Piece">The cut piece.</param>
+        /// <param name="PanWidthM">Pan width in metres.</param>
+        /// <param name="BowlBcy">Pan capacity in bank cubic yards.</param>
+        /// <param name="Ground">Residual for the strip lanes. Null uses the length estimate.</param>
+        /// <returns>Seconds for one bowl.</returns>
+        private static Double CutSeconds
+            (
+            ResidualPairPiece Piece,
+            Double PanWidthM,
+            Double BowlBcy,
+            StripLanes.Ground? Ground
+            )
+        {
+            if ((Ground != null) && (Piece.Cells.Count > 0))
+            {
+                Double StripS = StripLanes.FullBowlCutSeconds(Ground, Piece, BowlBcy);
+                if (StripS > 0.0) return StripS;
+            }
+            return WorkSeconds(Piece, PanWidthM, BowlBcy, V_LOAD_MS, false);
         }
 
         /// <summary>

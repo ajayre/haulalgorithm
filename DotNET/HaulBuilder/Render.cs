@@ -601,6 +601,893 @@ namespace HaulBuilder
 
 
         /// <summary>
+        /// Close-up of one area trip. The piece is outlined, the heading is an arrow,
+        /// and each chosen band has one centreline over the cells that moved.
+        /// </summary>
+        /// <param name="Grid">Field grid.</param>
+        /// <param name="WorkCells">Cells this trip moves. Null paints none.</param>
+        /// <param name="Outline">Every cell of the piece. Null uses the work cells.</param>
+        /// <param name="DirX">Haul heading east.</param>
+        /// <param name="DirY">Haul heading north.</param>
+        /// <param name="PixelsPerBin">Pixels per grid cell.</param>
+        /// <param name="PadCells">Cells of ground kept around the piece.</param>
+        /// <param name="Fill">True paints the work blue. False paints it red.</param>
+        /// <param name="Surface">Ground still left, in metres. Null uses the grid delta.</param>
+        /// <returns>PNG bytes.</returns>
+        static public Byte[] RenderAreaPassPng
+            (
+            Grid Grid,
+            IReadOnlyList<((Int32 Bx, Int32 By) Cell, Double DepthM)>? WorkCells,
+            IReadOnlyList<(Int32 Bx, Int32 By)>? Outline,
+            Double DirX,
+            Double DirY,
+            Int32 PixelsPerBin,
+            Int32 PadCells,
+            Boolean Fill,
+            Double[,]? Surface
+            )
+        {
+            if (Grid == null) throw new ArgumentNullException(nameof(Grid));
+            Int32 Ppb = Math.Max(1, PixelsPerBin);
+            using Image<Rgba32> Base = DiffToImageDigitize(Surface ?? Grid.Delta(), Grid.Valid, Ppb);
+            DimTowardsWhite(Base, 0.45);
+            Rgba32 Work = Fill
+                ? new Rgba32(0, 90, 220, Constants.MAX_COLOR_CHANNEL)
+                : new Rgba32(200, 0, 0, Constants.MAX_COLOR_CHANNEL);
+            PaintWorkCells(Base, Grid, WorkCells, Ppb, Work);
+            List<(Int32 Bx, Int32 By)> Piece = new List<(Int32 Bx, Int32 By)>();
+            if ((Outline != null) && (Outline.Count > 0))
+            {
+                Piece.AddRange(Outline);
+            }
+            else if (WorkCells != null)
+            {
+                foreach (((Int32 Bx, Int32 By) Cell, Double DepthM) Lift in WorkCells)
+                {
+                    Piece.Add(Lift.Cell);
+                }
+            }
+            DrawPieceOutline(Base, Grid, Piece, Ppb);
+            List<(Int32 Row, Int32 Col)> Rows = new List<(Int32 Row, Int32 Col)>(Piece.Count);
+            foreach ((Int32 Bx, Int32 By) Cell in Piece)
+            {
+                Rows.Add((Cell.By, Cell.Bx));
+            }
+            Rgba32 Line = new Rgba32(Constants.MAX_COLOR_CHANNEL, Constants.MAX_COLOR_CHANNEL, Constants.MAX_COLOR_CHANNEL, Constants.MAX_COLOR_CHANNEL);
+            Rgba32 Arrow = new Rgba32(0, 0, 0, Constants.MAX_COLOR_CHANNEL);
+            List<Double> Xs = new List<Double>();
+            List<Double> Ys = new List<Double>();
+            foreach (StripLanes.PassLine Pass in StripLanes.BandLines(Grid, WorkCells, DirX, DirY))
+            {
+                (Double Px1, Double Py1) = WorldToPixel(Grid, Pass.X1, Pass.Y1, Ppb);
+                (Double Px2, Double Py2) = WorldToPixel(Grid, Pass.X2, Pass.Y2, Ppb);
+                DrawLine(Base, Px1, Py1, Px2, Py2, Line, 4);
+                Xs.Add(Px1);
+                Ys.Add(Py1);
+                Xs.Add(Px2);
+                Ys.Add(Py2);
+            }
+            StripLanes.PassLine Heading = StripLanes.HeadingArrow(Grid, Rows, DirX, DirY);
+            if (Heading.HasLength)
+            {
+                (Double Ax1, Double Ay1) = WorldToPixel(Grid, Heading.X1, Heading.Y1, Ppb);
+                (Double Ax2, Double Ay2) = WorldToPixel(Grid, Heading.X2, Heading.Y2, Ppb);
+                DrawLine(Base, Ax1, Ay1, Ax2, Ay2, Arrow, 5);
+                DrawArrowHead(Base, Ax1, Ay1, Ax2, Ay2, Arrow);
+                Xs.Add(Ax1);
+                Ys.Add(Ay1);
+                Xs.Add(Ax2);
+                Ys.Add(Ay2);
+            }
+            IncludeWorkCells(Xs, Ys, Grid, WorkCells, Ppb);
+            foreach ((Int32 Bx, Int32 By) Cell in Piece)
+            {
+                if ((Cell.Bx < 0) || (Cell.By < 0) || (Cell.Bx >= Grid.Width) || (Cell.By >= Grid.Height))
+                {
+                    continue;
+                }
+                (Double X, Double Y) Center = Grid.CellCenterXy(Cell.Bx, Cell.By);
+                (Double Px, Double Py) = WorldToPixel(Grid, Center.X, Center.Y, Ppb);
+                Xs.Add(Px);
+                Ys.Add(Py);
+            }
+            if ((Xs.Count == 0) || (Ys.Count == 0))
+            {
+                return ToPng(Base);
+            }
+            Int32 Pad = PadCells * Ppb;
+            Int32 X0 = Math.Max(0, TruncTowardZero(Xs.Min() - Pad));
+            Int32 Y0 = Math.Max(0, TruncTowardZero(Ys.Min() - Pad));
+            Int32 X1 = Math.Min(Base.Width, TruncTowardZero(Xs.Max() + Pad));
+            Int32 Y1 = Math.Min(Base.Height, TruncTowardZero(Ys.Max() + Pad));
+            if ((X1 <= X0) || (Y1 <= Y0))
+            {
+                return ToPng(Base);
+            }
+            Base.Mutate(Context => Context.Crop(new Rectangle(X0, Y0, X1 - X0, Y1 - Y0)));
+            return ToPng(Base);
+        }
+
+        /// <summary>
+        /// Strokes the outer edges of a piece. An edge with a neighbour in the piece is left open.
+        /// </summary>
+        /// <param name="Image">Image being drawn.</param>
+        /// <param name="Grid">Field grid.</param>
+        /// <param name="Cells">The piece.</param>
+        /// <param name="Ppb">Pixels per grid cell.</param>
+        private static void DrawPieceOutline
+            (
+            Image<Rgba32> Image,
+            Grid Grid,
+            IReadOnlyList<(Int32 Bx, Int32 By)> Cells,
+            Int32 Ppb
+            )
+        {
+            HashSet<(Int32 Bx, Int32 By)> Inside = new HashSet<(Int32 Bx, Int32 By)>();
+            foreach ((Int32 Bx, Int32 By) Cell in Cells)
+            {
+                Inside.Add(Cell);
+            }
+            Rgba32 Ink = new Rgba32(20, 20, 20, Constants.MAX_COLOR_CHANNEL);
+            foreach ((Int32 Bx, Int32 By) Cell in Cells)
+            {
+                if ((Cell.Bx < 0) || (Cell.By < 0) || (Cell.Bx >= Grid.Width) || (Cell.By >= Grid.Height))
+                {
+                    continue;
+                }
+                Int32 Left = Cell.Bx * Ppb;
+                Int32 Top = (Grid.Height - 1 - Cell.By) * Ppb;
+                Int32 Right = Left + Ppb;
+                Int32 Bottom = Top + Ppb;
+                if (!Inside.Contains((Cell.Bx, Cell.By + 1)))
+                {
+                    DrawLine(Image, Left, Top, Right, Top, Ink, 3);
+                }
+                if (!Inside.Contains((Cell.Bx, Cell.By - 1)))
+                {
+                    DrawLine(Image, Left, Bottom, Right, Bottom, Ink, 3);
+                }
+                if (!Inside.Contains((Cell.Bx - 1, Cell.By)))
+                {
+                    DrawLine(Image, Left, Top, Left, Bottom, Ink, 3);
+                }
+                if (!Inside.Contains((Cell.Bx + 1, Cell.By)))
+                {
+                    DrawLine(Image, Right, Top, Right, Bottom, Ink, 3);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Two short strokes at the downstream end, so the heading reads as an arrow.
+        /// </summary>
+        /// <param name="Image">Image being drawn.</param>
+        /// <param name="X1">Upstream pixel easting.</param>
+        /// <param name="Y1">Upstream pixel northing.</param>
+        /// <param name="X2">Downstream pixel easting.</param>
+        /// <param name="Y2">Downstream pixel northing.</param>
+        /// <param name="Color">Arrow colour.</param>
+        private static void DrawArrowHead
+            (
+            Image<Rgba32> Image,
+            Double X1,
+            Double Y1,
+            Double X2,
+            Double Y2,
+            Rgba32 Color
+            )
+        {
+            Double Dx = X2 - X1;
+            Double Dy = Y2 - Y1;
+            Double Length = Math.Sqrt((Dx * Dx) + (Dy * Dy));
+            if (Length < 1.0)
+            {
+                return;
+            }
+            Double Ux = Dx / Length;
+            Double Uy = Dy / Length;
+            Double Head = Math.Min(28.0, Length * 0.25);
+            Double Wing = Head * 0.55;
+            Double BackX = X2 - (Ux * Head);
+            Double BackY = Y2 - (Uy * Head);
+            DrawLine(Image, X2, Y2, BackX - (Uy * Wing), BackY + (Ux * Wing), Color, 4);
+            DrawLine(Image, X2, Y2, BackX + (Uy * Wing), BackY - (Ux * Wing), Color, 4);
+        }
+
+        /// <summary>
+        /// Close-up of one cut or one fill, with the blade width and the turns between lanes.
+        /// Each straight run is a band one blade wide. The orange path is the turn into the next run.
+        /// Numbers are the drive order. The green dot is the start and the orange dot is the finish.
+        /// </summary>
+        /// <param name="Grid">Field grid.</param>
+        /// <param name="Points">Guidance for this side. A MOVE breaks one lane from the next.</param>
+        /// <param name="Action">CUT or FILL. The other actions are the turns.</param>
+        /// <param name="BladeWidthM">Blade width in metres. The band is this wide.</param>
+        /// <param name="TurnRadiusM">How far the turn rolls past a lane end before it can change direction.</param>
+        /// <param name="PixelsPerBin">Pixels per grid cell.</param>
+        /// <param name="PadCells">Cells of ground kept around the work and the turns.</param>
+        /// <param name="CutCells">Cut cells. Null on a fill sheet.</param>
+        /// <param name="FillCells">Fill cells. Null on a cut sheet.</param>
+        /// <param name="ArrowX">Smoothed flow east. Null skips the arrows.</param>
+        /// <param name="ArrowY">Smoothed flow north.</param>
+        /// <param name="Surface">Ground still left, in metres. Null uses the grid delta.</param>
+        /// <returns>PNG bytes.</returns>
+        static public Byte[] RenderLaneDrivePng
+            (
+            Grid Grid,
+            IReadOnlyList<GuidancePoint> Points,
+            String Action,
+            Double BladeWidthM,
+            Double TurnRadiusM,
+            Int32 PixelsPerBin,
+            Int32 PadCells,
+            IReadOnlyList<((Int32 Bx, Int32 By) Cell, Double DepthM)>? CutCells,
+            IReadOnlyList<((Int32 Bx, Int32 By) Cell, Double DepthM)>? FillCells,
+            Double[,]? ArrowX,
+            Double[,]? ArrowY,
+            Double[,]? Surface
+            )
+        {
+            if (Grid == null) throw new ArgumentNullException(nameof(Grid));
+            if (Points == null) throw new ArgumentNullException(nameof(Points));
+            Int32 Ppb = Math.Max(1, PixelsPerBin);
+            using Image<Rgba32> Base = DiffToImageDigitize(Surface ?? Grid.Delta(), Grid.Valid, Ppb);
+            DimTowardsWhite(Base, 0.45);
+            PaintWorkCells(Base, Grid, CutCells, Ppb, new Rgba32(200, 0, 0, Constants.MAX_COLOR_CHANNEL));
+            PaintWorkCells(Base, Grid, FillCells, Ppb, new Rgba32(0, 90, 220, Constants.MAX_COLOR_CHANNEL));
+            if ((ArrowX != null) && (ArrowY != null))
+            {
+                (Int32 X0, Int32 Y0, Int32 X1, Int32 Y1) Window = ArrowWindow(Grid, Points, CutCells, FillCells, PadCells);
+                DrawSmoothedArrows(Base, Grid, ArrowX, ArrowY, Ppb, 1, Window);
+            }
+
+            // The band is the steel. A centerline alone does not show how wide the cut is.
+            Int32 BladePx = Math.Max(3, (Int32)Math.Round((BladeWidthM / Grid.GridSizeM) * Ppb, MidpointRounding.AwayFromZero));
+            List<List<GuidancePoint>> Lanes = LaneRuns(Points, Action);
+            List<(Double X, Double Y)> TurnWorld = new List<(Double X, Double Y)>();
+            Rgba32 Band = new Rgba32(Constants.MAX_COLOR_CHANNEL, Constants.MAX_COLOR_CHANNEL, Constants.MAX_COLOR_CHANNEL, 150);
+            Rgba32 Edge = new Rgba32(20, 20, 20, Constants.MAX_COLOR_CHANNEL);
+            Rgba32 Turn = new Rgba32(210, 90, 0, Constants.MAX_COLOR_CHANNEL);
+            (Double X, Double Y) Centroid = LaneCentroid(Lanes);
+            for (Int32 Index = 0; Index < Lanes.Count; Index += 1)
+            {
+                DrawBladeBand(Base, Grid, Lanes[Index], Ppb, BladePx, Band, Edge);
+            }
+            for (Int32 Index = 0; Index < Lanes.Count; Index += 1)
+            {
+                DrawLaneArrow(Base, Grid, Lanes[Index], Ppb, BladeWidthM);
+                if (Index + 1 >= Lanes.Count) continue;
+                // A short headland return. An 8 m loop on a lane only a few metres long covers the cut.
+                List<(Double X, Double Y)> Path = TurnPath(
+                    Lanes, Index, BladeWidthM, TurnRadiusM);
+                TurnWorld.AddRange(Path);
+                DrawWorldPolyline(Base, Grid, Path, Ppb, Turn, Math.Max(3, BladePx / 10));
+                DrawOneArrow(Base, Grid, Path, Ppb, BladeWidthM * 0.7);
+            }
+            for (Int32 Index = 0; Index < Lanes.Count; Index += 1)
+            {
+                DrawLaneNumber(Base, Grid, Lanes[Index], Ppb, BladePx, Index + 1, Centroid);
+            }
+            if (Lanes.Count > 0)
+            {
+                GuidancePoint First = Lanes[0][0];
+                GuidancePoint Last = Lanes[Lanes.Count - 1][Lanes[Lanes.Count - 1].Count - 1];
+                Int32 Marker = Math.Max(8, BladePx / 5);
+                DotGuidancePoint(Base, Grid, First, Ppb, new Rgba32(0, 170, 0, Constants.MAX_COLOR_CHANNEL), Marker);
+                DotGuidancePoint(Base, Grid, Last, Ppb, new Rgba32(Constants.MAX_COLOR_CHANNEL, 120, 0, Constants.MAX_COLOR_CHANNEL), Marker);
+            }
+
+            List<Double> Xs = new List<Double>();
+            List<Double> Ys = new List<Double>();
+            for (Int32 Iter = 0; Iter < Points.Count; Iter += 1)
+            {
+                (Double Px, Double Py) = WorldToPixel(Grid, Points[Iter].X, Points[Iter].Y, Ppb);
+                Xs.Add(Px);
+                Ys.Add(Py);
+            }
+            foreach ((Double X, Double Y) Bend in TurnWorld)
+            {
+                (Double Px, Double Py) = WorldToPixel(Grid, Bend.X, Bend.Y, Ppb);
+                Xs.Add(Px);
+                Ys.Add(Py);
+            }
+            IncludeWorkCells(Xs, Ys, Grid, CutCells, Ppb);
+            IncludeWorkCells(Xs, Ys, Grid, FillCells, Ppb);
+            if (Xs.Count == 0)
+            {
+                return ToPng(Base);
+            }
+            Int32 Pad = PadCells * Ppb;
+            Int32 CropX0 = Math.Max(0, TruncTowardZero(Xs.Min() - Pad));
+            Int32 CropY0 = Math.Max(0, TruncTowardZero(Ys.Min() - Pad));
+            Int32 CropX1 = Math.Min(Base.Width, TruncTowardZero(Xs.Max() + Pad));
+            Int32 CropY1 = Math.Min(Base.Height, TruncTowardZero(Ys.Max() + Pad));
+            if ((CropX1 <= CropX0) || (CropY1 <= CropY0))
+            {
+                return ToPng(Base);
+            }
+            Base.Mutate(Context => Context.Crop(new Rectangle(CropX0, CropY0, CropX1 - CropX0, CropY1 - CropY0)));
+            return ToPng(Base);
+        }
+
+        /// <summary>
+        /// Straight blade-down runs. A MOVE, or any other action, ends the run.
+        /// </summary>
+        /// <param name="Points">Guidance in drive order.</param>
+        /// <param name="Action">CUT or FILL.</param>
+        /// <returns>One list per lane. A one-cell lane is a single point.</returns>
+        private static List<List<GuidancePoint>> LaneRuns
+            (
+            IReadOnlyList<GuidancePoint> Points,
+            String Action
+            )
+        {
+            List<List<GuidancePoint>> Lanes = new List<List<GuidancePoint>>();
+            List<GuidancePoint> Run = new List<GuidancePoint>();
+            for (Int32 Index = 0; Index < Points.Count; Index += 1)
+            {
+                if (Points[Index].Action != Action)
+                {
+                    if (Run.Count > 0)
+                    {
+                        Lanes.Add(Run);
+                        Run = new List<GuidancePoint>();
+                    }
+                    continue;
+                }
+                Run.Add(Points[Index]);
+            }
+            if (Run.Count > 0)
+            {
+                Lanes.Add(Run);
+            }
+            return Lanes;
+        }
+
+        /// <summary>
+        /// Mean of the lane points. Turns bulge away from this so they stay off the cut.
+        /// </summary>
+        /// <param name="Lanes">The runs.</param>
+        /// <returns>World position. The origin when there are no points.</returns>
+        private static (Double X, Double Y) LaneCentroid
+            (
+            List<List<GuidancePoint>> Lanes
+            )
+        {
+            Double X = 0.0;
+            Double Y = 0.0;
+            Int32 Count = 0;
+            foreach (List<GuidancePoint> Lane in Lanes)
+            {
+                foreach (GuidancePoint Point in Lane)
+                {
+                    X += Point.X;
+                    Y += Point.Y;
+                    Count += 1;
+                }
+            }
+            if (Count == 0) return (0.0, 0.0);
+            return (X / Count, Y / Count);
+        }
+
+        /// <summary>
+        /// Paints one lane as a band the width of the blade, with a dark edge on each side.
+        /// </summary>
+        /// <param name="Image">Image being drawn.</param>
+        /// <param name="Grid">Field grid.</param>
+        /// <param name="Lane">Cells of one straight run, in drive order.</param>
+        /// <param name="Ppb">Pixels per cell.</param>
+        /// <param name="BladePx">Blade width in pixels.</param>
+        /// <param name="Band">See-through fill of the swath.</param>
+        /// <param name="Edge">The two sides of the blade.</param>
+        private static void DrawBladeBand
+            (
+            Image<Rgba32> Image,
+            Grid Grid,
+            List<GuidancePoint> Lane,
+            Int32 Ppb,
+            Int32 BladePx,
+            Rgba32 Band,
+            Rgba32 Edge
+            )
+        {
+            if (Lane.Count == 0) return;
+            (Double X, Double Y) Start = WorldToPixel(Grid, Lane[0].X, Lane[0].Y, Ppb);
+            GuidancePoint EndPoint = Lane[Lane.Count - 1];
+            (Double X, Double Y) End = WorldToPixel(Grid, EndPoint.X, EndPoint.Y, Ppb);
+            Double Dx = End.X - Start.X;
+            Double Dy = End.Y - Start.Y;
+            Double Length = Math.Sqrt((Dx * Dx) + (Dy * Dy));
+            // A one-cell lane is a disk the width of the blade. It still has a directionless cut.
+            if (Length < 1.0)
+            {
+                BlendDisk(Image, Start.X, Start.Y, BladePx / 2.0, Band);
+                DrawCircle(Image, Start.X, Start.Y, Math.Max(2, BladePx / 2), Band, Edge);
+                return;
+            }
+            Double Ux = Dx / Length;
+            Double Uy = Dy / Length;
+            Double Px = -Uy;
+            Double Py = Ux;
+            Double Half = BladePx / 2.0;
+            // Step across the band. The red or blue cell stays visible through the white.
+            for (Double Along = -Half; Along <= (Length + Half); Along += 1.0)
+            {
+                for (Double Across = -Half; Across <= Half; Across += 1.0)
+                {
+                    BlendPlot(
+                        Image,
+                        (Int32)Math.Round(Start.X + (Ux * Along) + (Px * Across)),
+                        (Int32)Math.Round(Start.Y + (Uy * Along) + (Py * Across)),
+                        Band);
+                }
+            }
+            DrawLine(
+                Image,
+                Start.X + (Px * Half),
+                Start.Y + (Py * Half),
+                End.X + (Px * Half),
+                End.Y + (Py * Half),
+                Edge,
+                3);
+            DrawLine(
+                Image,
+                Start.X - (Px * Half),
+                Start.Y - (Py * Half),
+                End.X - (Px * Half),
+                End.Y - (Py * Half),
+                Edge,
+                3);
+        }
+
+        /// <summary>
+        /// One arrow on the lane, pointing the way the blade travels.
+        /// </summary>
+        /// <param name="Image">Image being drawn.</param>
+        /// <param name="Grid">Field grid.</param>
+        /// <param name="Lane">The run.</param>
+        /// <param name="Ppb">Pixels per cell.</param>
+        /// <param name="BladeM">Blade width. The arrow is about that long.</param>
+        private static void DrawLaneArrow
+            (
+            Image<Rgba32> Image,
+            Grid Grid,
+            List<GuidancePoint> Lane,
+            Int32 Ppb,
+            Double BladeM
+            )
+        {
+            if (Lane.Count < 2) return;
+            GuidancePoint A = Lane[0];
+            GuidancePoint B = Lane[Lane.Count - 1];
+            (Double X, Double Y) Dir = Travel(Lane);
+            Double Run = Distance((A.X, A.Y), (B.X, B.Y));
+            // Sit the arrow in the middle of a long lane, and near the end of a short one.
+            Double Reach = Math.Min(Run * 0.7, Math.Max(BladeM * 0.8, Run * 0.45));
+            (Double X, Double Y) Tip = (A.X + (Dir.X * Reach), A.Y + (Dir.Y * Reach));
+            (Double X, Double Y) Tail = (A.X + (Dir.X * Reach * 0.35), A.Y + (Dir.Y * Reach * 0.35));
+            DrawOneArrow(Image, Grid, new[] { Tail, Tip }, Ppb, BladeM * 0.55);
+        }
+
+        /// <summary>
+        /// The path from the end of one lane to the start of the next.
+        /// Same-direction lanes return through the headland, each turn a little further out.
+        /// A U-turn is a short hook just past the two ends.
+        /// </summary>
+        /// <param name="Lanes">Every run, so the return can stay outside them.</param>
+        /// <param name="Index">The lane just finished.</param>
+        /// <param name="BladeM">Blade width. The headland offset steps by a fraction of this.</param>
+        /// <param name="RadiusM">Not used to size the picture. The machine's radius is larger than these lanes.</param>
+        /// <returns>World points of the turn.</returns>
+        private static List<(Double X, Double Y)> TurnPath
+            (
+            List<List<GuidancePoint>> Lanes,
+            Int32 Index,
+            Double BladeM,
+            Double RadiusM
+            )
+        {
+            List<GuidancePoint> Done = Lanes[Index];
+            List<GuidancePoint> Next = Lanes[Index + 1];
+            (Double X, Double Y) End = (Done[Done.Count - 1].X, Done[Done.Count - 1].Y);
+            (Double X, Double Y) Start = (Next[0].X, Next[0].Y);
+            (Double X, Double Y) Leave = Travel(Done);
+            (Double X, Double Y) Enter = Travel(Next);
+            Double Out = Math.Max(BladeM * 0.8, 1.0) + (Index * BladeM * 0.45);
+            Boolean SameWay = ((Leave.X * Enter.X) + (Leave.Y * Enter.Y)) > 0.2;
+            Double Ahead = ((Start.X - End.X) * Leave.X) + ((Start.Y - End.Y) * Leave.Y);
+            // Returning to the other end of the patch. The path stays past the ends and down one side.
+            if (SameWay && (Ahead < 0.0))
+            {
+                (Double X, Double Y) Side = HeadlandSide(Leave, End, Start, LaneBox(Lanes));
+                Double FarLeave = Extreme(Lanes, Leave);
+                Double FarSide = Extreme(Lanes, Side);
+                Double EndSide = (End.X * Side.X) + (End.Y * Side.Y);
+                Double StartLeave = (Start.X * Leave.X) + (Start.Y * Leave.Y);
+                Double StartSide = (Start.X * Side.X) + (Start.Y * Side.Y);
+                return new List<(Double X, Double Y)>
+                {
+                    End,
+                    At(Leave, Side, FarLeave + Out, EndSide),
+                    At(Leave, Side, FarLeave + Out, FarSide + Out),
+                    At(Leave, Side, StartLeave - (BladeM * 0.6), FarSide + Out),
+                    At(Leave, Side, StartLeave - (BladeM * 0.6), StartSide),
+                    Start,
+                };
+            }
+            // The next lane starts at this same end. A hook just clears the two blades.
+            _ = RadiusM;
+            (Double X, Double Y) Perp = (-Leave.Y, Leave.X);
+            Double ToStart = ((Start.X - End.X) * Perp.X) + ((Start.Y - End.Y) * Perp.Y);
+            if (ToStart < 0.0)
+            {
+                Perp = (Leave.Y, -Leave.X);
+            }
+            Double Hook = Math.Max(BladeM, Distance(End, Start) * 0.5);
+            return new List<(Double X, Double Y)>
+            {
+                End,
+                (End.X + (Leave.X * Hook * 0.6) + (Perp.X * Hook), End.Y + (Leave.Y * Hook * 0.6) + (Perp.Y * Hook)),
+                (Start.X - (Enter.X * Hook * 0.6) + (Perp.X * Hook), Start.Y - (Enter.Y * Hook * 0.6) + (Perp.Y * Hook)),
+                Start,
+            };
+        }
+
+        /// <summary>
+        /// A world point from coordinates along travel and across it.
+        /// The two axes are unit length and perpendicular.
+        /// </summary>
+        /// <param name="Leave">Travel axis.</param>
+        /// <param name="Side">Cross-track axis.</param>
+        /// <param name="Along">Coordinate on the travel axis.</param>
+        /// <param name="Across">Coordinate on the cross-track axis.</param>
+        /// <returns>The world point.</returns>
+        private static (Double X, Double Y) At
+            (
+            (Double X, Double Y) Leave,
+            (Double X, Double Y) Side,
+            Double Along,
+            Double Across
+            )
+        {
+            return ((Leave.X * Along) + (Side.X * Across), (Leave.Y * Along) + (Side.Y * Across));
+        }
+
+        /// <summary>
+        /// The furthest lane point along an axis.
+        /// </summary>
+        /// <param name="Lanes">The runs.</param>
+        /// <param name="Axis">A unit axis.</param>
+        /// <returns>The largest projection.</returns>
+        private static Double Extreme
+            (
+            List<List<GuidancePoint>> Lanes,
+            (Double X, Double Y) Axis
+            )
+        {
+            Double Far = Double.MinValue;
+            foreach (List<GuidancePoint> Lane in Lanes)
+            {
+                foreach (GuidancePoint Point in Lane)
+                {
+                    Double Projected = (Point.X * Axis.X) + (Point.Y * Axis.Y);
+                    if (Projected > Far) Far = Projected;
+                }
+            }
+            return Far;
+        }
+
+        /// <summary>
+        /// Which way is outside the patch, perpendicular to travel.
+        /// The return drops down that side instead of across the lanes.
+        /// </summary>
+        /// <param name="Leave">Direction the finished lane was driven.</param>
+        /// <param name="End">Where that lane stopped.</param>
+        /// <param name="Start">Where the next lane starts.</param>
+        /// <param name="Box">Extent of every lane.</param>
+        /// <returns>A unit step toward the outside.</returns>
+        private static (Double X, Double Y) HeadlandSide
+            (
+            (Double X, Double Y) Leave,
+            (Double X, Double Y) End,
+            (Double X, Double Y) Start,
+            (Double MinX, Double MinY, Double MaxX, Double MaxY) Box
+            )
+        {
+            (Double X, Double Y) Left = (-Leave.Y, Leave.X);
+            (Double X, Double Y) Mid = ((Box.MinX + Box.MaxX) * 0.5, (Box.MinY + Box.MaxY) * 0.5);
+            Double LeftOfCenter = ((End.X - Mid.X) * Left.X) + ((End.Y - Mid.Y) * Left.Y);
+            Double StartOfCenter = ((Start.X - Mid.X) * Left.X) + ((Start.Y - Mid.Y) * Left.Y);
+            // Prefer the side the next lane already sits on, so the drop is short.
+            if ((StartOfCenter * LeftOfCenter) < 0.0)
+            {
+                return StartOfCenter >= 0.0 ? Left : (-Left.X, -Left.Y);
+            }
+            return LeftOfCenter >= 0.0 ? Left : (-Left.X, -Left.Y);
+        }
+
+        /// <summary>
+        /// The extent of every lane, in world metres.
+        /// </summary>
+        /// <param name="Lanes">The runs.</param>
+        /// <returns>Minimum and maximum east and north.</returns>
+        private static (Double MinX, Double MinY, Double MaxX, Double MaxY) LaneBox
+            (
+            List<List<GuidancePoint>> Lanes
+            )
+        {
+            Double MinX = Double.MaxValue;
+            Double MinY = Double.MaxValue;
+            Double MaxX = Double.MinValue;
+            Double MaxY = Double.MinValue;
+            foreach (List<GuidancePoint> Lane in Lanes)
+            {
+                foreach (GuidancePoint Point in Lane)
+                {
+                    if (Point.X < MinX) MinX = Point.X;
+                    if (Point.Y < MinY) MinY = Point.Y;
+                    if (Point.X > MaxX) MaxX = Point.X;
+                    if (Point.Y > MaxY) MaxY = Point.Y;
+                }
+            }
+            return (MinX, MinY, MaxX, MaxY);
+        }
+
+        /// <summary>
+        /// One arrowhead at the end of a path.
+        /// </summary>
+        /// <param name="Image">Image being drawn.</param>
+        /// <param name="Grid">Field grid.</param>
+        /// <param name="Path">World points. The head sits on the last point.</param>
+        /// <param name="Ppb">Pixels per cell.</param>
+        /// <param name="LengthM">How long the head is, in metres.</param>
+        private static void DrawOneArrow
+            (
+            Image<Rgba32> Image,
+            Grid Grid,
+            IReadOnlyList<(Double X, Double Y)> Path,
+            Int32 Ppb,
+            Double LengthM
+            )
+        {
+            if (Path.Count < 2) return;
+            (Double X, Double Y) Tip = Path[Path.Count - 1];
+            (Double X, Double Y) From = Path[Path.Count - 2];
+            Double Dx = Tip.X - From.X;
+            Double Dy = Tip.Y - From.Y;
+            Double Length = Math.Sqrt((Dx * Dx) + (Dy * Dy));
+            if (Length < 1e-6) return;
+            (Double X, Double Y) TipPx = WorldToPixel(Grid, Tip.X, Tip.Y, Ppb);
+            Double UnitX = (Dx / Length);
+            Double UnitY = -(Dy / Length);
+            Double Head = Math.Max(10.0, (LengthM / Grid.GridSizeM) * Ppb);
+            Double Half = Head * 0.45;
+            Double BaseX = TipPx.X - (UnitX * Head);
+            Double BaseY = TipPx.Y - (UnitY * Head);
+            DrawLine(Image, TipPx.X, TipPx.Y, BaseX + (-UnitY * Half), BaseY + (UnitX * Half), new Rgba32(0, 0, 0, Constants.MAX_COLOR_CHANNEL), 4);
+            DrawLine(Image, TipPx.X, TipPx.Y, BaseX - (-UnitY * Half), BaseY - (UnitX * Half), new Rgba32(0, 0, 0, Constants.MAX_COLOR_CHANNEL), 4);
+        }
+
+        /// <summary>
+        /// Unit step from the first cell of a lane toward the last. A one-cell lane faces east.
+        /// </summary>
+        /// <param name="Lane">The run.</param>
+        /// <returns>A unit vector in world metres.</returns>
+        private static (Double X, Double Y) Travel
+            (
+            List<GuidancePoint> Lane
+            )
+        {
+            if (Lane.Count < 2) return (1.0, 0.0);
+            Double Dx = Lane[Lane.Count - 1].X - Lane[0].X;
+            Double Dy = Lane[Lane.Count - 1].Y - Lane[0].Y;
+            Double Length = Math.Sqrt((Dx * Dx) + (Dy * Dy));
+            if (Length < 1e-6) return (1.0, 0.0);
+            return (Dx / Length, Dy / Length);
+        }
+
+        /// <summary>
+        /// The lane number, sitting just outside the blade so it does not cover the cut.
+        /// </summary>
+        /// <param name="Image">Image being drawn.</param>
+        /// <param name="Grid">Field grid.</param>
+        /// <param name="Lane">The run.</param>
+        /// <param name="Ppb">Pixels per cell.</param>
+        /// <param name="BladePx">Blade width in pixels.</param>
+        /// <param name="Number">1-based drive order.</param>
+        /// <param name="Centroid">Middle of the work. The badge sits on the far side of the lane.</param>
+        private static void DrawLaneNumber
+            (
+            Image<Rgba32> Image,
+            Grid Grid,
+            List<GuidancePoint> Lane,
+            Int32 Ppb,
+            Int32 BladePx,
+            Int32 Number,
+            (Double X, Double Y) Centroid
+            )
+        {
+            // The number sits just before the blade starts, on the left of travel.
+            (Double X, Double Y) Dir = Travel(Lane);
+            (Double X, Double Y) Left = (-Dir.Y, Dir.X);
+            Double Back = Math.Max(Grid.GridSizeM * 0.85, 1.0);
+            (Double X, Double Y) Place = (
+                Lane[0].X - (Dir.X * Back) + (Left.X * Grid.GridSizeM * 0.15),
+                Lane[0].Y - (Dir.Y * Back) + (Left.Y * Grid.GridSizeM * 0.15));
+            (Double X, Double Y) At = WorldToPixel(Grid, Place.X, Place.Y, Ppb);
+            Double X = At.X;
+            Double Y = At.Y;
+            _ = Centroid;
+            _ = BladePx;
+            DrawCircle(
+                Image,
+                X,
+                Y,
+                16,
+                new Rgba32(Constants.MAX_COLOR_CHANNEL, Constants.MAX_COLOR_CHANNEL, Constants.MAX_COLOR_CHANNEL, Constants.MAX_COLOR_CHANNEL),
+                new Rgba32(0, 0, 0, Constants.MAX_COLOR_CHANNEL));
+            DrawScaledText(Image, (Int32)Math.Round(X), (Int32)Math.Round(Y), Number.ToString(CultureInfo.InvariantCulture), 3);
+        }
+
+        /// <summary>
+        /// Bitmap text drawn several pixels per glyph bit, so a lane number is readable on a close-up.
+        /// </summary>
+        /// <param name="Image">Image being drawn.</param>
+        /// <param name="CenterX">Horizontal centre.</param>
+        /// <param name="CenterY">Vertical centre.</param>
+        /// <param name="Text">Digits.</param>
+        /// <param name="Scale">Pixels per glyph bit.</param>
+        private static void DrawScaledText
+            (
+            Image<Rgba32> Image,
+            Int32 CenterX,
+            Int32 CenterY,
+            String Text,
+            Int32 Scale
+            )
+        {
+            if (String.IsNullOrWhiteSpace(Text)) return;
+            Int32 Step = 4 * Scale;
+            Int32 OriginX = CenterX - ((Text.Length * Step) / 2);
+            for (Int32 Index = 0; Index < Text.Length; Index += 1)
+            {
+                DrawScaledGlyph(
+                    Image,
+                    Text[Index],
+                    OriginX + (Index * Step),
+                    CenterY - ((5 * Scale) / 2),
+                    Scale);
+            }
+        }
+
+        /// <summary>
+        /// One digit, scaled up from the 3 by 5 glyph.
+        /// </summary>
+        /// <param name="Image">Image being drawn.</param>
+        /// <param name="Ch">The digit.</param>
+        /// <param name="X">Left of the glyph.</param>
+        /// <param name="Y">Top of the glyph.</param>
+        /// <param name="Scale">Pixels per glyph bit.</param>
+        private static void DrawScaledGlyph
+            (
+            Image<Rgba32> Image,
+            Char Ch,
+            Int32 X,
+            Int32 Y,
+            Int32 Scale
+            )
+        {
+            String[] Glyph = Ch switch
+            {
+                '0' => new[] { "111", "101", "101", "101", "111" },
+                '1' => new[] { "010", "110", "010", "010", "111" },
+                '2' => new[] { "111", "001", "111", "100", "111" },
+                '3' => new[] { "111", "001", "111", "001", "111" },
+                '4' => new[] { "101", "101", "111", "001", "001" },
+                '5' => new[] { "111", "100", "111", "001", "111" },
+                '6' => new[] { "111", "100", "111", "101", "111" },
+                '7' => new[] { "111", "001", "001", "001", "001" },
+                '8' => new[] { "111", "101", "111", "101", "111" },
+                '9' => new[] { "111", "101", "111", "001", "111" },
+                _ => Array.Empty<String>(),
+            };
+            Rgba32 Ink = new Rgba32(0, 0, 0, Constants.MAX_COLOR_CHANNEL);
+            for (Int32 Row = 0; Row < Glyph.Length; Row += 1)
+            {
+                String Line = Glyph[Row];
+                for (Int32 Col = 0; Col < Line.Length; Col += 1)
+                {
+                    if (Line[Col] != '1') continue;
+                    for (Int32 Sy = 0; Sy < Scale; Sy += 1)
+                    {
+                        for (Int32 Sx = 0; Sx < Scale; Sx += 1)
+                        {
+                            Plot(Image, X + (Col * Scale) + Sx, Y + (Row * Scale) + Sy, Ink);
+                        }
+                    }
+                }
+            }
+        }
+
+        /// <summary>
+        /// Writes a pixel over the colour already there. The work cells stay visible inside the blade band.
+        /// </summary>
+        /// <param name="Image">Image being drawn.</param>
+        /// <param name="X">Pixel column.</param>
+        /// <param name="Y">Pixel row.</param>
+        /// <param name="Color">Colour to lay on. Its alpha is the mix.</param>
+        private static void BlendPlot
+            (
+            Image<Rgba32> Image,
+            Int32 X,
+            Int32 Y,
+            Rgba32 Color
+            )
+        {
+            if ((X < 0) || (Y < 0) || (X >= Image.Width) || (Y >= Image.Height)) return;
+            Rgba32 Under = Image[X, Y];
+            Double Mix = Color.A / (Double)Constants.MAX_COLOR_CHANNEL;
+            Image[X, Y] = new Rgba32(
+                TruncByte((Under.R * (1.0 - Mix)) + (Color.R * Mix)),
+                TruncByte((Under.G * (1.0 - Mix)) + (Color.G * Mix)),
+                TruncByte((Under.B * (1.0 - Mix)) + (Color.B * Mix)),
+                Constants.MAX_COLOR_CHANNEL);
+        }
+
+        /// <summary>
+        /// A filled disk blended over the ground. Used for a one-cell lane.
+        /// </summary>
+        /// <param name="Image">Image being drawn.</param>
+        /// <param name="Cx">Centre pixel.</param>
+        /// <param name="Cy">Centre pixel.</param>
+        /// <param name="Radius">Radius in pixels.</param>
+        /// <param name="Color">Band colour.</param>
+        private static void BlendDisk
+            (
+            Image<Rgba32> Image,
+            Double Cx,
+            Double Cy,
+            Double Radius,
+            Rgba32 Color
+            )
+        {
+            Int32 MinX = (Int32)Math.Floor(Cx - Radius);
+            Int32 MaxX = (Int32)Math.Ceiling(Cx + Radius);
+            Int32 MinY = (Int32)Math.Floor(Cy - Radius);
+            Int32 MaxY = (Int32)Math.Ceiling(Cy + Radius);
+            Double Limit = Radius * Radius;
+            for (Int32 Y = MinY; Y <= MaxY; Y += 1)
+            {
+                for (Int32 X = MinX; X <= MaxX; X += 1)
+                {
+                    Double Dx = X - Cx;
+                    Double Dy = Y - Cy;
+                    if (((Dx * Dx) + (Dy * Dy)) <= Limit)
+                    {
+                        BlendPlot(Image, X, Y, Color);
+                    }
+                }
+            }
+        }
+
+        /// <summary>
+        /// Distance between two world points.
+        /// </summary>
+        /// <param name="A">First point.</param>
+        /// <param name="B">Second point.</param>
+        /// <returns>Metres.</returns>
+        private static Double Distance
+            (
+            (Double X, Double Y) A,
+            (Double X, Double Y) B
+            )
+        {
+            Double Dx = B.X - A.X;
+            Double Dy = B.Y - A.Y;
+            return Math.Sqrt((Dx * Dx) + (Dy * Dy));
+        }
+
+        /// <summary>
         /// Renders explicitly separated coverage runs for diagnostic comparison.
         /// </summary>
         /// <param name="Grid">Grid geometry and grade surface.</param>

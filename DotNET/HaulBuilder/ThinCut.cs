@@ -48,6 +48,8 @@ namespace HaulBuilder
         /// <param name="FillLeft">Remaining fill depth in metres. Each trip reduces it.</param>
         /// <param name="BowlBcy">Pan capacity in bank cubic yards.</param>
         /// <param name="Passes">Found-order routes. Thin-cut trips are appended.</param>
+        /// <param name="ArrowX">Smoothed flow east. Null leaves lanes on the axis.</param>
+        /// <param name="ArrowY">Smoothed flow north.</param>
         /// <returns>Why the loop stopped. Correcting follows when the reason is not the trip limit.</returns>
         public static ThinCutStop Run
             (
@@ -56,7 +58,9 @@ namespace HaulBuilder
             Double[,] CutLeft,
             Double[,] FillLeft,
             Double BowlBcy,
-            List<Pass> Passes
+            List<Pass> Passes,
+            Double[,]? ArrowX = null,
+            Double[,]? ArrowY = null
             )
         {
             if (Grid == null) throw new ArgumentNullException(nameof(Grid));
@@ -79,7 +83,7 @@ namespace HaulBuilder
             while (true)
             {
                 Double[,] ResidualMm = ClusterHauling.ResidualMillimetres(CutLeft, FillLeft, Grid);
-                ClusterSchedule Schedule = PlanField(ResidualMm, Grid, BowlBcy);
+                ClusterSchedule Schedule = PlanField(ResidualMm, Grid, BowlBcy, ArrowX, ArrowY);
                 Last = Schedule.Plan;
                 if (Last.Trips.Count == 0)
                 {
@@ -94,7 +98,7 @@ namespace HaulBuilder
                     PayloadSum += Last.Trips[Index].PayloadBcy;
                 }
                 ClusterHauling.ExecuteBatch(
-                    ResidualMm, Schedule, Batch, Grid, Ledger, CutLeft, FillLeft, BowlBcy, Passes);
+                    ResidualMm, Schedule, Batch, Grid, Ledger, CutLeft, FillLeft, BowlBcy, Passes, ArrowX, ArrowY);
                 TripsDone += Take;
                 // The same stuck-planner cap as cluster hauling. The batch is already done.
                 if (TripsDone >= ClusterHauling.MAX_CLUSTER_TRIPS)
@@ -152,21 +156,34 @@ namespace HaulBuilder
         /// <param name="ResidualMm">Residual in millimetres. Positive is cut.</param>
         /// <param name="Grid">Field grid.</param>
         /// <param name="BowlBcy">Pan capacity in bank cubic yards.</param>
+        /// <param name="ArrowX">Smoothed flow east.</param>
+        /// <param name="ArrowY">Smoothed flow north.</param>
         /// <returns>The schedule for this residual.</returns>
         private static ClusterSchedule PlanField
             (
             Double[,] ResidualMm,
             Grid Grid,
-            Double BowlBcy
+            Double BowlBcy,
+            Double[,]? ArrowX,
+            Double[,]? ArrowY
             )
         {
             List<ResidualPairPiece> Pieces = CutTiles(ResidualMm, Grid, BowlBcy);
             Pieces.AddRange(FillTiles(ResidualMm, Grid, BowlBcy));
+            StripLanes.Ground Ground = new StripLanes.Ground(
+                Grid,
+                ResidualMm,
+                Grid.Valid,
+                Grid.Compaction,
+                0.0,
+                ArrowX,
+                ArrowY);
             ResidualPairPlan Plan = ResidualPairing.Plan(
                 Pieces,
                 Grid.GridSizeM,
                 BowlBcy,
-                Constants.DEFAULT_BLADE_WIDTH_MM / Constants.MILLIMETERS_PER_METER);
+                Constants.DEFAULT_BLADE_WIDTH_MM / Constants.MILLIMETERS_PER_METER,
+                Ground);
             return new ClusterSchedule(Plan, Pieces);
         }
 

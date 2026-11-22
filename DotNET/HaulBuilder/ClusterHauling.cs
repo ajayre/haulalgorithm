@@ -19,6 +19,12 @@ namespace HaulBuilder
         /// <summary>Error end. The same work kept coming back. Correcting does not start.</summary>
         public const String TRIP_LIMIT = "trip limit";
 
+        /// <summary>
+        /// Early stop for a picture of the first routes. Thin-cut does not start.
+        /// The production loop does not use this reason.
+        /// </summary>
+        public const String PICTURE_STOP = "picture";
+
         /// <summary>Executed cluster trips before the search treats the planner as stuck.</summary>
         public const Int32 MAX_CLUSTER_TRIPS = 500;
 
@@ -47,6 +53,12 @@ namespace HaulBuilder
         /// <param name="FillLeft">Remaining fill depth in metres. Each trip reduces it.</param>
         /// <param name="BowlBcy">Pan capacity in bank cubic yards.</param>
         /// <param name="Passes">Found-order routes. Cluster trips are appended.</param>
+        /// <param name="ArrowX">Smoothed flow east. Null leaves lanes on the axis.</param>
+        /// <param name="ArrowY">Smoothed flow north.</param>
+        /// <param name="StopAfterTrips">
+        /// When greater than zero, the loop returns after this many trips so a picture
+        /// can be drawn. Zero runs until the field is clear or the trip limit.
+        /// </param>
         /// <returns>Why the loop stopped. Correcting follows only when the reason is no haulable work.</returns>
         public static ClusterHaulStop Run
             (
@@ -55,10 +67,13 @@ namespace HaulBuilder
             Double[,] CutLeft,
             Double[,] FillLeft,
             Double BowlBcy,
-            List<Pass> Passes
+            List<Pass> Passes,
+            Double[,]? ArrowX = null,
+            Double[,]? ArrowY = null,
+            Int32 StopAfterTrips = 0
             )
         {
-            return Run(Grid, Ledger, CutLeft, FillLeft, BowlBcy, Passes, null, null);
+            return Run(Grid, Ledger, CutLeft, FillLeft, BowlBcy, Passes, null, null, ArrowX, ArrowY, StopAfterTrips);
         }
 
         /// <summary>
@@ -96,6 +111,12 @@ namespace HaulBuilder
         /// <param name="Passes">Found-order routes.</param>
         /// <param name="Plan">Plans the current residual. Null uses clustering and pairing.</param>
         /// <param name="Execute">Drives one batch. Null builds the haul geometry.</param>
+        /// <param name="ArrowX">Smoothed flow east. Null leaves lanes on the axis.</param>
+        /// <param name="ArrowY">Smoothed flow north.</param>
+        /// <param name="StopAfterTrips">
+        /// When greater than zero, the loop returns after this many trips.
+        /// Zero runs until the field is clear or the trip limit.
+        /// </param>
         /// <returns>Why the loop stopped.</returns>
         internal static ClusterHaulStop Run
             (
@@ -106,7 +127,10 @@ namespace HaulBuilder
             Double BowlBcy,
             List<Pass> Passes,
             Func<Double[,], ClusterSchedule>? Plan,
-            Action<IReadOnlyList<ResidualPairTrip>>? Execute
+            Action<IReadOnlyList<ResidualPairTrip>>? Execute,
+            Double[,]? ArrowX = null,
+            Double[,]? ArrowY = null,
+            Int32 StopAfterTrips = 0
             )
         {
             if (Grid == null) throw new ArgumentNullException(nameof(Grid));
@@ -124,7 +148,7 @@ namespace HaulBuilder
             {
                 Double[,] ResidualMm = ResidualMillimetres(CutLeft, FillLeft, Grid);
                 ClusterSchedule Schedule = Plan == null
-                    ? PlanField(ResidualMm, Grid, BowlBcy)
+                    ? PlanField(ResidualMm, Grid, BowlBcy, ArrowX, ArrowY)
                     : Plan(ResidualMm);
                 if (Schedule == null) throw new InvalidOperationException("The cluster plan is missing.");
                 Last = Schedule.Plan;
@@ -142,13 +166,19 @@ namespace HaulBuilder
                 }
                 if (Execute == null)
                 {
-                    ExecuteBatch(ResidualMm, Schedule, Batch, Grid, Ledger, CutLeft, FillLeft, BowlBcy, Passes);
+                    ExecuteBatch(ResidualMm, Schedule, Batch, Grid, Ledger, CutLeft, FillLeft, BowlBcy, Passes, ArrowX, ArrowY);
                 }
                 else
                 {
                     Execute(Batch);
                 }
                 TripsDone += Take;
+                // A picture asks for the first routes only. The rest of the field stays put.
+                if ((StopAfterTrips > 0) && (TripsDone >= StopAfterTrips))
+                {
+                    Reason = PICTURE_STOP;
+                    break;
+                }
                 // The batch is finished before the check, so a stuck planner stops on this plan.
                 if (TripsDone >= MAX_CLUSTER_TRIPS)
                 {
@@ -173,12 +203,16 @@ namespace HaulBuilder
         /// <param name="ResidualMm">Residual in millimetres.</param>
         /// <param name="Grid">Field grid. Clustering erodes its valid mask itself.</param>
         /// <param name="BowlBcy">Pan capacity in bank cubic yards.</param>
+        /// <param name="ArrowX">Smoothed flow east.</param>
+        /// <param name="ArrowY">Smoothed flow north.</param>
         /// <returns>The schedule for this residual.</returns>
         private static ClusterSchedule PlanField
             (
             Double[,] ResidualMm,
             Grid Grid,
-            Double BowlBcy
+            Double BowlBcy,
+            Double[,]? ArrowX,
+            Double[,]? ArrowY
             )
         {
             ResidualClusterReport Clusters = ResidualClusters.Build(
@@ -188,11 +222,21 @@ namespace HaulBuilder
                 BowlBcy,
                 Grid.Compaction);
             List<ResidualPairPiece> Pieces = PiecesToTarget(Clusters, ResidualMm, Grid);
+            // The bowl seconds are computed once per cut piece. Pairing still chooses the fills.
+            StripLanes.Ground Ground = new StripLanes.Ground(
+                Grid,
+                ResidualMm,
+                Grid.Valid,
+                Grid.Compaction,
+                CUT_TO_MM,
+                ArrowX,
+                ArrowY);
             ResidualPairPlan Plan = ResidualPairing.Plan(
                 Pieces,
                 Grid.GridSizeM,
                 BowlBcy,
-                Constants.DEFAULT_BLADE_WIDTH_MM / Constants.MILLIMETERS_PER_METER);
+                Constants.DEFAULT_BLADE_WIDTH_MM / Constants.MILLIMETERS_PER_METER,
+                Ground);
             return new ClusterSchedule(Plan, Pieces);
         }
 
@@ -209,6 +253,8 @@ namespace HaulBuilder
         /// <param name="FillLeft">Remaining fill.</param>
         /// <param name="BowlBcy">Pan capacity.</param>
         /// <param name="Passes">Routes to append.</param>
+        /// <param name="ArrowX">Smoothed flow east.</param>
+        /// <param name="ArrowY">Smoothed flow north.</param>
         internal static void ExecuteBatch
             (
             Double[,] ResidualMm,
@@ -219,7 +265,9 @@ namespace HaulBuilder
             Double[,] CutLeft,
             Double[,] FillLeft,
             Double BowlBcy,
-            List<Pass> Passes
+            List<Pass> Passes,
+            Double[,]? ArrowX = null,
+            Double[,]? ArrowY = null
             )
         {
             List<ResidualHaul> Hauls = ResidualHauls.Build(
@@ -229,7 +277,10 @@ namespace HaulBuilder
                 Batch,
                 Grid,
                 Grid.Compaction,
-                CUT_TO_MM);
+                CUT_TO_MM,
+                ArrowX,
+                ArrowY,
+                BowlBcy);
             foreach (ResidualHaul Haul in Hauls)
             {
                 Pass? Trip = ToPass(Haul, Grid, Ledger, CutLeft, FillLeft, BowlBcy);
@@ -386,7 +437,8 @@ namespace HaulBuilder
         {
             Double MaxDepthM = Grid.MaxDepthMm / Constants.MILLIMETERS_PER_METER;
             List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Cuts = FitCells(Haul.CutCells, CutLeft);
-            List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Fills = FitCells(Haul.FillCells, FillLeft);
+            List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Fills = FitFill(
+                Haul.FillCells, FillLeft, CutLeft, Ledger);
             if ((Cuts.Count == 0) || (Fills.Count == 0))
             {
                 return null;
@@ -440,14 +492,45 @@ namespace HaulBuilder
                 Fills[Last] = (Fills[Last].Cell, Fills[Last].DepthM - Trim);
             }
             Commit(Cuts, CutLeft);
-            Commit(Fills, FillLeft);
-            (Double X, Double Y) CutStart = Grid.CellCenterXy(Cuts[0].Cell.Bx, Cuts[0].Cell.By);
-            (Double X, Double Y) CutEnd = Grid.CellCenterXy(Cuts[Cuts.Count - 1].Cell.Bx, Cuts[Cuts.Count - 1].Cell.By);
-            (Double X, Double Y) FillStart = Grid.CellCenterXy(Fills[0].Cell.Bx, Fills[0].Cell.By);
-            (Double X, Double Y) FillEnd = Grid.CellCenterXy(Fills[Fills.Count - 1].Cell.Bx, Fills[Fills.Count - 1].Cell.By);
+            CommitFill(Fills, FillLeft, CutLeft);
+            (Double X, Double Y) CutStart;
+            (Double X, Double Y) CutEnd;
+            (Double X, Double Y) FillStart;
+            (Double X, Double Y) FillEnd;
+            if (Haul.AreaBased)
+            {
+                // The haul runs from the cut piece's exit face to the fill piece's entry face.
+                CutStart = (Haul.CutEntryX, Haul.CutEntryY);
+                CutEnd = (Haul.CutExitX, Haul.CutExitY);
+                FillStart = (Haul.FillEntryX, Haul.FillEntryY);
+                FillEnd = (Haul.FillExitX, Haul.FillExitY);
+            }
+            else
+            {
+                CutStart = Grid.CellCenterXy(Cuts[0].Cell.Bx, Cuts[0].Cell.By);
+                CutEnd = Grid.CellCenterXy(Cuts[Cuts.Count - 1].Cell.Bx, Cuts[Cuts.Count - 1].Cell.By);
+                FillStart = Grid.CellCenterXy(Fills[0].Cell.Bx, Fills[0].Cell.By);
+                FillEnd = Grid.CellCenterXy(Fills[Fills.Count - 1].Cell.Bx, Fills[Fills.Count - 1].Cell.By);
+            }
             Pass Trip = new Pass(Cuts, Fills, CutBcy, Haul.HaulM, CutStart, CutEnd, FillStart, FillEnd);
             Trip.StackedLifts = true;
-            Trip.RibbonOrder = true;
+            // The cells are an area, not a ribbon. A ribbon mark would collapse them into one stroke.
+            Trip.RibbonOrder = false;
+            Trip.StripLoadTimeS = Haul.LoadSeconds;
+            Trip.StripSpreadTimeS = Haul.SpreadSeconds;
+            Trip.StripLoadDistanceM = Haul.LoadDistanceM;
+            Trip.StripSpreadDistanceM = Haul.SpreadDistanceM;
+            if (Haul.AreaBased)
+            {
+                Trip.AreaCutPasses = Haul.CutRuns;
+                Trip.AreaFillPasses = Haul.FillRuns;
+                Trip.AreaDirX = Haul.DirX;
+                Trip.AreaDirY = Haul.DirY;
+                Trip.AreaCutOutline = Haul.CutOutline;
+                Trip.AreaFillOutline = Haul.FillOutline;
+                Trip.AreaCutPiece = Haul.CutPieceId;
+                Trip.AreaFillPiece = Haul.FillPieceId;
+            }
             return Trip;
         }
 
@@ -525,6 +608,73 @@ namespace HaulBuilder
         }
 
         /// <summary>
+        /// Keeps fill that fits the hole, plus up to 10 mm on a cell the design left at grade.
+        /// A cell that was a cut or a fill does not take surplus. That would exceed the ledger.
+        /// </summary>
+        /// <param name="Lifts">Spread lifts from the haul, in drive order.</param>
+        /// <param name="FillLeft">Remaining hole, in metres.</param>
+        /// <param name="CutLeft">Height already recorded above target, in metres.</param>
+        /// <param name="Ledger">Original required depths. Surplus is only legal where both are zero.</param>
+        /// <returns>The lifts that fit.</returns>
+        private static List<((Int32 Bx, Int32 By) Cell, Double DepthM)> FitFill
+            (
+            IReadOnlyList<((Int32 Bx, Int32 By) Cell, Double DepthM)> Lifts,
+            Double[,] FillLeft,
+            Double[,] CutLeft,
+            HaulWorkLedger Ledger
+            )
+        {
+            List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Applied =
+                new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>();
+            Dictionary<(Int32 Bx, Int32 By), Double> Used =
+                new Dictionary<(Int32 Bx, Int32 By), Double>();
+            Double CeilingM = StripLanes.SURPLUS_MAX_MM / 1000.0;
+            if (Ledger.ToleranceM < CeilingM)
+            {
+                // The ledger only accepts finish-band fill up to the grade tolerance.
+                CeilingM = Ledger.ToleranceM;
+            }
+            if (CeilingM < 0.0)
+            {
+                CeilingM = 0.0;
+            }
+            foreach (((Int32 Bx, Int32 By) Cell, Double DepthM) Lift in Lifts)
+            {
+                if ((Lift.Cell.By < 0) || (Lift.Cell.Bx < 0)
+                    || (Lift.Cell.By >= FillLeft.GetLength(0))
+                    || (Lift.Cell.Bx >= FillLeft.GetLength(1)))
+                {
+                    continue;
+                }
+                Used.TryGetValue(Lift.Cell, out Double Already);
+                Double Extra = 0.0;
+                if ((Ledger.RequiredCutDepthM[Lift.Cell.By, Lift.Cell.Bx] <= 1e-9)
+                    && (Ledger.RequiredFillDepthM[Lift.Cell.By, Lift.Cell.Bx] <= 1e-9))
+                {
+                    Double High = CutLeft[Lift.Cell.By, Lift.Cell.Bx];
+                    if (High < 0.0)
+                    {
+                        High = 0.0;
+                    }
+                    Extra = CeilingM - High;
+                    if (Extra < 0.0)
+                    {
+                        Extra = 0.0;
+                    }
+                }
+                Double Room = FillLeft[Lift.Cell.By, Lift.Cell.Bx] - Already + Extra;
+                Double Take = Math.Min(Lift.DepthM, Math.Max(0.0, Room));
+                if (Take <= 1e-12)
+                {
+                    continue;
+                }
+                Used[Lift.Cell] = Already + Take;
+                Applied.Add((Lift.Cell, Take));
+            }
+            return Applied;
+        }
+
+        /// <summary>
         /// Removes the fitted depths from the field. Called once the trip balances.
         /// </summary>
         /// <param name="Lifts">Final lifts.</param>
@@ -540,6 +690,41 @@ namespace HaulBuilder
                 Double Next = Left[Lift.Cell.By, Lift.Cell.Bx] - Lift.DepthM;
                 // A rounding crumb must not flip a finished cell into the other sign.
                 Left[Lift.Cell.By, Lift.Cell.Bx] = Next < 0.0 ? 0.0 : Next;
+            }
+        }
+
+        /// <summary>
+        /// Takes the hole out of the fill that is left, and records surplus as height above target.
+        /// The next plan then sees the cell high and does not spread the same 10 mm again.
+        /// </summary>
+        /// <param name="Lifts">Final fill lifts.</param>
+        /// <param name="FillLeft">Remaining hole.</param>
+        /// <param name="CutLeft">Height above target. Surplus is added here.</param>
+        private static void CommitFill
+            (
+            List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Lifts,
+            Double[,] FillLeft,
+            Double[,] CutLeft
+            )
+        {
+            foreach (((Int32 Bx, Int32 By) Cell, Double DepthM) Lift in Lifts)
+            {
+                Double Hole = FillLeft[Lift.Cell.By, Lift.Cell.Bx];
+                if (Hole < 0.0)
+                {
+                    Hole = 0.0;
+                }
+                Double IntoHole = Lift.DepthM;
+                if (IntoHole > Hole)
+                {
+                    IntoHole = Hole;
+                }
+                FillLeft[Lift.Cell.By, Lift.Cell.Bx] = Hole - IntoHole;
+                Double Extra = Lift.DepthM - IntoHole;
+                if (Extra > 1e-12)
+                {
+                    CutLeft[Lift.Cell.By, Lift.Cell.Bx] += Extra;
+                }
             }
         }
 

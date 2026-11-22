@@ -18,8 +18,9 @@ namespace HaulBuilder.Tests
 
         /// <summary>
         /// A 16 by 16 sheet at 30 mm cannot seed a cut cluster. Three cells at
-        /// 300 mm are a fill cluster, so thin-cut hauls the nearest tiles and
-        /// the pocket finishes on the target.
+        /// 300 mm are a fill cluster, so thin-cut hauls the nearest tile.
+        /// Each pass spreads at most the machine depth. The tile drops out once the
+        /// hole left is under a quarter bowl, and no cell is taken below the target.
         /// </summary>
         [Fact]
         public void NearestTilesFillThePocket()
@@ -53,19 +54,33 @@ namespace HaulBuilder.Tests
             Assert.True(Stop.MeanPayloadBcy > 0.0);
             Assert.Equal(HaulSearchState.Correcting, ThinCut.Handoff(Stop));
             Assert.NotEmpty(Passes);
+            // The first trip is the near tile. Equal cells break by row, then column.
+            foreach (((Int32 Bx, Int32 By) Cell, Double DepthM) Lift in Passes[0].CutCells)
+            {
+                Assert.InRange(Lift.Cell.By, 0, 7);
+                Assert.InRange(Lift.Cell.Bx, 0, 15);
+            }
+            Assert.Equal(0.030, CutLeft[15, 0], 9);
+            // A short lane fills the near cells first. The tile drops once the hole that is left
+            // is under a quarter bowl, and no cell is taken below the target.
+            Double Area = CELL_M * CELL_M;
+            Double Bank = 0.0;
+            Int32[] PocketCols = new Int32[] { 16, 17, 18 };
+            foreach (Int32 Col in PocketCols)
+            {
+                Assert.True(FillLeft[0, Col] >= -1e-9);
+                Assert.True(FillLeft[0, Col] < 0.300);
+                Bank += FillLeft[0, Col] * Area * Grid.Compaction * ResidualClusters.M3_TO_CY;
+            }
+            Assert.True(Bank > 0.0);
+            Assert.True(Bank < (ResidualPairing.PARTIAL_BOWL_FRACTION * BOWL_BCY));
             foreach (Pass Trip in Passes)
             {
-                foreach (((Int32 Bx, Int32 By) Cell, Double DepthM) Lift in Trip.CutCells)
+                foreach (((Int32 Bx, Int32 By) Cell, Double DepthM) Lift in Trip.FillCells)
                 {
-                    // Tile T0.1 is rows 0-7 and columns 8-15. That is the tile next to the pocket.
-                    Assert.InRange(Lift.Cell.By, 0, 7);
-                    Assert.InRange(Lift.Cell.Bx, 8, 15);
+                    Assert.True(Lift.DepthM * 1000.0 <= (StripLanes.CUT_DEPTH_CAP_MM + 1e-6));
                 }
             }
-            Assert.Equal(0.030, CutLeft[0, 0], 9);
-            Assert.Equal(0.0, FillLeft[0, 16], 6);
-            Assert.Equal(0.0, FillLeft[0, 17], 6);
-            Assert.Equal(0.0, FillLeft[0, 18], 6);
         }
 
         /// <summary>
@@ -114,8 +129,7 @@ namespace HaulBuilder.Tests
 
         /// <summary>
         /// Two 4 by 6 pockets at −105 mm are not deep enough to seed a cluster.
-        /// A thin cut about 80 m away is paired with both, and both finish
-        /// inside ±30 mm.
+        /// A thin cut about 80 m away is paired with both. Both pockets finish inside 30 mm of target.
         /// </summary>
         [Fact]
         public void ShallowPocketsTakeTheDistantThinCut()
@@ -153,16 +167,26 @@ namespace HaulBuilder.Tests
             Assert.Equal(ThinCut.NO_HAULABLE_WORK, Stop.Reason);
             Assert.True(Stop.TripsDone > 0);
             Assert.NotEmpty(Passes);
+            Boolean NorthMoved = false;
+            Boolean SouthMoved = false;
             for (Int32 Row = 0; Row < 4; Row += 1)
             {
                 for (Int32 Col = 0; Col < 6; Col += 1)
                 {
-                    Assert.InRange(FillLeft[Row, Col] * 1000.0, 0.0, 30.0);
-                    Assert.InRange(FillLeft[8 + Row, Col] * 1000.0, 0.0, 30.0);
-                    Assert.True(FillLeft[Row, Col] < 0.150);
-                    Assert.True(FillLeft[8 + Row, Col] < 0.150);
+                    Assert.InRange(FillLeft[Row, Col] * 1000.0, -1e-6, 30.0);
+                    Assert.InRange(FillLeft[8 + Row, Col] * 1000.0, -1e-6, 30.0);
+                    if (FillLeft[Row, Col] < 0.105 - 1e-9)
+                    {
+                        NorthMoved = true;
+                    }
+                    if (FillLeft[8 + Row, Col] < 0.105 - 1e-9)
+                    {
+                        SouthMoved = true;
+                    }
                 }
             }
+            Assert.True(NorthMoved);
+            Assert.True(SouthMoved);
         }
 
         /// <summary>

@@ -7,14 +7,11 @@ using SixLabors.ImageSharp.PixelFormats;
 namespace HaulBuilder
 {
     /// <summary>
-    /// Builds one loaded haul for each scheduled cluster trip.
-    /// The dirt taken is the remainder nearest the other end of the haul.
-    /// One cut or spread takes at most the grid's maximum depth. A deeper
-    /// cell is worked in lifts, and a later trip can take a lift this trip left.
-    /// A cell is taken until it is within the grade tolerance. The 50 mm
-    /// cluster floor is not a stopping depth.
-    /// Strips use the coverage planner, then the cut exits toward the fill
-    /// and the fill is entered from the cut, so the loaded travel is the short one.
+    /// Builds one loaded haul for each scheduled cluster or thin-cut trip.
+    /// A trip cuts the highest cells of one piece and fills the lowest cells of the paired piece.
+    /// One cut takes at most 61 mm and stops at the target. One fill cell takes at most one spread and stops at the target.
+    /// The next piece is used only when the larger one has nothing left above target.
+    /// The haul is the straight line from the cut piece's exit face to the fill piece's entry face.
     /// </summary>
     static public class ResidualHauls
     {
@@ -34,6 +31,9 @@ namespace HaulBuilder
         /// <param name="ToleranceMm">
         /// Grade tolerance in millimetres. A hauled cell is left within this of the target.
         /// </param>
+        /// <param name="ArrowX">Smoothed flow east. The heading is the paired fill, not this arrow.</param>
+        /// <param name="ArrowY">Smoothed flow north. The heading is the paired fill, not this arrow.</param>
+        /// <param name="BowlBcy">Pan capacity. A trip payload above this is cut down to one bowl.</param>
         /// <returns>One haul per trip, in the same order.</returns>
         public static List<ResidualHaul> Build
             (
@@ -43,7 +43,10 @@ namespace HaulBuilder
             IReadOnlyList<ResidualPairTrip> Trips,
             Grid Grid,
             Double FillToBank,
-            Double ToleranceMm = Constants.DEFAULT_TOLERANCE_MM
+            Double ToleranceMm = Constants.DEFAULT_TOLERANCE_MM,
+            Double[,]? ArrowX = null,
+            Double[,]? ArrowY = null,
+            Double BowlBcy = 0.0
             )
         {
             if (ResidualMm == null) throw new ArgumentNullException(nameof(ResidualMm));
@@ -63,51 +66,104 @@ namespace HaulBuilder
             {
                 ById[Piece.Id] = Piece;
             }
-            Dictionary<String, List<Stock>> Pools = new Dictionary<String, List<Stock>>(StringComparer.Ordinal);
-            HashSet<(Int32 Bx, Int32 By)> Seen = new HashSet<(Int32 Bx, Int32 By)>();
-            foreach (ResidualPairPiece Piece in Pieces)
-            {
-                Pools[Piece.Id] = StockFor(Piece, ResidualMm, Valid, Grid, FillToBank, ToleranceMm, Seen);
-            }
+            // Later trips in this batch must see what the earlier trips took.
+            Double[,] Working = (Double[,])ResidualMm.Clone();
+            StripLanes.Ground Ground = new StripLanes.Ground(
+                Grid, Working, Valid, FillToBank, ToleranceMm, ArrowX, ArrowY);
             List<ResidualHaul> Hauls = new List<ResidualHaul>(Trips.Count);
             foreach (ResidualPairTrip Trip in Trips)
             {
                 (Double FillX, Double FillY) = Anchor(Trip.Fills, ById, Grid);
-                List<List<((Int32 Bx, Int32 By) Cell, Double DepthM)>> CutPasses = TakeLegs(
-                    Trip.Cuts, Pools, Grid, FillX, FillY);
-                List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Cuts = Flatten(CutPasses);
-                (Double CutX, Double CutY) = CellsAnchor(Cuts, Grid, Anchor(Trip.Cuts, ById, Grid));
-                List<List<((Int32 Bx, Int32 By) Cell, Double DepthM)>> FillPasses = TakeLegs(
-                    Trip.Fills, Pools, Grid, CutX, CutY);
-                List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Fills = Flatten(FillPasses);
-                (Double TakenX, Double TakenY) = CellsAnchor(Fills, Grid, (FillX, FillY));
-                List<GuidancePoint> Points = new List<GuidancePoint>();
-                // Each pass is one lift. The cut leaves toward the fill, then the fill starts there.
-                (Int32 CutRuns, Double CutWorkM) = EmitPasses(
-                    Points, CutPasses, Grid, (TakenX, TakenY), "CUT", true);
-                (Double ExitX, Double ExitY) = LastOf(Points, "CUT", (CutX, CutY));
-                (Int32 FillRuns, Double FillWorkM) = EmitPasses(
-                    Points, FillPasses, Grid, (ExitX, ExitY), "FILL", false);
-                (Double HaulStartX, Double HaulStartY) = LastOf(Points, "CUT", (ExitX, ExitY));
-                (Double HaulEndX, Double HaulEndY) = FirstOf(Points, "FILL", (ExitX, ExitY));
-                Double HaulM = Metres(HaulStartX, HaulStartY, HaulEndX, HaulEndY);
-                Double DrivenM = CutWorkM + HaulM + FillWorkM;
-                Double Loaded = 0.0;
-                foreach (((Int32 Bx, Int32 By) Cell, Double DepthM) Entry in Cuts)
+                ResidualPairPiece? Piece = LargestCut(Ground, Trip, ById);
+                List<(Int32 Row, Int32 Col)> FillPiece = PieceCells(Trip.Fills, ById);
+                StripLanes.Result? CutPlan = null;
+                StripLanes.Result? FillPlan = null;
+                if (Piece != null)
                 {
-                    Loaded += BankBcy(Entry.DepthM, Grid, 1.0);
+                    (Double CutX, Double CutY) = World(Grid, Piece.CentroidCol, Piece.CentroidRow);
+                    (Double DirX, Double DirY) = StripLanes.Heading(CutX, CutY, FillX, FillY);
+                    Double Payload = Trip.PayloadBcy;
+                    if (Payload <= 0.0)
+                    {
+                        Payload = BowlBcy;
+                    }
+                    // The schedule is one bowl. A larger ask would fail the ledger.
+                    if ((BowlBcy > 0.0) && (Payload > BowlBcy))
+                    {
+                        Payload = BowlBcy;
+                    }
+                    CutPlan = StripLanes.Cut(Ground, Piece.Cells, DirX, DirY, Payload);
+                    if ((CutPlan != null) && (CutPlan.Bcy > 1e-9))
+                    {
+                        FillPlan = StripLanes.Fill(Ground, FillPiece, DirX, DirY, CutPlan.Bcy);
+                        if (FillPlan != null)
+                        {
+                            // A fill that cannot hold the load trims the tail of the cut, then the time.
+                            StripLanes.Match(CutPlan, FillPlan, Ground);
+                        }
+                    }
                 }
-                Hauls.Add(new ResidualHaul(
+                Boolean Kept = (CutPlan != null) && (FillPlan != null) && (CutPlan.Bcy > 1e-9) && (FillPlan.Bcy > 1e-9);
+                List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Cuts = Kept
+                    ? new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>(CutPlan!.Cells)
+                    : new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>();
+                List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Fills = Kept
+                    ? new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>(FillPlan!.Cells)
+                    : new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>();
+                if (Kept)
+                {
+                    StripLanes.Apply(Ground, Cuts, 1);
+                    // Fill raises the residual. Apply's positive sign lowers it, so the fill sign is negative.
+                    StripLanes.Apply(Ground, Fills, -1);
+                }
+                List<GuidancePoint> Points = new List<GuidancePoint>();
+                Double HaulM = 0.0;
+                if (Kept)
+                {
+                    // The picture's haul arrow is the exit face to the entry face. There is no cell path.
+                    Points.Add(MakePoint(1, "CUT", CutPlan!.EndX, CutPlan.EndY));
+                    Points.Add(MakePoint(2, "FILL", FillPlan!.StartX, FillPlan.StartY));
+                    HaulM = Metres(CutPlan.EndX, CutPlan.EndY, FillPlan.StartX, FillPlan.StartY);
+                }
+                Double CutWorkM = Kept ? CutPlan!.DistanceM : 0.0;
+                Double FillWorkM = Kept ? FillPlan!.DistanceM : 0.0;
+                Double Loaded = Kept ? CutPlan!.Bcy : 0.0;
+                ResidualHaul Haul = new ResidualHaul(
                     Trip.TripNo,
                     Trip.PayloadBcy,
                     Loaded,
                     HaulM,
-                    DrivenM,
-                    CutRuns,
-                    FillRuns,
+                    CutWorkM + HaulM + FillWorkM,
+                    Kept ? CutPlan!.PassCount : 0,
+                    Kept ? FillPlan!.PassCount : 0,
                     Cuts,
                     Fills,
-                    Points));
+                    Points);
+                Haul.LoadSeconds = Kept ? CutPlan!.Seconds : 0.0;
+                Haul.SpreadSeconds = Kept ? FillPlan!.Seconds : 0.0;
+                Haul.LoadDistanceM = CutWorkM;
+                Haul.SpreadDistanceM = FillWorkM;
+                // The loop time is already inside the cut and fill seconds.
+                Haul.LoadedTurns = 0;
+                Haul.AreaBased = Kept;
+                if (Kept && (Piece != null))
+                {
+                    Haul.DirX = CutPlan!.DirX;
+                    Haul.DirY = CutPlan.DirY;
+                    Haul.CutEntryX = CutPlan.StartX;
+                    Haul.CutEntryY = CutPlan.StartY;
+                    Haul.CutExitX = CutPlan.EndX;
+                    Haul.CutExitY = CutPlan.EndY;
+                    Haul.FillEntryX = FillPlan!.StartX;
+                    Haul.FillEntryY = FillPlan.StartY;
+                    Haul.FillExitX = FillPlan.EndX;
+                    Haul.FillExitY = FillPlan.EndY;
+                    Haul.CutOutline = OutlineOf(Piece.Cells);
+                    Haul.FillOutline = OutlineOf(FillPiece);
+                    Haul.CutPieceId = Piece.Id;
+                    Haul.FillPieceId = SweepKey(Trip.Fills);
+                }
+                Hauls.Add(Haul);
             }
             return Hauls;
         }
@@ -751,6 +807,117 @@ namespace HaulBuilder
         }
 
         /// <summary>
+        /// Identity of the fill pieces on a trip. Several pieces on one trip are one fill area.
+        /// </summary>
+        /// <param name="Legs">Fill spreads on the trip.</param>
+        /// <returns>Sorted piece ids.</returns>
+        private static String SweepKey
+            (
+            IReadOnlyList<ResidualPairLeg> Legs
+            )
+        {
+            List<String> Ids = new List<String>(Legs.Count);
+            foreach (ResidualPairLeg Leg in Legs)
+            {
+                Ids.Add(Leg.Id);
+            }
+            Ids.Sort(StringComparer.Ordinal);
+            return String.Join("|", Ids);
+        }
+
+        /// <summary>
+        /// Cells of the legs' pieces, in piece order.
+        /// </summary>
+        /// <param name="Legs">Cut loads or fill spreads.</param>
+        /// <param name="ById">Pieces by id.</param>
+        /// <returns>The cells. Missing pieces are skipped.</returns>
+        private static List<(Int32 Row, Int32 Col)> PieceCells
+            (
+            IReadOnlyList<ResidualPairLeg> Legs,
+            Dictionary<String, ResidualPairPiece> ById
+            )
+        {
+            List<(Int32 Row, Int32 Col)> Cells = new List<(Int32 Row, Int32 Col)>();
+            foreach (ResidualPairLeg Leg in Legs)
+            {
+                if (!ById.TryGetValue(Leg.Id, out ResidualPairPiece? Piece) || (Piece == null))
+                {
+                    continue;
+                }
+                foreach ((Int32 Row, Int32 Col) Cell in Piece.Cells)
+                {
+                    Cells.Add(Cell);
+                }
+            }
+            return Cells;
+        }
+
+        /// <summary>
+        /// The trip's largest cut piece that still has dirt above target.
+        /// The next piece is used only when that one is exhausted, so one trip stays on one piece.
+        /// </summary>
+        /// <param name="Ground">Working residual.</param>
+        /// <param name="Trip">The scheduled trip.</param>
+        /// <param name="ById">Pieces by id.</param>
+        /// <returns>The piece, or null when no cut piece has anything above target.</returns>
+        private static ResidualPairPiece? LargestCut
+            (
+            StripLanes.Ground Ground,
+            ResidualPairTrip Trip,
+            Dictionary<String, ResidualPairPiece> ById
+            )
+        {
+            List<ResidualPairLeg> Order = new List<ResidualPairLeg>(Trip.Cuts);
+            Order.Sort(LargerLeg);
+            foreach (ResidualPairLeg Leg in Order)
+            {
+                if (!ById.TryGetValue(Leg.Id, out ResidualPairPiece? Piece) || (Piece == null))
+                {
+                    continue;
+                }
+                if (!StripLanes.HasCut(Ground, Piece.Cells))
+                {
+                    continue;
+                }
+                return Piece;
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// Puts the larger leg first so a top-up piece waits until the main piece is exhausted.
+        /// </summary>
+        /// <param name="Left">One leg.</param>
+        /// <param name="Right">The other leg.</param>
+        /// <returns>The sort order.</returns>
+        private static Int32 LargerLeg
+            (
+            ResidualPairLeg Left,
+            ResidualPairLeg Right
+            )
+        {
+            return Right.Bcy.CompareTo(Left.Bcy);
+        }
+
+        /// <summary>
+        /// Cell boxes for the picture outline. Column is X, row is Y.
+        /// </summary>
+        /// <param name="Cells">The piece.</param>
+        /// <returns>The boxes.</returns>
+        private static List<(Int32 Bx, Int32 By)> OutlineOf
+            (
+            IReadOnlyList<(Int32 Row, Int32 Col)> Cells
+            )
+        {
+            List<(Int32 Bx, Int32 By)> Outline = new List<(Int32 Bx, Int32 By)>(Cells.Count);
+            foreach ((Int32 Row, Int32 Col) Cell in Cells)
+            {
+                Outline.Add((Cell.Col, Cell.Row));
+            }
+            return Outline;
+        }
+
+        /// <summary>
         /// Last point of an action, or the fallback when that action was not emitted.
         /// </summary>
         /// <param name="Points">Emitted points.</param>
@@ -958,11 +1125,11 @@ namespace HaulBuilder
         /// <param name="LoadedBcy">Yards in the cells that were taken.</param>
         /// <param name="HaulM">Loaded travel from the cut exit to the fill entry.</param>
         /// <param name="DrivenM">Load, connectors, haul, and spread. The empty return is not included.</param>
-        /// <param name="CutRuns">Blade-down cut strips.</param>
-        /// <param name="FillRuns">Blade-down fill strips.</param>
+        /// <param name="CutRuns">Cut passes along the piece.</param>
+        /// <param name="FillRuns">Fill passes along the piece.</param>
         /// <param name="CutCells">Cut cells and the metres taken from each.</param>
         /// <param name="FillCells">Fill cells and the metres placed on each.</param>
-        /// <param name="Points">Blade path. CUT and FILL are blade-down. MOVE separates strips.</param>
+        /// <param name="Points">Haul arrow, from the cut exit to the fill entry. There is no cell path.</param>
         public ResidualHaul
             (
             Int32 TripNo,
@@ -989,6 +1156,66 @@ namespace HaulBuilder
             this.Points = Points;
         }
 
+        /// <summary>Gets or sets the cut seconds, including a loop between passes.</summary>
+        public Double LoadSeconds { get; set; }
+
+        /// <summary>Gets or sets the spread seconds, including a loop between passes.</summary>
+        public Double SpreadSeconds { get; set; }
+
+        /// <summary>Gets or sets the blade-down cut distance in metres.</summary>
+        public Double LoadDistanceM { get; set; }
+
+        /// <summary>Gets or sets the blade-down fill distance in metres.</summary>
+        public Double SpreadDistanceM { get; set; }
+
+        /// <summary>Gets or sets the turns made while the cut was loaded. Area trips keep the loops in the seconds, so this stays zero.</summary>
+        public Int32 LoadedTurns { get; set; }
+
+        /// <summary>Gets or sets whether the exit, the entry, and the outlines are the area trip.</summary>
+        public Boolean AreaBased { get; set; }
+
+        /// <summary>Gets or sets the haul heading east.</summary>
+        public Double DirX { get; set; }
+
+        /// <summary>Gets or sets the haul heading north.</summary>
+        public Double DirY { get; set; }
+
+        /// <summary>Gets or sets the cut piece's upstream easting.</summary>
+        public Double CutEntryX { get; set; }
+
+        /// <summary>Gets or sets the cut piece's upstream northing.</summary>
+        public Double CutEntryY { get; set; }
+
+        /// <summary>Gets or sets the cut piece's downstream easting. The haul leaves from here.</summary>
+        public Double CutExitX { get; set; }
+
+        /// <summary>Gets or sets the cut piece's downstream northing.</summary>
+        public Double CutExitY { get; set; }
+
+        /// <summary>Gets or sets the fill piece's upstream easting. The haul arrives here.</summary>
+        public Double FillEntryX { get; set; }
+
+        /// <summary>Gets or sets the fill piece's upstream northing.</summary>
+        public Double FillEntryY { get; set; }
+
+        /// <summary>Gets or sets the fill piece's downstream easting.</summary>
+        public Double FillExitX { get; set; }
+
+        /// <summary>Gets or sets the fill piece's downstream northing.</summary>
+        public Double FillExitY { get; set; }
+
+        /// <summary>Gets or sets the cut piece outline. Null when the trip moved nothing.</summary>
+        public List<(Int32 Bx, Int32 By)>? CutOutline { get; set; }
+
+        /// <summary>Gets or sets the fill piece outline. Null when the trip moved nothing.</summary>
+        public List<(Int32 Bx, Int32 By)>? FillOutline { get; set; }
+
+        /// <summary>Gets or sets the cut piece id.</summary>
+        public String CutPieceId { get; set; } = "";
+
+        /// <summary>Gets or sets the fill piece ids.</summary>
+        public String FillPieceId { get; set; } = "";
+
         /// <summary>Gets the schedule position, starting at 1.</summary>
         public Int32 TripNo { get; }
 
@@ -1004,10 +1231,10 @@ namespace HaulBuilder
         /// <summary>Gets load, haul, and spread metres.</summary>
         public Double DrivenM { get; }
 
-        /// <summary>Gets how many cut strips were driven.</summary>
+        /// <summary>Gets how many cut passes the time estimate used.</summary>
         public Int32 CutRuns { get; }
 
-        /// <summary>Gets how many fill strips were driven.</summary>
+        /// <summary>Gets how many fill passes the time estimate used.</summary>
         public Int32 FillRuns { get; }
 
         /// <summary>Gets the cut cells.</summary>

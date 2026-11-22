@@ -6,7 +6,8 @@ namespace HaulBuilder.Tests
     public sealed class ResidualHaulTests
     {
         /// <summary>
-        /// A partial load takes the cells nearest the fill, so the haul is the short gap.
+        /// A flat row is taken from the west cell eastward. The heights are equal, so the tie-break
+        /// is the column. The fill is the two cells to the east. No cell is cut deeper than the machine.
         /// </summary>
         [Fact]
         public void PartialLoadTakesTheCellsNearestTheFill()
@@ -47,19 +48,32 @@ namespace HaulBuilder.Tests
             };
             ResidualHaul Haul = Assert.Single(ResidualHauls.Build(
                 Residual, Grid.Valid, Pieces, Trips, Grid, 1.0));
-            Assert.Equal(2, Haul.CutCells.Count);
-            Assert.Contains(Haul.CutCells, Cell => (Cell.Cell.Bx == 8) && (Cell.Cell.By == 3));
-            Assert.Contains(Haul.CutCells, Cell => (Cell.Cell.Bx == 9) && (Cell.Cell.By == 3));
+            Assert.Equal(0, Haul.LoadedTurns);
+            Assert.Equal(4, Haul.CutCells[0].Cell.Bx);
+            Assert.Equal(3, Haul.CutCells[0].Cell.By);
+            Assert.True(
+                Haul.CutCells[Haul.CutCells.Count - 1].Cell.Bx > 4,
+                "cells " + Haul.CutCells.Count.ToString()
+                    + " last " + Haul.CutCells[Haul.CutCells.Count - 1].Cell.Bx.ToString()
+                    + "," + Haul.CutCells[Haul.CutCells.Count - 1].Cell.By.ToString()
+                    + " loaded " + Haul.LoadedBcy.ToString("F3")
+                    + " fills " + Haul.FillCells.Count.ToString());
+            Assert.True(Haul.CutCells[Haul.CutCells.Count - 1].Cell.Bx < 14);
+            for (Int32 Index = 1; Index < Haul.CutCells.Count; Index += 1)
+            {
+                Assert.Equal(1, Haul.CutCells[Index].Cell.Bx - Haul.CutCells[Index - 1].Cell.Bx);
+                Assert.Equal(3, Haul.CutCells[Index].Cell.By);
+            }
             Assert.Equal(2, Haul.FillCells.Count);
-            Assert.True(Haul.HaulM < 8.0, "haul " + Haul.HaulM.ToString("F2"));
-            Assert.True(Haul.CutRuns > 0);
+            Assert.True(Haul.HaulM > 0.0);
+            Assert.Equal(1, Haul.CutRuns);
             Assert.True(Haul.FillRuns > 0);
             Double MaxDepthM = Grid.MaxDepthMm / Constants.MILLIMETERS_PER_METER;
             Assert.All(Haul.CutCells, Cell => Assert.True(Cell.DepthM <= MaxDepthM + 1e-9));
         }
 
         /// <summary>
-        /// A cell deeper than one pass is cut in lifts, and no lift exceeds the maximum depth.
+        /// A cell deeper than one pass is cut once, at the 61 mm cap. The rest waits for a later trip.
         /// </summary>
         [Fact]
         public void CutDepthStaysWithinThePassLimit()
@@ -88,37 +102,31 @@ namespace HaulBuilder.Tests
             ResidualHaul Haul = Assert.Single(ResidualHauls.Build(
                 Residual, Grid.Valid, Pieces, Trips, Grid, 1.0));
             Double MaxDepthM = Constants.DEFAULT_MAX_DEPTH_MM / Constants.MILLIMETERS_PER_METER;
-            Assert.True(Haul.CutCells.Count > 1);
-            Double CutDepthM = 0.0;
-            foreach (((Int32 Bx, Int32 By) Cell, Double LiftM) Cut in Haul.CutCells)
-            {
-                Assert.Equal(1, Cut.Cell.Bx);
-                Assert.Equal(1, Cut.Cell.By);
-                Assert.True(Cut.LiftM <= MaxDepthM + 1e-9, "cut " + Cut.LiftM.ToString("F4"));
-                CutDepthM += Cut.LiftM;
-            }
-            Assert.Equal(DepthM, CutDepthM, 6);
-            Assert.Equal(CellBcy, Haul.LoadedBcy, 6);
-            Assert.True(Haul.LoadedBcy <= CellBcy + 1e-6);
+            Assert.Single(Haul.CutCells);
+            Assert.Equal(1, Haul.CutCells[0].Cell.Bx);
+            Assert.Equal(1, Haul.CutCells[0].Cell.By);
+            Assert.Equal(MaxDepthM, Haul.CutCells[0].DepthM, 6);
+            Assert.True(Haul.LoadedBcy < CellBcy);
         }
 
         /// <summary>
-        /// A cell is cut and filled until it is inside the grade tolerance.
-        /// Depth between the 50 mm cluster floor and that tolerance is taken too.
-        /// A cell already inside the tolerance is left alone.
+        /// A cell inside the grade tolerance is left alone.
+        /// Depth between the 50 mm cluster floor and that tolerance is taken on the same lane.
+        /// Each fill cell takes at most one machine lift, which is 61 mm.
         /// </summary>
         [Fact]
         public void HaulStopsAtTheGradeTolerance()
         {
-            Grid Grid = Sheet(4, 4, Constants.DEFAULT_MAX_DEPTH_MM);
-            Double[,] Residual = new Double[4, 4];
-            Residual[1, 1] = 80.0;
-            Residual[2, 1] = 40.0;
-            Residual[2, 2] = 8.0;
-            Residual[1, 3] = -80.0;
+            Grid Grid = Sheet(8, 6, Constants.DEFAULT_MAX_DEPTH_MM);
+            Double[,] Residual = new Double[6, 8];
+            Residual[2, 1] = 80.0;
+            Residual[2, 2] = 40.0;
+            Residual[5, 2] = 8.0;
+            Residual[2, 5] = -80.0;
+            Residual[2, 6] = -80.0;
             Double ToleranceMm = Constants.DEFAULT_TOLERANCE_MM;
-            (Int32 Row, Int32 Col)[] CutCells = new[] { (1, 1), (2, 1), (2, 2) };
-            (Int32 Row, Int32 Col)[] FillCells = new[] { (1, 3) };
+            (Int32 Row, Int32 Col)[] CutCells = new[] { (2, 1), (2, 2), (5, 2) };
+            (Int32 Row, Int32 Col)[] FillCells = new[] { (2, 5), (2, 6) };
             Double CutBcy = ResidualHauls.LevelVolumeBcy(
                 CutCells, "cut", Residual, Grid, 1.0, ToleranceMm);
             Double FillBcy = ResidualHauls.LevelVolumeBcy(
@@ -144,15 +152,17 @@ namespace HaulBuilder.Tests
             Double DeepCutM = 0.0;
             Double ShallowCutM = 0.0;
             Double FillM = 0.0;
+            Assert.Equal(0, Haul.LoadedTurns);
             foreach (((Int32 Bx, Int32 By) Cell, Double LiftM) Cut in Haul.CutCells)
             {
                 Assert.True(Cut.LiftM <= MaxDepthM + 1e-9);
-                Assert.False((Cut.Cell.Bx == 2) && (Cut.Cell.By == 2));
-                if ((Cut.Cell.Bx == 1) && (Cut.Cell.By == 1))
+                Assert.False((Cut.Cell.Bx == 2) && (Cut.Cell.By == 5));
+                Assert.Equal(2, Cut.Cell.By);
+                if (Cut.Cell.Bx == 1)
                 {
                     DeepCutM += Cut.LiftM;
                 }
-                if ((Cut.Cell.Bx == 1) && (Cut.Cell.By == 2))
+                if (Cut.Cell.Bx == 2)
                 {
                     ShallowCutM += Cut.LiftM;
                 }
@@ -162,9 +172,9 @@ namespace HaulBuilder.Tests
                 Assert.True(Fill.LiftM <= MaxDepthM + 1e-9);
                 FillM += Fill.LiftM;
             }
-            Assert.Equal((80.0 - ToleranceMm) / 1000.0, DeepCutM, 6);
+            Assert.Equal(Constants.DEFAULT_MAX_DEPTH_MM / 1000.0, DeepCutM, 6);
             Assert.Equal((40.0 - ToleranceMm) / 1000.0, ShallowCutM, 6);
-            Assert.Equal((80.0 - ToleranceMm) / 1000.0, FillM, 6);
+            Assert.Equal(DeepCutM + ShallowCutM, FillM, 6);
             Assert.True(DeepCutM > ((80.0 - ResidualClusters.FLOOR_MM) / 1000.0));
         }
 
