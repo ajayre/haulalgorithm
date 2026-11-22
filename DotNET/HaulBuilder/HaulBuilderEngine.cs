@@ -165,7 +165,15 @@ namespace HaulBuilder
                         Opt.BladeWidthMm / Constants.MILLIMETERS_PER_METER,
                         Opt.MinimumTurningDiameterFt,
                         Opt.Optimization.ClusterModeAverageWindow,
-                        Opt.Optimization.ClusterModeLoadFraction);
+                        Opt.Optimization.ClusterModeLoadFraction,
+                        Clock: new TimeParams(
+                            Opt.CutSpeedMph,
+                            Opt.LoadedTravelSpeedMph,
+                            Opt.FillSpeedMph,
+                            Opt.UnloadedTravelSpeedMph,
+                            Opt.AccelerationTimeS,
+                            Opt.DecelerationTimeS,
+                            Opt.FieldEfficiency));
                 List<Pass> OptimizedPasses = Optimized.PassResult.Passes;
                 HaulPairDistanceRefiner.Result? PairRefinement = null;
                 // A ribbon already hauls along the flow. Swapping its fill for a
@@ -658,6 +666,9 @@ namespace HaulBuilder
                 Result.ClusterModeStartsAtRoute = Result.HaulOptimization.ClusterModeStartsAtRoute;
                 Result.ThinCutStartsAtRoute = Result.HaulOptimization.ThinCutStartsAtRoute;
                 Result.CorrectingStartsAtRoute = Result.HaulOptimization.CorrectingStartsAtRoute;
+                Result.CeilingCutLeftBcy = Result.HaulOptimization.CeilingCutLeftBcy;
+                Result.CeilingFillLeftBcy = Result.HaulOptimization.CeilingFillLeftBcy;
+                Result.StoppedOnCeiling = Result.HaulOptimization.StoppedOnCeiling;
             }
 
             return Result;

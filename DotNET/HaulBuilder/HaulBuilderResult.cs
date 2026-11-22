@@ -86,6 +86,21 @@ namespace HaulBuilder
         /// </summary>
         public Int32 CorrectingStartsAtRoute { get; set; }
 
+        /// <summary>
+        /// Gets or sets the cut still on the field when hauling stopped, in bank cubic yards.
+        /// </summary>
+        public Double CeilingCutLeftBcy { get; set; }
+
+        /// <summary>
+        /// Gets or sets the fill still on the field when hauling stopped, in bank cubic yards.
+        /// </summary>
+        public Double CeilingFillLeftBcy { get; set; }
+
+        /// <summary>
+        /// Gets or sets whether hauling stopped because every candidate was over the ceiling.
+        /// </summary>
+        public Boolean StoppedOnCeiling { get; set; }
+
         /// <summary>Gets or sets the global optimizer allocation and ledger diagnostics.</summary>
         public HaulOptimizationResult? HaulOptimization { get; set; }
 

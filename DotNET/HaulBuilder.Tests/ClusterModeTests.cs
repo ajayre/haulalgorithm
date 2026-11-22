@@ -12,10 +12,8 @@ namespace HaulBuilder.Tests
         private const Double CAPACITY_BCY = 20.0 / 1.3;
 
         /// <summary>
-        /// The flow load that pulls the mean under the fraction is put back.
-        /// The cells sit on the 50 mm band, so clusters finds no haul.
-        /// Thin-cut finds no tile, and correcting still runs. The search stops
-        /// there. The ledger accepts the plan.
+        /// Fifty millimetres is haulable. Cost selection takes what it can,
+        /// then correcting runs. The ledger accepts the plan.
         /// </summary>
         [Fact]
         public void FieldOnTheBandMovesToCorrecting()
@@ -23,15 +21,14 @@ namespace HaulBuilder.Tests
             HaulOptimizationResult Result = Run(0.050);
             Assert.Equal(HaulSearchState.Correcting, Result.State);
             Assert.True(Result.EnteredClusterMode);
-            Assert.Equal(1, Result.ClusterModeStartsAtRoute);
-            Assert.Equal(1, Result.CorrectingStartsAtRoute);
+            Assert.True(Result.CorrectingStartsAtRoute > 0);
             Assert.True(
                 Result.Validation.Success,
                 String.Join(" | ", Result.Validation.Issues));
         }
 
         /// <summary>
-        /// Eighty millimetres is past a short bump, so correcting runs.
+        /// Eighty millimetres is hauled by cost, then correcting runs.
         /// The search stops at correcting.
         /// </summary>
         [Fact]
@@ -40,8 +37,7 @@ namespace HaulBuilder.Tests
             HaulOptimizationResult Result = Run(0.080);
             Assert.Equal(HaulSearchState.Correcting, Result.State);
             Assert.True(Result.EnteredClusterMode);
-            Assert.Equal(1, Result.ClusterModeStartsAtRoute);
-            Assert.Equal(1, Result.CorrectingStartsAtRoute);
+            Assert.True(Result.CorrectingStartsAtRoute > 0);
             Assert.True(
                 Result.Validation.Success,
                 String.Join(" | ", Result.Validation.Issues));
@@ -49,8 +45,7 @@ namespace HaulBuilder.Tests
 
         /// <summary>
         /// Runs the ribbon on two cut cells and two fill cells of one depth.
-        /// The window is one load and the fraction is a full bowl, so the
-        /// first short load hands hauling off to clusters.
+        /// The window is on, so the trip is chosen by seconds per yard.
         /// </summary>
         /// <param name="DepthM">Cut and fill depth in metres.</param>
         /// <returns>The search result.</returns>

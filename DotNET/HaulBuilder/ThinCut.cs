@@ -97,8 +97,13 @@ namespace HaulBuilder
                     Batch.Add(Last.Trips[Index]);
                     PayloadSum += Last.Trips[Index].PayloadBcy;
                 }
+                Int32 Mark = Passes.Count;
                 ClusterHauling.ExecuteBatch(
                     ResidualMm, Schedule, Batch, Grid, Ledger, CutLeft, FillLeft, BowlBcy, Passes, ArrowX, ArrowY);
+                for (Int32 Index = Mark; Index < Passes.Count; Index += 1)
+                {
+                    Passes[Index].Stage = HaulStage.ThinCut;
+                }
                 TripsDone += Take;
                 // The same stuck-planner cap as cluster hauling. The batch is already done.
                 if (TripsDone >= ClusterHauling.MAX_CLUSTER_TRIPS)
@@ -159,7 +164,7 @@ namespace HaulBuilder
         /// <param name="ArrowX">Smoothed flow east.</param>
         /// <param name="ArrowY">Smoothed flow north.</param>
         /// <returns>The schedule for this residual.</returns>
-        private static ClusterSchedule PlanField
+        internal static ClusterSchedule PlanField
             (
             Double[,] ResidualMm,
             Grid Grid,
@@ -185,6 +190,33 @@ namespace HaulBuilder
                 Constants.DEFAULT_BLADE_WIDTH_MM / Constants.MILLIMETERS_PER_METER,
                 Ground);
             return new ClusterSchedule(Plan, Pieces);
+        }
+
+        /// <summary>
+        /// Tiles the residual and keeps the cheapest cut and fill pairs.
+        /// The cost search prices these. The full pairing still belongs to
+        /// <see cref="PlanField"/>, which schedules every tile.
+        /// </summary>
+        /// <param name="ResidualMm">Residual in millimetres. Positive is cut.</param>
+        /// <param name="Grid">Field grid.</param>
+        /// <param name="BowlBcy">Pan capacity in bank cubic yards.</param>
+        /// <param name="ArrowX">Smoothed flow east. Unused. The heading is the pair.</param>
+        /// <param name="ArrowY">Smoothed flow north. Unused.</param>
+        /// <returns>The cheap pairs, shortest seconds per yard first.</returns>
+        internal static ClusterSchedule CandidateField
+            (
+            Double[,] ResidualMm,
+            Grid Grid,
+            Double BowlBcy,
+            Double[,]? ArrowX,
+            Double[,]? ArrowY
+            )
+        {
+            _ = ArrowX;
+            _ = ArrowY;
+            List<ResidualPairPiece> Pieces = CutTiles(ResidualMm, Grid, BowlBcy);
+            Pieces.AddRange(FillTiles(ResidualMm, Grid, BowlBcy));
+            return ClusterHauling.CheapSchedule(Pieces, Grid.GridSizeM, BowlBcy);
         }
 
         /// <summary>

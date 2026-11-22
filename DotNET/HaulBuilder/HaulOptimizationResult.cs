@@ -129,6 +129,23 @@ namespace HaulBuilder
         public Int32 CorrectingStartsAtRoute { get; set; }
 
         /// <summary>
+        /// Gets or sets the cut still on the field when hauling stopped, in bank cubic yards.
+        /// Correcting has not taken it yet. Zero when the cost selection did not run.
+        /// </summary>
+        public Double CeilingCutLeftBcy { get; set; }
+
+        /// <summary>
+        /// Gets or sets the fill still on the field when hauling stopped, in bank cubic yards.
+        /// </summary>
+        public Double CeilingFillLeftBcy { get; set; }
+
+        /// <summary>
+        /// Gets or sets whether hauling stopped because every candidate was over the ceiling.
+        /// An empty field stops with this false.
+        /// </summary>
+        public Boolean StoppedOnCeiling { get; set; }
+
+        /// <summary>
         /// Gets or sets the field after the coverage passes, in metres.
         /// Positive is high. Invalid cells are NaN. Null when correcting did not run.
         /// A rebuild of this result must keep it, because surplus spread is not a haul.
@@ -150,6 +167,9 @@ namespace HaulBuilder
             ClusterModeStartsAtRoute = Previous.ClusterModeStartsAtRoute;
             ThinCutStartsAtRoute = Previous.ThinCutStartsAtRoute;
             CorrectingStartsAtRoute = Previous.CorrectingStartsAtRoute;
+            CeilingCutLeftBcy = Previous.CeilingCutLeftBcy;
+            CeilingFillLeftBcy = Previous.CeilingFillLeftBcy;
+            StoppedOnCeiling = Previous.StoppedOnCeiling;
             CorrectingSurfaceM = Previous.CorrectingSurfaceM;
         }
     }

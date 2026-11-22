@@ -78,16 +78,16 @@ namespace HaulBuilder
         public Boolean OptimizeRouteOrderByDistance { get; set; } = true;
 
         /// <summary>
-        /// Gets or sets how many recent haul loads form the mean that moves
-        /// hauling to clusters. The default is the last 3 loads. Clusters
-        /// starts on the first found-order haul where that mean is below
-        /// <see cref="ClusterModeLoadFraction"/> of bowl capacity.
+        /// Gets or sets whether hauling prices each trip by seconds per yard.
+        /// A positive window, with a positive fraction, compares the next flow
+        /// trip with the cluster plan and the thin-cut plan. Zero keeps the
+        /// flow ribbon for the whole field. The count is no longer a mean.
         /// </summary>
         public Int32 ClusterModeAverageWindow { get; set; } = 3;
 
         /// <summary>
-        /// Gets or sets the share of bowl capacity below which the trailing
-        /// mean moves hauling to clusters. The default is one half.
+        /// Gets or sets whether the cost selection is allowed to leave the flow ribbon.
+        /// Zero keeps hauling on the ribbon. The default is one half, which leaves it on.
         /// </summary>
         public Double ClusterModeLoadFraction { get; set; } = 0.5;
 

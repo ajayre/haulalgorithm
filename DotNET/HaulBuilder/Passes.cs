@@ -149,6 +149,12 @@ namespace HaulBuilder
         public Boolean RibbonOrder { get; set; }
 
         /// <summary>
+        /// Gets or sets which builder produced this trip.
+        /// Flow, clusters, and thin-cut can interleave, so the label is not a route range.
+        /// </summary>
+        public HaulStage Stage { get; set; } = HaulStage.Flow;
+
+        /// <summary>
         /// Gets or sets whether one cell may appear once per lift.
         /// A cluster haul records each lift, and a cell deeper than one pass has several.
         /// </summary>

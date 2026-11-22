@@ -31,6 +31,12 @@ namespace HaulBuilder
         /// <summary>Trips driven from one schedule before the field is clustered again.</summary>
         public const Int32 TRIPS_PER_PLAN = 10;
 
+        /// <summary>
+        /// Cheap pairs kept for the cost search. The first ten are priced,
+        /// and the rest are the next batches when those no longer fit the ground.
+        /// </summary>
+        private const Int32 CANDIDATE_PAIRS = 40;
+
         /// <summary>Cut cells are taken to this many millimetres above the target.</summary>
         public const Double CUT_TO_MM = 0.0;
 
@@ -166,7 +172,13 @@ namespace HaulBuilder
                 }
                 if (Execute == null)
                 {
+                    Int32 Mark = Passes.Count;
                     ExecuteBatch(ResidualMm, Schedule, Batch, Grid, Ledger, CutLeft, FillLeft, BowlBcy, Passes, ArrowX, ArrowY);
+                    // The cost search labels its own trips. This path is the sequential loop.
+                    for (Int32 Index = Mark; Index < Passes.Count; Index += 1)
+                    {
+                        Passes[Index].Stage = HaulStage.Clusters;
+                    }
                 }
                 else
                 {
@@ -206,7 +218,7 @@ namespace HaulBuilder
         /// <param name="ArrowX">Smoothed flow east.</param>
         /// <param name="ArrowY">Smoothed flow north.</param>
         /// <returns>The schedule for this residual.</returns>
-        private static ClusterSchedule PlanField
+        internal static ClusterSchedule PlanField
             (
             Double[,] ResidualMm,
             Grid Grid,
@@ -238,6 +250,197 @@ namespace HaulBuilder
                 Constants.DEFAULT_BLADE_WIDTH_MM / Constants.MILLIMETERS_PER_METER,
                 Ground);
             return new ClusterSchedule(Plan, Pieces);
+        }
+
+        /// <summary>
+        /// Clusters the residual and keeps the cheapest cut and fill pairs.
+        /// The cost search prices these. The full pairing still belongs to
+        /// <see cref="PlanField"/>, which schedules every yard.
+        /// </summary>
+        /// <param name="ResidualMm">Residual in millimetres.</param>
+        /// <param name="Grid">Field grid.</param>
+        /// <param name="BowlBcy">Pan capacity in bank cubic yards.</param>
+        /// <param name="ArrowX">Smoothed flow east. Unused. The heading is the pair.</param>
+        /// <param name="ArrowY">Smoothed flow north. Unused.</param>
+        /// <returns>The cheap pairs, shortest seconds per yard first.</returns>
+        internal static ClusterSchedule CandidateField
+            (
+            Double[,] ResidualMm,
+            Grid Grid,
+            Double BowlBcy,
+            Double[,]? ArrowX,
+            Double[,]? ArrowY
+            )
+        {
+            _ = ArrowX;
+            _ = ArrowY;
+            ResidualClusterReport Clusters = ResidualClusters.Build(
+                ResidualMm,
+                Grid.Valid,
+                Grid.GridSizeM,
+                BowlBcy,
+                Grid.Compaction);
+            List<ResidualPairPiece> Pieces = PiecesToTarget(Clusters, ResidualMm, Grid);
+            return CheapSchedule(Pieces, Grid.GridSizeM, BowlBcy);
+        }
+
+        /// <summary>
+        /// Ranks cut and fill pairs by haul seconds per yard and keeps the cheapest.
+        /// A pair under a quarter bowl is left for correcting, the same floor the pairing uses.
+        /// </summary>
+        /// <param name="Pieces">Cut and fill pieces.</param>
+        /// <param name="CellSizeM">Cell edge in metres.</param>
+        /// <param name="BowlBcy">Pan capacity in bank cubic yards.</param>
+        /// <returns>A schedule whose trips are those pairs.</returns>
+        internal static ClusterSchedule CheapSchedule
+            (
+            IReadOnlyList<ResidualPairPiece> Pieces,
+            Double CellSizeM,
+            Double BowlBcy
+            )
+        {
+            if (Pieces == null) throw new ArgumentNullException(nameof(Pieces));
+            if (CellSizeM <= 0.0) throw new ArgumentOutOfRangeException(nameof(CellSizeM));
+            if (BowlBcy <= 0.0) throw new ArgumentOutOfRangeException(nameof(BowlBcy));
+            List<ResidualPairPiece> Cuts = new List<ResidualPairPiece>();
+            List<ResidualPairPiece> Fills = new List<ResidualPairPiece>();
+            for (Int32 Index = 0; Index < Pieces.Count; Index += 1)
+            {
+                ResidualPairPiece Piece = Pieces[Index];
+                if ((Piece == null) || (Piece.Id == null) || (Piece.HaulVolumeBcy <= 0.0))
+                {
+                    continue;
+                }
+                if (Piece.Sign == "cut")
+                {
+                    Cuts.Add(Piece);
+                }
+                else if (Piece.Sign == "fill")
+                {
+                    Fills.Add(Piece);
+                }
+            }
+            Double FloorBcy = ResidualPairing.PARTIAL_BOWL_FRACTION * BowlBcy;
+            List<RankedPair> Ranked = new List<RankedPair>();
+            for (Int32 CutIndex = 0; CutIndex < Cuts.Count; CutIndex += 1)
+            {
+                ResidualPairPiece Cut = Cuts[CutIndex];
+                for (Int32 FillIndex = 0; FillIndex < Fills.Count; FillIndex += 1)
+                {
+                    ResidualPairPiece Fill = Fills[FillIndex];
+                    Double Payload = BowlBcy;
+                    if (Cut.HaulVolumeBcy < Payload)
+                    {
+                        Payload = Cut.HaulVolumeBcy;
+                    }
+                    if (Fill.HaulVolumeBcy < Payload)
+                    {
+                        Payload = Fill.HaulVolumeBcy;
+                    }
+                    if (Payload < FloorBcy)
+                    {
+                        continue;
+                    }
+                    Double DCol = (Cut.CentroidCol - Fill.CentroidCol) * CellSizeM;
+                    Double DRow = (Cut.CentroidRow - Fill.CentroidRow) * CellSizeM;
+                    Double HaulM = Math.Sqrt((DCol * DCol) + (DRow * DRow));
+                    // Fixed seconds for the speed change, then the haul both ways. A larger load wins a tie.
+                    Double HaulS = (HaulM / ResidualPairing.V_LOADED_MS)
+                        + (HaulM / ResidualPairing.V_EMPTY_MS)
+                        + Constants.DEFAULT_ACCELERATION_TIME_S
+                        + Constants.DEFAULT_DECELERATION_TIME_S;
+                    Ranked.Add(new RankedPair
+                    {
+                        Cost = HaulS / Payload,
+                        Payload = Payload,
+                        Distance = HaulM,
+                        Cut = Cut,
+                        Fill = Fill,
+                    });
+                }
+            }
+            Ranked.Sort(CompareRanked);
+            Int32 Keep = Math.Min(CANDIDATE_PAIRS, Ranked.Count);
+            List<ResidualPairTrip> Trips = new List<ResidualPairTrip>(Keep);
+            Double PayloadSum = 0.0;
+            Double HaulSum = 0.0;
+            Int32 Partials = 0;
+            for (Int32 Index = 0; Index < Keep; Index += 1)
+            {
+                RankedPair Pair = Ranked[Index];
+                if (Pair.Payload < BowlBcy - 1e-6)
+                {
+                    Partials += 1;
+                }
+                PayloadSum += Pair.Payload;
+                HaulSum += Pair.Distance * Pair.Payload;
+                Trips.Add(new ResidualPairTrip(
+                    Index + 1,
+                    new ResidualPairLeg[] { new ResidualPairLeg(Pair.Cut.Id, Pair.Payload) },
+                    new ResidualPairLeg[] { new ResidualPairLeg(Pair.Fill.Id, Pair.Payload) },
+                    Pair.Payload,
+                    Pair.Distance,
+                    Pair.Cost * Pair.Payload));
+            }
+            Double MeanPayload = Keep == 0 ? 0.0 : PayloadSum / Keep;
+            Double MeanHaul = PayloadSum <= 0.0 ? 0.0 : HaulSum / PayloadSum;
+            ResidualPairPlan Plan = new ResidualPairPlan(
+                Array.Empty<ResidualPairFlow>(),
+                Trips,
+                Array.Empty<ResidualPairRemainder>(),
+                0.0,
+                0.0,
+                "balanced",
+                0.0,
+                Partials,
+                MeanPayload,
+                0.0,
+                MeanHaul);
+            return new ClusterSchedule(Plan, Pieces);
+        }
+
+        /// <summary>
+        /// Cheapest estimated pair first. An equal estimate keeps the earlier piece id.
+        /// </summary>
+        /// <param name="Left">One pair.</param>
+        /// <param name="Right">The other pair.</param>
+        /// <returns>The sort order.</returns>
+        private static Int32 CompareRanked
+            (
+            RankedPair Left,
+            RankedPair Right
+            )
+        {
+            Int32 Cost = Left.Cost.CompareTo(Right.Cost);
+            if (Cost != 0)
+            {
+                return Cost;
+            }
+            Int32 Cut = String.CompareOrdinal(Left.Cut.Id, Right.Cut.Id);
+            if (Cut != 0)
+            {
+                return Cut;
+            }
+            return String.CompareOrdinal(Left.Fill.Id, Right.Fill.Id);
+        }
+
+        /// <summary>One cut and fill pair before it becomes a trip.</summary>
+        private struct RankedPair
+        {
+            /// <summary>Gets or sets haul seconds per bank cubic yard.</summary>
+            public Double Cost;
+
+            /// <summary>Gets or sets the yards the pair can move, at most one bowl.</summary>
+            public Double Payload;
+
+            /// <summary>Gets or sets the centroid haul in metres.</summary>
+            public Double Distance;
+
+            /// <summary>Gets or sets the cut piece.</summary>
+            public ResidualPairPiece Cut;
+
+            /// <summary>Gets or sets the fill piece.</summary>
+            public ResidualPairPiece Fill;
         }
 
         /// <summary>
@@ -532,6 +735,25 @@ namespace HaulBuilder
                 Trip.AreaFillPiece = Haul.FillPieceId;
             }
             return Trip;
+        }
+
+        /// <summary>
+        /// Subtracts a trip that was built on a copy of the field.
+        /// The depths on the pass are the ones the ledger already accepted.
+        /// </summary>
+        /// <param name="Trip">The route to commit.</param>
+        /// <param name="CutLeft">Remaining cut.</param>
+        /// <param name="FillLeft">Remaining fill. Surplus fill is added to the cut.</param>
+        internal static void ApplyBuiltPass
+            (
+            Pass Trip,
+            Double[,] CutLeft,
+            Double[,] FillLeft
+            )
+        {
+            if (Trip == null) throw new ArgumentNullException(nameof(Trip));
+            Commit(Trip.CutCells, CutLeft);
+            CommitFill(Trip.FillCells, FillLeft, CutLeft);
         }
 
         /// <summary>

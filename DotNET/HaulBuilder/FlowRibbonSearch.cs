@@ -24,9 +24,10 @@ namespace HaulBuilder
     /// of those low cells. As the field is levelled the crossover
     /// moves and the finished band between cut and fill gets wider.
     /// Turning-circle guidance then drives the path. The search is a state
-    /// machine. Hauling hands off to clusters when the trailing mean of
-    /// recent loads falls below the cluster fraction. Clusters hands off to
-    /// correcting when no cell is more than 50 mm from the target.
+    /// machine. When the cluster window is on, each trip is the cheapest
+    /// seconds per yard among the next flow trip, the cluster plan, and the
+    /// thin-cut plan. Hauling stops when none of those is under the ceiling,
+    /// and correcting starts. A window of zero keeps the flow ribbon.
     /// </summary>
     static public class FlowRibbonSearch
     {
@@ -180,17 +181,22 @@ namespace HaulBuilder
         /// uses a wider radius, because a tight turn is slow.
         /// </param>
         /// <param name="ClusterModeAverageWindow">
-        /// Loads in the trailing mean that moves hauling to clusters. Zero
-        /// keeps the flow ribbon for the whole field. The engine passes the
-        /// configured window.
+        /// A positive window, with a positive fraction, prices each trip
+        /// against clusters and thin-cut. Zero keeps the flow ribbon for the
+        /// whole field. The count is no longer a trailing mean.
         /// </param>
         /// <param name="ClusterModeLoadFraction">
-        /// Share of bowl capacity. Hauling hands off to clusters when the
-        /// trailing mean falls below this share. Zero never leaves hauling.
+        /// Must be positive before the cost selection runs. Zero never leaves hauling.
         /// </param>
         /// <param name="StopAfterClusterTrips">
         /// When greater than zero, cluster hauling stops after this many trips
         /// and thin-cut does not start. Zero runs the normal cluster loop.
+        /// </param>
+        /// <param name="Clock">
+        /// Speeds and efficiency for seconds per yard. Null uses the machine defaults.
+        /// </param>
+        /// <param name="CostBaselineTrips">
+        /// Flow trips that fix the median. Zero uses the production count of 500.
         /// </param>
         /// <returns>The ribbon loads and the ledger check.</returns>
         static public HaulOptimizationResult Optimize
@@ -210,7 +216,9 @@ namespace HaulBuilder
             Double TurningCircleFt = Constants.DEFAULT_TURNING_CIRCLE_FT,
             Int32 ClusterModeAverageWindow = 0,
             Double ClusterModeLoadFraction = 0.0,
-            Int32 StopAfterClusterTrips = 0
+            Int32 StopAfterClusterTrips = 0,
+            TimeParams? Clock = null,
+            Int32 CostBaselineTrips = 0
             )
         {
             if (Grid == null) throw new ArgumentNullException(nameof(Grid));
@@ -267,8 +275,323 @@ namespace HaulBuilder
             // A refused mouth does not take a cell, and the end of the field
             // walks the leftovers a second time. One pass per cell is not enough.
             Int32 GuardLimit = ((Grid.Width * Grid.Height) + 2) * 3;
+            // A positive window prices every trip. Zero stays on the ribbon.
+            Boolean SelectByCost = (ClusterModeAverageWindow >= 1)
+                && (ClusterModeLoadFraction > 0.0);
+            TimeParams CycleClock = Clock ?? DefaultClock();
+            if (CostBaselineTrips < 1)
+            {
+                CostBaselineTrips = StageCost.BASELINE_FLOW_TRIPS;
+            }
+            HaulCostSearch Cost = null;
+            if (SelectByCost)
+            {
+                (Double[,] ArrowX, Double[,] ArrowY) CostArrows = SmoothedArrows(Flow, Grid);
+                Cost = new HaulCostSearch(CycleClock, CostBaselineTrips, CostArrows.ArrowX, CostArrows.ArrowY);
+            }
+            Int32 Rounds = 0;
             while ((State == HaulSearchState.Hauling)
-                && (Guard < GuardLimit)
+                && (Rounds < GuardLimit)
+                && (Sum(CutLeft, Grid) > DEPTH_TOLERANCE_M)
+                && (Sum(FillLeft, Grid) > DEPTH_TOLERANCE_M))
+            {
+                Rounds += 1;
+                Pass Next = TryNextFlowPass(
+                    Grid,
+                    Flow,
+                    Ledger,
+                    MaximumLoadBcy,
+                    BladeWidthM,
+                    MinimumRadiusM,
+                    MaxDepthM,
+                    CutLeft,
+                    FillLeft,
+                    Fx,
+                    Fy,
+                    Active,
+                    FinishLeftovers,
+                    FieldEdge,
+                    GuardLimit,
+                    Blocked,
+                    ShortMouths,
+                    FoldedMouths,
+                    ref Phase,
+                    ref FlowSlack,
+                    ref CrossRidges,
+                    ref Guard);
+                if (!SelectByCost)
+                {
+                    if (Next == null)
+                    {
+                        break;
+                    }
+                    Next.Stage = HaulStage.Flow;
+                    Passes.Add(Next);
+                    AssignedBcy += Next.LoadBcy;
+                    // A zero window never enters this branch's handoff. The check stays
+                    // so a direct caller that turns the fraction off still refunds a short mean.
+                    if (ClusterMode.TrailingMeanIsUnder(
+                        Passes,
+                        MaximumLoadBcy,
+                        ClusterModeAverageWindow,
+                        ClusterModeLoadFraction))
+                    {
+                        Refund(Next.CutCells, CutLeft);
+                        Refund(Next.FillCells, FillLeft);
+                        Passes.RemoveAt(Passes.Count - 1);
+                        AssignedBcy -= Next.LoadBcy;
+                        State = HaulSearchState.Clusters;
+                        ClusterModeStartsAtRoute = Passes.Count + 1;
+                        break;
+                    }
+                    continue;
+                }
+                Int32 Before = Passes.Count;
+                HaulCostSearch.CostStep Step = Cost.Take(
+                    Next,
+                    Grid,
+                    Ledger,
+                    CutLeft,
+                    FillLeft,
+                    MaximumLoadBcy,
+                    Passes,
+                    StopAfterClusterTrips);
+                if (Step == HaulCostSearch.CostStep.Stop)
+                {
+                    State = HaulSearchState.Correcting;
+                    CorrectingStartsAtRoute = Passes.Count + 1;
+                    break;
+                }
+                if (Passes.Count > Before)
+                {
+                    Pass Taken = Passes[Passes.Count - 1];
+                    AssignedBcy += Taken.LoadBcy;
+                    if ((Taken.Stage == HaulStage.Clusters) && (ClusterModeStartsAtRoute == 0))
+                    {
+                        ClusterModeStartsAtRoute = Passes.Count;
+                    }
+                    if ((Taken.Stage == HaulStage.ThinCut) && (ThinCutStartsAtRoute == 0))
+                    {
+                        ThinCutStartsAtRoute = Passes.Count;
+                    }
+                }
+                if (Step == HaulCostSearch.CostStep.Picture)
+                {
+                    State = HaulSearchState.Clusters;
+                    break;
+                }
+                if (Passes.Count == Before)
+                {
+                    State = HaulSearchState.Correcting;
+                    CorrectingStartsAtRoute = Passes.Count + 1;
+                    Cost.RememberLeft(CutLeft, FillLeft, Grid, Ledger);
+                    break;
+                }
+            }
+            if (SelectByCost && (State == HaulSearchState.Hauling))
+            {
+                // The cut or the fill is gone. Correcting still covers what remains.
+                State = HaulSearchState.Correcting;
+                CorrectingStartsAtRoute = Passes.Count + 1;
+                Cost.RememberLeft(CutLeft, FillLeft, Grid, Ledger);
+            }
+            if (!SelectByCost && (State == HaulSearchState.Clusters))
+            {
+                (Double[,] ArrowX, Double[,] ArrowY) Arrows = SmoothedArrows(Flow, Grid);
+                ClusterHaulStop Stop = ClusterHauling.Run(
+                    Grid,
+                    Ledger,
+                    CutLeft,
+                    FillLeft,
+                    MaximumLoadBcy,
+                    Passes,
+                    Arrows.ArrowX,
+                    Arrows.ArrowY,
+                    StopAfterClusterTrips);
+                // The first routes are already on the list. Thin-cut stays closed.
+                if (Stop.Reason == ClusterHauling.PICTURE_STOP)
+                {
+                    State = HaulSearchState.Clusters;
+                }
+                else
+                {
+                    State = ClusterHauling.Handoff(Stop);
+                }
+                if (State == HaulSearchState.ThinCut)
+                {
+                    ThinCutStartsAtRoute = Passes.Count + 1;
+                    ThinCutStop ThinStop = ThinCut.Run(
+                        Grid, Ledger, CutLeft, FillLeft, MaximumLoadBcy, Passes, Arrows.ArrowX, Arrows.ArrowY);
+                    State = ThinCut.Handoff(ThinStop);
+                    if (State == HaulSearchState.Correcting)
+                    {
+                        // Correcting is the last stage. A short field still gets the coverage.
+                        CorrectingStartsAtRoute = Passes.Count + 1;
+                        Int32 Mark = Passes.Count;
+                        Correcting.Apply(
+                            Grid,
+                            Flow,
+                            Ledger,
+                            CutLeft,
+                            FillLeft,
+                            MaximumLoadBcy,
+                            BladeWidthM,
+                            Passes);
+                        for (Int32 Index = Mark; Index < Passes.Count; Index += 1)
+                        {
+                            Passes[Index].Stage = HaulStage.Correcting;
+                        }
+                    }
+                }
+            }
+            else if (SelectByCost && (State == HaulSearchState.Correcting))
+            {
+                if (!Cost.HasLeft)
+                {
+                    Cost.RememberLeft(CutLeft, FillLeft, Grid, Ledger);
+                }
+                (Double[,] ArrowX, Double[,] ArrowY) Arrows = SmoothedArrows(Flow, Grid);
+                Int32 Mark = Passes.Count;
+                Correcting.Apply(
+                    Grid,
+                    Flow,
+                    Ledger,
+                    CutLeft,
+                    FillLeft,
+                    MaximumLoadBcy,
+                    BladeWidthM,
+                    Passes);
+                for (Int32 Index = Mark; Index < Passes.Count; Index += 1)
+                {
+                    Passes[Index].Stage = HaulStage.Correcting;
+                }
+            }
+            IReadOnlyList<HaulDeferredWork> Deferred = Ledger.BuildDeferredWork(
+                Passes,
+                DeferEdgeWork ? "FIELD_EDGE_HEADING" : "MATERIAL_IMBALANCE");
+            Double UnmatchedCutBcy = Deferred
+                .Where(Entry => Entry.Kind == HaulLaneBuilder.WorkKind.Cut)
+                .Sum(Entry => Entry.VolumeBcy);
+            Double UnmatchedFillBcy = Deferred
+                .Where(Entry => Entry.Kind == HaulLaneBuilder.WorkKind.Fill)
+                .Sum(Entry => Entry.VolumeBcy);
+            if (!DeferEdgeWork && !AllowAnyDeferredRemainder)
+            {
+                Double ExpectedCutBcy = Math.Max(0.0, Ledger.TotalCutBcy - Ledger.TotalFillBcy);
+                Double ExpectedFillBcy = Math.Max(0.0, Ledger.TotalFillBcy - Ledger.TotalCutBcy);
+                if ((Math.Abs(UnmatchedCutBcy - ExpectedCutBcy) > IMBALANCE_TOLERANCE_BCY)
+                    || (Math.Abs(UnmatchedFillBcy - ExpectedFillBcy) > IMBALANCE_TOLERANCE_BCY))
+                {
+                    throw new InvalidOperationException(
+                        String.Format(
+                            System.Globalization.CultureInfo.InvariantCulture,
+                            "The flow ribbon left work deferred beyond the exact material imbalance. cut={0:F3} fill={1:F3} expectedCut={2:F3} expectedFill={3:F3} passes={4}",
+                            UnmatchedCutBcy,
+                            UnmatchedFillBcy,
+                            ExpectedCutBcy,
+                            ExpectedFillBcy,
+                            Passes.Count));
+                }
+            }
+            PassResult PassResult = new PassResult(Passes, 1, UnmatchedCutBcy, UnmatchedFillBcy);
+            HaulPlanValidation Validation = Ledger.ValidateComplete(
+                Passes,
+                MaximumLoadBcy,
+                MaxDepthM,
+                AllowDeferredWork: true);
+            HaulOptimizationResult Result = new HaulOptimizationResult(
+                PassResult,
+                Axis,
+                Passes.Count,
+                Passes.Count,
+                AssignedBcy,
+                UnmatchedCutBcy,
+                UnmatchedFillBcy,
+                Deferred,
+                Validation);
+            Result.State = State;
+            Result.EnteredClusterMode = State != HaulSearchState.Hauling;
+            Result.ClusterModeStartsAtRoute = ClusterModeStartsAtRoute;
+            if (CorrectingStartsAtRoute > 0)
+            {
+                // The coverage residual. Cap spread is not a haul, so the picture uses this surface.
+                Double[,] Surface = new Double[Grid.Height, Grid.Width];
+                for (Int32 Row = 0; Row < Grid.Height; Row += 1)
+                {
+                    for (Int32 Col = 0; Col < Grid.Width; Col += 1)
+                    {
+                        Surface[Row, Col] = Grid.Valid[Row, Col]
+                            ? CutLeft[Row, Col] - FillLeft[Row, Col]
+                            : Double.NaN;
+                    }
+                }
+                Result.CorrectingSurfaceM = Surface;
+            }
+            Result.ThinCutStartsAtRoute = ThinCutStartsAtRoute;
+            Result.CorrectingStartsAtRoute = CorrectingStartsAtRoute;
+            if (Cost != null)
+            {
+                Result.CeilingCutLeftBcy = Cost.CutLeftBcy;
+                Result.CeilingFillLeftBcy = Cost.FillLeftBcy;
+                Result.StoppedOnCeiling = Cost.StoppedOnCeiling;
+            }
+            return Result;
+        }
+
+        /// <summary>
+        /// The next trip the mouth search would take, with its dirt already off the field.
+        /// Null when the ribbon has no trip on this residual. Mouths and phase stay put.
+        /// </summary>
+        /// <param name="Grid">Field grid.</param>
+        /// <param name="Flow">Poisson field. Headings are read from it.</param>
+        /// <param name="Ledger">Yard factors.</param>
+        /// <param name="MaximumLoadBcy">Pan capacity.</param>
+        /// <param name="BladeWidthM">Blade width in metres.</param>
+        /// <param name="MinimumRadiusM">Turning radius in metres.</param>
+        /// <param name="MaxDepthM">Deepest lift in metres.</param>
+        /// <param name="CutLeft">Remaining cut. The returned trip has been subtracted.</param>
+        /// <param name="FillLeft">Remaining fill. The returned trip has been subtracted.</param>
+        /// <param name="Fx">Smoothed flow east.</param>
+        /// <param name="Fy">Smoothed flow north.</param>
+        /// <param name="Active">Obstacles.</param>
+        /// <param name="FinishLeftovers">True when a fold may be kept at the end of the field.</param>
+        /// <param name="FieldEdge">Headland cells.</param>
+        /// <param name="GuardLimit">Failed mouth attempts before the search gives up.</param>
+        /// <param name="Blocked">Mouths that grew no cut.</param>
+        /// <param name="ShortMouths">Mouths that could not fill a bowl.</param>
+        /// <param name="FoldedMouths">Mouths that looped.</param>
+        /// <param name="Phase">0 full strips, 1 short strips, 2 folds.</param>
+        /// <param name="FlowSlack">How far the blade may leave the arrow.</param>
+        /// <param name="CrossRidges">True when a leftover ridge may be crossed.</param>
+        /// <param name="Guard">Mouth attempts so far.</param>
+        /// <returns>The trip, or null when the ribbon is finished for now.</returns>
+        private static Pass TryNextFlowPass
+            (
+            Grid Grid,
+            FlowField Flow,
+            HaulWorkLedger Ledger,
+            Double MaximumLoadBcy,
+            Double BladeWidthM,
+            Double MinimumRadiusM,
+            Double MaxDepthM,
+            Double[,] CutLeft,
+            Double[,] FillLeft,
+            Double[,] Fx,
+            Double[,] Fy,
+            ObstacleField Active,
+            Boolean FinishLeftovers,
+            Boolean[,] FieldEdge,
+            Int32 GuardLimit,
+            HashSet<(Int32 Bx, Int32 By)> Blocked,
+            HashSet<(Int32 Bx, Int32 By)> ShortMouths,
+            HashSet<(Int32 Bx, Int32 By)> FoldedMouths,
+            ref Int32 Phase,
+            ref Double FlowSlack,
+            ref Boolean CrossRidges,
+            ref Int32 Guard
+            )
+        {
+            while ((Guard < GuardLimit)
                 && (Sum(CutLeft, Grid) > DEPTH_TOLERANCE_M)
                 && (Sum(FillLeft, Grid) > DEPTH_TOLERANCE_M))
             {
@@ -276,7 +599,7 @@ namespace HaulBuilder
                 // The fill still waiting is the transport target. Recomputed
                 // each load because the basin shrinks as dirt arrives.
                 (Double X, Double Y)? Centroid = FillCentroid(FillLeft, Grid);
-                if (!Centroid.HasValue) break;
+                if (!Centroid.HasValue) return null;
                 // Full strips first. A short line waits. A fold waits until the end.
                 HashSet<(Int32 Bx, Int32 By)> SkipMouths = new HashSet<(Int32 Bx, Int32 By)>(Blocked);
                 if (Phase < 2)
@@ -350,7 +673,7 @@ namespace HaulBuilder
                         Phase = 2;
                         continue;
                     }
-                    break;
+                    return null;
                 }
                 List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Cut = Grow(
                     Seed.Value,
@@ -499,135 +822,25 @@ namespace HaulBuilder
                 Pass.RibbonOrder = true;
                 Pass.CutHeadingDeg = Flow.DirectionDeg(CutEnd.Bx, CutEnd.By);
                 Pass.FillHeadingDeg = Flow.DirectionDeg(Fill[0].Cell.Bx, Fill[0].Cell.By);
-                Passes.Add(Pass);
-                AssignedBcy += CutBcy;
-                // This load pulled the recent mean under the cluster fraction.
-                // Put its dirt back and hand hauling off to clusters.
-                if (ClusterMode.TrailingMeanIsUnder(
-                    Passes,
-                    MaximumLoadBcy,
-                    ClusterModeAverageWindow,
-                    ClusterModeLoadFraction))
-                {
-                    Refund(Pass.CutCells, CutLeft);
-                    Refund(Pass.FillCells, FillLeft);
-                    Passes.RemoveAt(Passes.Count - 1);
-                    AssignedBcy -= CutBcy;
-                    State = HaulSearchState.Clusters;
-                    ClusterModeStartsAtRoute = Passes.Count + 1;
-                    break;
-                }
+                return Pass;
             }
-            // The 50 mm band does not switch the state. No haulable cluster
-            // work enters thin-cut. A 500-trip repeat halts instead.
-            if (State == HaulSearchState.Clusters)
-            {
-                (Double[,] ArrowX, Double[,] ArrowY) Arrows = SmoothedArrows(Flow, Grid);
-                ClusterHaulStop Stop = ClusterHauling.Run(
-                    Grid,
-                    Ledger,
-                    CutLeft,
-                    FillLeft,
-                    MaximumLoadBcy,
-                    Passes,
-                    Arrows.ArrowX,
-                    Arrows.ArrowY,
-                    StopAfterClusterTrips);
-                // The first routes are already on the list. Thin-cut stays closed.
-                if (Stop.Reason == ClusterHauling.PICTURE_STOP)
-                {
-                    State = HaulSearchState.Clusters;
-                }
-                else
-                {
-                    State = ClusterHauling.Handoff(Stop);
-                }
-                if (State == HaulSearchState.ThinCut)
-                {
-                    ThinCutStartsAtRoute = Passes.Count + 1;
-                    ThinCutStop ThinStop = ThinCut.Run(
-                        Grid, Ledger, CutLeft, FillLeft, MaximumLoadBcy, Passes, Arrows.ArrowX, Arrows.ArrowY);
-                    State = ThinCut.Handoff(ThinStop);
-                    if (State == HaulSearchState.Correcting)
-                    {
-                        // Correcting is the last stage. A short field still gets the coverage.
-                        CorrectingStartsAtRoute = Passes.Count + 1;
-                        Correcting.Apply(
-                            Grid,
-                            Flow,
-                            Ledger,
-                            CutLeft,
-                            FillLeft,
-                            MaximumLoadBcy,
-                            BladeWidthM,
-                            Passes);
-                    }
-                }
-            }
-            IReadOnlyList<HaulDeferredWork> Deferred = Ledger.BuildDeferredWork(
-                Passes,
-                DeferEdgeWork ? "FIELD_EDGE_HEADING" : "MATERIAL_IMBALANCE");
-            Double UnmatchedCutBcy = Deferred
-                .Where(Entry => Entry.Kind == HaulLaneBuilder.WorkKind.Cut)
-                .Sum(Entry => Entry.VolumeBcy);
-            Double UnmatchedFillBcy = Deferred
-                .Where(Entry => Entry.Kind == HaulLaneBuilder.WorkKind.Fill)
-                .Sum(Entry => Entry.VolumeBcy);
-            if (!DeferEdgeWork && !AllowAnyDeferredRemainder)
-            {
-                Double ExpectedCutBcy = Math.Max(0.0, Ledger.TotalCutBcy - Ledger.TotalFillBcy);
-                Double ExpectedFillBcy = Math.Max(0.0, Ledger.TotalFillBcy - Ledger.TotalCutBcy);
-                if ((Math.Abs(UnmatchedCutBcy - ExpectedCutBcy) > IMBALANCE_TOLERANCE_BCY)
-                    || (Math.Abs(UnmatchedFillBcy - ExpectedFillBcy) > IMBALANCE_TOLERANCE_BCY))
-                {
-                    throw new InvalidOperationException(
-                        String.Format(
-                            System.Globalization.CultureInfo.InvariantCulture,
-                            "The flow ribbon left work deferred beyond the exact material imbalance. cut={0:F3} fill={1:F3} expectedCut={2:F3} expectedFill={3:F3} passes={4}",
-                            UnmatchedCutBcy,
-                            UnmatchedFillBcy,
-                            ExpectedCutBcy,
-                            ExpectedFillBcy,
-                            Passes.Count));
-                }
-            }
-            PassResult PassResult = new PassResult(Passes, 1, UnmatchedCutBcy, UnmatchedFillBcy);
-            HaulPlanValidation Validation = Ledger.ValidateComplete(
-                Passes,
-                MaximumLoadBcy,
-                MaxDepthM,
-                AllowDeferredWork: true);
-            HaulOptimizationResult Result = new HaulOptimizationResult(
-                PassResult,
-                Axis,
-                Passes.Count,
-                Passes.Count,
-                AssignedBcy,
-                UnmatchedCutBcy,
-                UnmatchedFillBcy,
-                Deferred,
-                Validation);
-            Result.State = State;
-            Result.EnteredClusterMode = State != HaulSearchState.Hauling;
-            Result.ClusterModeStartsAtRoute = ClusterModeStartsAtRoute;
-            if (CorrectingStartsAtRoute > 0)
-            {
-                // The coverage residual. Cap spread is not a haul, so the picture uses this surface.
-                Double[,] Surface = new Double[Grid.Height, Grid.Width];
-                for (Int32 Row = 0; Row < Grid.Height; Row += 1)
-                {
-                    for (Int32 Col = 0; Col < Grid.Width; Col += 1)
-                    {
-                        Surface[Row, Col] = Grid.Valid[Row, Col]
-                            ? CutLeft[Row, Col] - FillLeft[Row, Col]
-                            : Double.NaN;
-                    }
-                }
-                Result.CorrectingSurfaceM = Surface;
-            }
-            Result.ThinCutStartsAtRoute = ThinCutStartsAtRoute;
-            Result.CorrectingStartsAtRoute = CorrectingStartsAtRoute;
-            return Result;
+            return null;
+        }
+
+        /// <summary>
+        /// The machine speeds the cycle clock uses when a caller does not pass its own.
+        /// </summary>
+        /// <returns>The default time parameters.</returns>
+        private static TimeParams DefaultClock()
+        {
+            return new TimeParams(
+                Constants.DEFAULT_CUT_SPEED_MPH,
+                Constants.DEFAULT_LOADED_TRAVEL_SPEED_MPH,
+                Constants.DEFAULT_FILL_SPEED_MPH,
+                Constants.DEFAULT_UNLOADED_TRAVEL_SPEED_MPH,
+                Constants.DEFAULT_ACCELERATION_TIME_S,
+                Constants.DEFAULT_DECELERATION_TIME_S,
+                Constants.DEFAULT_FIELD_EFFICIENCY);
         }
 
         /// <summary>
