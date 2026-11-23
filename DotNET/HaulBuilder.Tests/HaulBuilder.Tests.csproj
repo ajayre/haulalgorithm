@@ -26,6 +26,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Compile Remove="FinishingLoopTests.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\HaulBuilder\HaulBuilder.csproj" />
   </ItemGroup>
 

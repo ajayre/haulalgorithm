@@ -29,6 +29,10 @@
 
 
   <ItemGroup>
+    <Compile Remove="FinishingLoop.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
 
     <PackageReference Include="CSparse" Version="4.3.0" />
 

@@ -4,15 +4,14 @@ namespace HaulBuilder
 {
     /// <summary>
     /// Coverage passes after thin-cut. This is the last stage. Lines run the
-    /// length of the field along the mean flow,
-    /// a pan width apart, as a serpentine. The blade is at the target. High cells
-    /// fill the bowl and low cells take a spread lift. While the field still needs
-    /// at least a quarter bowl of fill, load left at the end of a line goes to the
-    /// nearest cell below the target. Once that fill need is under a quarter bowl,
-    /// surplus mode cuts the highs and spreads the load along the line, at most
-    /// 3 mm on a cell already between the target and +10 mm. Load still in the
-    /// bowl at the end of a line is carried to the next line.
-    /// At most two coverages run, and the search stops when correcting finishes.
+    /// length of the field along the mean flow, a pan width apart, as a serpentine,
+    /// then a headland lap parallel to the boundary. The blade is at the target.
+    /// High cells fill the bowl and low cells take a spread lift. The field's
+    /// imbalance is a sink or a source on cells at the target, used only when the
+    /// current line and the next line have no real destination or source.
+    /// A leftover load is hauled to a low, and that trip is part of the distance.
+    /// Coverages repeat while the planing gate fails and the last coverage
+    /// reduced the haul error by at least one percent.
     /// </summary>
     static public class Correcting
     {
@@ -22,18 +21,18 @@ namespace HaulBuilder
         /// <summary>Deepest compacted lift one visit may place.</summary>
         public const Double SPREAD_LIFT_M = 0.10;
 
-        /// <summary>Surplus may raise a cell up to this many millimetres above the target.</summary>
+        /// <summary>
+        /// Kept so older callers still compile. The balance cap is one third of the tolerance.
+        /// </summary>
         public const Double SURPLUS_MAX_MM = 10.0;
 
         /// <summary>
-        /// In surplus mode, one pass may add at most this many millimetres to a cell
-        /// that is already between the target and <see cref="SURPLUS_MAX_MM"/>.
+        /// Kept so older callers still compile. The balance cap is one third of the tolerance.
         /// </summary>
         public const Double SURPLUS_STEP_MM = 3.0;
 
         /// <summary>
-        /// Surplus mode is on when the bank fill still below the target is under
-        /// this share of the bowl.
+        /// Kept so older callers still compile. The balance sink replaced this switch.
         /// </summary>
         public const Double SURPLUS_FILL_FRACTION = 0.25;
 
@@ -43,8 +42,19 @@ namespace HaulBuilder
         /// <summary>Seconds charged for one serpentine turn.</summary>
         public const Double T_TURN_S = 20.0;
 
-        /// <summary>Coverages of the whole field. The search does not run a third.</summary>
-        public const Int32 MAX_COVERAGES = 2;
+        /// <summary>
+        /// Another coverage runs when the last one removed at least this share of the haul error.
+        /// </summary>
+        public const Double HAUL_ERROR_GAIN = 0.01;
+
+        /// <summary>Stop reason when no group is still long or deep.</summary>
+        public const String STOP_PLANING = "planing";
+
+        /// <summary>Stop reason when the last coverage removed less than one percent of the haul error.</summary>
+        public const String STOP_HAUL_ERROR = "haul error";
+
+        /// <summary>Report line when a leftover load had no low left to take it.</summary>
+        public const String UNBALANCED_SURPLUS = "unbalanced surplus";
 
         /// <summary>A group longer than this, in metres, is not ready for planing.</summary>
         public const Double PLANE_LEN_M = 12.0;
@@ -52,7 +62,7 @@ namespace HaulBuilder
         /// <summary>Cells outside this band are the coverage groups.</summary>
         public const Double GROUP_BAND_MM = 30.0;
 
-        /// <summary>A group deeper than this needs another coverage, until the coverage cap.</summary>
+        /// <summary>A group deeper than this fails the planing gate.</summary>
         public const Double DEEP_MM = 50.0;
 
         /// <summary>Cells outside this band are counted in the coverage report.</summary>
@@ -63,8 +73,8 @@ namespace HaulBuilder
 
         /// <summary>
         /// Drives the coverages on a signed residual. Positive is high.
-        /// The array is changed in place. The bowl starts empty and is carried
-        /// from line to line, and into the next coverage, so a load is not dropped.
+        /// The array is changed in place. The bowl starts empty. At the start of
+        /// a line it is empty, or the line ahead has a low that will take it.
         /// </summary>
         /// <param name="ResidualMm">Residual in millimetres, indexed [row, col].</param>
         /// <param name="Mask">True on field cells. This is mask E.</param>
@@ -78,7 +88,7 @@ namespace HaulBuilder
         /// <param name="InsideFraction">
         /// Share of each cell inside the field. Null means every masked cell is fully inside.
         /// </param>
-        /// <param name="MaxCoverages">Coverages to allow. The production cap is 2.</param>
+        /// <param name="ToleranceMm">Grade tolerance. The balance cap is one third of this.</param>
         /// <returns>The coverage reports.</returns>
         public static CorrectingResult Run
             (
@@ -92,7 +102,7 @@ namespace HaulBuilder
             Double BowlBcy,
             Double FillToBank,
             Double[,]? InsideFraction = null,
-            Int32 MaxCoverages = MAX_COVERAGES
+            Double ToleranceMm = 10.0
             )
         {
             if (ResidualMm == null) throw new ArgumentNullException(nameof(ResidualMm));
@@ -104,9 +114,12 @@ namespace HaulBuilder
             if (PanWidthM <= OVERLAP_M) throw new ArgumentOutOfRangeException(nameof(PanWidthM));
             if (BowlBcy <= 0.0) throw new ArgumentOutOfRangeException(nameof(BowlBcy));
             if (FillToBank <= 0.0) throw new ArgumentOutOfRangeException(nameof(FillToBank));
-            if (MaxCoverages < 1) throw new ArgumentOutOfRangeException(nameof(MaxCoverages));
+            if (ToleranceMm <= 0.0) throw new ArgumentOutOfRangeException(nameof(ToleranceMm));
             Int32 Rows = ResidualMm.GetLength(0);
             Int32 Cols = ResidualMm.GetLength(1);
+            // S is fixed here. Later coverages spend it; they do not remeasure the field.
+            Budget Budget = OpeningBalance(
+                ResidualMm, Mask, InsideFraction, Rows, Cols, Area: CellSizeM * CellSizeM, FillToBank, ToleranceMm);
             // The bowl is bank cubic metres. Yards are the caller's unit.
             Double BowlM3 = BowlBcy / ResidualClusters.M3_TO_CY;
             Double Area = CellSizeM * CellSizeM;
@@ -115,9 +128,15 @@ namespace HaulBuilder
             Double CutM3 = 0.0;
             Double FillM3 = 0.0;
             Double SurplusM3 = 0.0;
+            Boolean Unbalanced = false;
             Int32 Done = 0;
-            for (Int32 Number = 1; Number <= MaxCoverages; Number += 1)
+            String StopReason = STOP_PLANING;
+            // The haul error is the bank in groups the planing gate still rejects.
+            Double HaulBefore = HaulErrorBcy(GroupsBeyondBand(
+                ResidualMm, Mask, InsideFraction, Rows, Cols, Area, FillToBank, CellSizeM));
+            while (true)
             {
+                Int32 Number = Done + 1;
                 Tally Tally = new Tally();
                 DriveCoverage(
                     ResidualMm,
@@ -134,7 +153,12 @@ namespace HaulBuilder
                     BowlM3,
                     FillToBank,
                     ref Bowl,
-                    Tally);
+                    Tally,
+                    Budget);
+                if (Tally.Unbalanced)
+                {
+                    Unbalanced = true;
+                }
                 CutM3 += Tally.CutM3;
                 FillM3 += Tally.FillM3;
                 SurplusM3 += Tally.SurplusM3;
@@ -153,11 +177,21 @@ namespace HaulBuilder
                     Clone(ResidualMm));
                 Coverages.Add(Coverage);
                 Done = Number;
-                // Another coverage only while a group is long or deep, and only up to the cap.
-                if ((Number == MaxCoverages) || !NeedsAnotherCoverage(Groups))
+                // The gate passes when every remaining group is short and shallow.
+                if (!GateFails(Groups))
                 {
+                    StopReason = STOP_PLANING;
                     break;
                 }
+                Double HaulAfter = HaulErrorBcy(Groups);
+                Double Gain = HaulBefore > 1e-9 ? (HaulBefore - HaulAfter) / HaulBefore : 0.0;
+                // A coverage that does not take at least one percent is not worth another pass.
+                if (Gain < HAUL_ERROR_GAIN)
+                {
+                    StopReason = STOP_HAUL_ERROR;
+                    break;
+                }
+                HaulBefore = HaulAfter;
             }
             List<CorrectingGroup> Failed = new List<CorrectingGroup>();
             if (Coverages.Count > 0)
@@ -178,7 +212,9 @@ namespace HaulBuilder
                 FillM3,
                 SurplusM3,
                 Bowl,
-                Done);
+                Done,
+                StopReason,
+                Unbalanced);
             Report(Result);
             return Result;
         }
@@ -243,7 +279,7 @@ namespace HaulBuilder
                 BowlBcy,
                 Grid.Compaction,
                 null,
-                MAX_COVERAGES);
+                Ledger.ToleranceM * 1000.0);
             for (Int32 Row = 0; Row < Rows; Row += 1)
             {
                 for (Int32 Col = 0; Col < Cols; Col += 1)
@@ -287,6 +323,7 @@ namespace HaulBuilder
         /// <param name="FillToBank">Bank per compacted volume.</param>
         /// <param name="Bowl">Load in the bowl, in bank cubic metres.</param>
         /// <param name="Tally">Distance, turns, and volumes for this coverage.</param>
+        /// <param name="Budget">The opening imbalance. Spent as sinks and sources are used.</param>
         private static void DriveCoverage
             (
             Double[,] ResidualMm,
@@ -303,10 +340,12 @@ namespace HaulBuilder
             Double BowlM3,
             Double FillToBank,
             ref Double Bowl,
-            Tally Tally
+            Tally Tally,
+            Budget Budget
             )
         {
             Boolean HavePrevious = false;
+            Boolean AlreadyThere = false;
             Int32 PreviousRow = 0;
             Int32 PreviousCol = 0;
             List<List<(Int32 Row, Int32 Col)>> Lines = LinesAcrossField(
@@ -318,43 +357,64 @@ namespace HaulBuilder
                 Cols,
                 CellSizeM,
                 PanWidthM);
-            foreach (List<(Int32 Row, Int32 Col)> Line in Lines)
+            // The boundary lap is part of this coverage, after the flow lines.
+            Lines.AddRange(HeadlandLaps(Mask, Rows, Cols));
+            for (Int32 Index = 0; Index < Lines.Count; Index += 1)
             {
+                List<(Int32 Row, Int32 Col)> Line = Lines[Index];
                 if (Line.Count == 0)
                 {
                     continue;
                 }
-                if (HavePrevious)
+                if (AlreadyThere)
+                {
+                    // The leftover haul already ended on the first cell of this line.
+                    AlreadyThere = false;
+                }
+                else if (HavePrevious)
                 {
                     // The turn joins two cells that are both on the field.
                     Tally.Turns += 1;
                     Tally.DistanceM += StepMetres(
                         PreviousRow, PreviousCol, Line[0].Row, Line[0].Col, CellSizeM);
                 }
-                for (Int32 Index = 1; Index < Line.Count; Index += 1)
+                for (Int32 Step = 1; Step < Line.Count; Step += 1)
                 {
                     Tally.DistanceM += StepMetres(
-                        Line[Index - 1].Row,
-                        Line[Index - 1].Col,
-                        Line[Index].Row,
-                        Line[Index].Col,
+                        Line[Step - 1].Row,
+                        Line[Step - 1].Col,
+                        Line[Step].Row,
+                        Line[Step].Col,
                         CellSizeM);
                 }
-                DriveLine(
+                List<(Int32 Row, Int32 Col)>? Next = null;
+                for (Int32 Look = Index + 1; Look < Lines.Count; Look += 1)
+                {
+                    if (Lines[Look].Count > 0)
+                    {
+                        Next = Lines[Look];
+                        break;
+                    }
+                }
+                (Int32 Row, Int32 Col, Boolean AtNextStart) Parked = DriveLine(
                     Line,
+                    Next,
                     ResidualMm,
                     Mask,
                     InsideFraction,
                     Rows,
                     Cols,
                     Area,
+                    CellSizeM,
                     BowlM3,
                     FillToBank,
                     ref Bowl,
-                    Tally);
-                PreviousRow = Line[Line.Count - 1].Row;
-                PreviousCol = Line[Line.Count - 1].Col;
+                    Tally,
+                    Budget);
+                PreviousRow = Parked.Row;
+                PreviousCol = Parked.Col;
                 HavePrevious = true;
+                AlreadyThere = Parked.AtNextStart;
             }
         }
 
@@ -464,88 +524,271 @@ namespace HaulBuilder
         }
 
         /// <summary>
-        /// Bank volume of every masked cell still below the target.
+        /// Rings parallel to the field boundary, one cell thick, from the outside in,
+        /// until every valid cell is on a ring.
         /// </summary>
-        /// <param name="ResidualMm">Residual in millimetres. Negative is fill.</param>
         /// <param name="Mask">Mask E.</param>
-        /// <param name="InsideFraction">Cell fraction, or null for 1.</param>
         /// <param name="Rows">Row count.</param>
         /// <param name="Cols">Column count.</param>
-        /// <param name="Area">Cell area in square metres.</param>
-        /// <param name="FillToBank">Bank per compacted volume.</param>
-        /// <returns>Fill need in bank cubic metres.</returns>
-        private static Double FillNeedBankM3
+        /// <returns>One line per ring, in lap order.</returns>
+        private static List<List<(Int32 Row, Int32 Col)>> HeadlandLaps
             (
-            Double[,] ResidualMm,
             Boolean[,] Mask,
-            Double[,]? InsideFraction,
             Int32 Rows,
-            Int32 Cols,
-            Double Area,
-            Double FillToBank
+            Int32 Cols
             )
         {
-            Double Need = 0.0;
+            Int32[,] Distance = new Int32[Rows, Cols];
+            Queue<(Int32 Row, Int32 Col)> Waiting = new Queue<(Int32 Row, Int32 Col)>();
+            Int32 Valid = 0;
             for (Int32 Row = 0; Row < Rows; Row += 1)
             {
                 for (Int32 Col = 0; Col < Cols; Col += 1)
                 {
+                    Distance[Row, Col] = -1;
                     if (!Mask[Row, Col])
                     {
                         continue;
                     }
-                    Double Residual = ResidualMm[Row, Col];
-                    if (Residual >= -1e-6)
+                    Valid += 1;
+                    if (OnBoundary(Mask, Rows, Cols, Row, Col))
                     {
-                        continue;
+                        Distance[Row, Col] = 0;
+                        Waiting.Enqueue((Row, Col));
                     }
-                    Double Fraction = FractionOf(InsideFraction, Row, Col);
-                    if (Fraction <= 0.0)
-                    {
-                        continue;
-                    }
-                    Need += (-Residual / 1000.0) * Area * Fraction * FillToBank;
                 }
             }
-            return Need;
+            // Interior cells take the next blade inward from a neighbour that is already placed.
+            while (Waiting.Count > 0)
+            {
+                (Int32 Row, Int32 Col) Cell = Waiting.Dequeue();
+                Int32 Next = Distance[Cell.Row, Cell.Col] + 1;
+                PushInward(Mask, Distance, Waiting, Rows, Cols, Cell.Row - 1, Cell.Col, Next);
+                PushInward(Mask, Distance, Waiting, Rows, Cols, Cell.Row + 1, Cell.Col, Next);
+                PushInward(Mask, Distance, Waiting, Rows, Cols, Cell.Row, Cell.Col - 1, Next);
+                PushInward(Mask, Distance, Waiting, Rows, Cols, Cell.Row, Cell.Col + 1, Next);
+            }
+            List<List<(Int32 Row, Int32 Col)>> Rings = new List<List<(Int32 Row, Int32 Col)>>();
+            Int32 Crossed = 0;
+            for (Int32 Ring = 0; Crossed < Valid; Ring += 1)
+            {
+                List<(Int32 Row, Int32 Col)> Cells = new List<(Int32 Row, Int32 Col)>();
+                for (Int32 Row = 0; Row < Rows; Row += 1)
+                {
+                    for (Int32 Col = 0; Col < Cols; Col += 1)
+                    {
+                        if (Distance[Row, Col] == Ring)
+                        {
+                            Cells.Add((Row, Col));
+                        }
+                    }
+                }
+                if (Cells.Count == 0)
+                {
+                    break;
+                }
+                Rings.Add(OrderLap(Cells));
+                Crossed += Cells.Count;
+            }
+            return Rings;
+        }
+
+        /// <summary>True when a valid cell touches the outside of the field.</summary>
+        /// <param name="Mask">Mask E.</param>
+        /// <param name="Rows">Row count.</param>
+        /// <param name="Cols">Column count.</param>
+        /// <param name="Row">Row.</param>
+        /// <param name="Col">Column.</param>
+        /// <returns>True on the boundary.</returns>
+        private static Boolean OnBoundary
+            (
+            Boolean[,] Mask,
+            Int32 Rows,
+            Int32 Cols,
+            Int32 Row,
+            Int32 Col
+            )
+        {
+            if ((Row == 0) || (Col == 0) || (Row == (Rows - 1)) || (Col == (Cols - 1)))
+            {
+                return true;
+            }
+            return !Mask[Row - 1, Col]
+                || !Mask[Row + 1, Col]
+                || !Mask[Row, Col - 1]
+                || !Mask[Row, Col + 1];
+        }
+
+        /// <summary>Gives an interior cell the next ring index.</summary>
+        /// <param name="Mask">Mask E.</param>
+        /// <param name="Distance">Ring index, or -1 when unset.</param>
+        /// <param name="Waiting">Cells whose neighbours still need a ring.</param>
+        /// <param name="Rows">Row count.</param>
+        /// <param name="Cols">Column count.</param>
+        /// <param name="Row">Candidate row.</param>
+        /// <param name="Col">Candidate column.</param>
+        /// <param name="Next">Ring index to assign.</param>
+        private static void PushInward
+            (
+            Boolean[,] Mask,
+            Int32[,] Distance,
+            Queue<(Int32 Row, Int32 Col)> Waiting,
+            Int32 Rows,
+            Int32 Cols,
+            Int32 Row,
+            Int32 Col,
+            Int32 Next
+            )
+        {
+            if ((Row < 0) || (Col < 0) || (Row >= Rows) || (Col >= Cols) || !Mask[Row, Col])
+            {
+                return;
+            }
+            if (Distance[Row, Col] >= 0)
+            {
+                return;
+            }
+            Distance[Row, Col] = Next;
+            Waiting.Enqueue((Row, Col));
+        }
+
+        /// <summary>Orders a ring as a walk, staying on neighbouring cells when it can.</summary>
+        /// <param name="Cells">Cells of one ring.</param>
+        /// <returns>The lap.</returns>
+        private static List<(Int32 Row, Int32 Col)> OrderLap
+            (
+            List<(Int32 Row, Int32 Col)> Cells
+            )
+        {
+            Cells.Sort(delegate ((Int32 Row, Int32 Col) Left, (Int32 Row, Int32 Col) Right)
+            {
+                Int32 RowOrder = Left.Row.CompareTo(Right.Row);
+                if (RowOrder != 0)
+                {
+                    return RowOrder;
+                }
+                return Left.Col.CompareTo(Right.Col);
+            });
+            HashSet<(Int32 Row, Int32 Col)> Left = new HashSet<(Int32 Row, Int32 Col)>(Cells);
+            List<(Int32 Row, Int32 Col)> Lap = new List<(Int32 Row, Int32 Col)>(Cells.Count);
+            (Int32 Row, Int32 Col) At = Cells[0];
+            Left.Remove(At);
+            Lap.Add(At);
+            while (Left.Count > 0)
+            {
+                (Int32 Row, Int32 Col) Best = (-1, -1);
+                Int32 BestDistance = Int32.MaxValue;
+                foreach ((Int32 Row, Int32 Col) Cell in Left)
+                {
+                    Int32 Distance = Math.Abs(Cell.Row - At.Row) + Math.Abs(Cell.Col - At.Col);
+                    if ((Distance < BestDistance)
+                        || ((Distance == BestDistance) && ((Cell.Row < Best.Row) || ((Cell.Row == Best.Row) && (Cell.Col < Best.Col)))))
+                    {
+                        BestDistance = Distance;
+                        Best = Cell;
+                    }
+                }
+                Left.Remove(Best);
+                Lap.Add(Best);
+                At = Best;
+            }
+            return Lap;
+        }
+
+        /// <summary>True when the line still has a cell above the balance cap.</summary>
+        /// <param name="Line">Cells, or null.</param>
+        /// <param name="ResidualMm">Residual in millimetres.</param>
+        /// <param name="CapMm">Balance band. A cell inside it is at the target.</param>
+        /// <returns>True when a high remains.</returns>
+        private static Boolean HasAbove
+            (
+            List<(Int32 Row, Int32 Col)>? Line,
+            Double[,] ResidualMm,
+            Double CapMm
+            )
+        {
+            if (Line == null)
+            {
+                return false;
+            }
+            for (Int32 Index = 0; Index < Line.Count; Index += 1)
+            {
+                if (ResidualMm[Line[Index].Row, Line[Index].Col] > (CapMm + 1e-6))
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        /// <summary>True when the line still has a cell below the balance cap.</summary>
+        /// <param name="Line">Cells, or null.</param>
+        /// <param name="ResidualMm">Residual in millimetres.</param>
+        /// <param name="CapMm">Balance band. A cell inside it is at the target.</param>
+        /// <returns>True when a low remains.</returns>
+        private static Boolean HasBelow
+            (
+            List<(Int32 Row, Int32 Col)>? Line,
+            Double[,] ResidualMm,
+            Double CapMm
+            )
+        {
+            if (Line == null)
+            {
+                return false;
+            }
+            for (Int32 Index = 0; Index < Line.Count; Index += 1)
+            {
+                if (ResidualMm[Line[Index].Row, Line[Index].Col] < -(CapMm + 1e-6))
+                {
+                    return true;
+                }
+            }
+            return false;
         }
 
         /// <summary>
         /// One line. High cells fill the bowl. Low cells take one spread lift.
-        /// A full bowl passes the remaining highs. While the field still needs a
-        /// quarter bowl of fill, load left at the end goes to the nearest cell
-        /// below the target. In surplus mode the load is spread along the line
-        /// and whatever remains is carried to the next line.
+        /// A low on this line or the next keeps a leftover load. With none, the
+        /// opening surplus raises cells at the target. Any load still in the bowl
+        /// is hauled to the nearest low, and both legs are added to the distance.
+        /// A deficit source is cut only when neither line still has a high.
         /// </summary>
         /// <param name="Line">Cells in drive order.</param>
+        /// <param name="Next">The following line. Null at the end of the coverage.</param>
         /// <param name="ResidualMm">Residual in millimetres.</param>
         /// <param name="Mask">Mask E.</param>
         /// <param name="InsideFraction">Cell fraction, or null for 1.</param>
         /// <param name="Rows">Row count.</param>
         /// <param name="Cols">Column count.</param>
         /// <param name="Area">Cell area in square metres.</param>
+        /// <param name="CellSizeM">Cell edge in metres.</param>
         /// <param name="BowlM3">Bowl capacity in bank cubic metres.</param>
         /// <param name="FillToBank">Bank per compacted volume.</param>
         /// <param name="Bowl">Load in the bowl.</param>
         /// <param name="Tally">Volumes for this coverage.</param>
-        private static void DriveLine
+        /// <param name="Budget">Opening imbalance still unused.</param>
+        /// <returns>
+        /// Where the machine stopped, and whether that cell is the start of the next line.
+        /// </returns>
+        private static (Int32 Row, Int32 Col, Boolean AtNextStart) DriveLine
             (
             List<(Int32 Row, Int32 Col)> Line,
+            List<(Int32 Row, Int32 Col)>? Next,
             Double[,] ResidualMm,
             Boolean[,] Mask,
             Double[,]? InsideFraction,
             Int32 Rows,
             Int32 Cols,
             Double Area,
+            Double CellSizeM,
             Double BowlM3,
             Double FillToBank,
             ref Double Bowl,
-            Tally Tally
+            Tally Tally,
+            Budget Budget
             )
         {
-            Double FillNeed = FillNeedBankM3(
-                ResidualMm, Mask, InsideFraction, Rows, Cols, Area, FillToBank);
-            Double Quarter = SURPLUS_FILL_FRACTION * BowlM3;
             foreach ((Int32 Row, Int32 Col) Cell in Line)
             {
                 Double Fraction = FractionOf(InsideFraction, Cell.Row, Cell.Col);
@@ -554,23 +797,10 @@ namespace HaulBuilder
                     continue;
                 }
                 Double Residual = ResidualMm[Cell.Row, Cell.Col];
-                // Under a quarter bowl of fill, the cap is a thin spread, not a cut.
-                Boolean Surplus = FillNeed < Quarter;
-                Boolean AboveBand = Residual > (SURPLUS_MAX_MM + 1e-6);
-                if ((Residual > 1e-6) && (Bowl < (BowlM3 - 1e-12)) && (!Surplus || AboveBand))
+                // Soil inside the cap is the balance band. A real high sits above it.
+                if ((Residual > (Budget.CapMm + 1e-6)) && (Bowl < (BowlM3 - 1e-12)))
                 {
-                    Double CutMm = Residual;
-                    if (Surplus)
-                    {
-                        Double RoomM = BowlM3 - Bowl;
-                        Double FullM = (Residual / 1000.0) * Area * Fraction;
-                        // A partial cut stops at +10 so the cell stays a high for the next pass.
-                        if (FullM > (RoomM + 1e-12))
-                        {
-                            CutMm = Residual - SURPLUS_MAX_MM;
-                        }
-                    }
-                    Double Bank = (CutMm / 1000.0) * Area * Fraction;
+                    Double Bank = (Residual / 1000.0) * Area * Fraction;
                     Double Take = Math.Min(Bank, BowlM3 - Bowl);
                     if (Take > 0.0)
                     {
@@ -580,23 +810,30 @@ namespace HaulBuilder
                         Tally.CutM3 += Take;
                     }
                 }
-                else if ((Residual < -1e-6) && (Bowl > 1e-12))
+                else if ((Residual < -(Budget.CapMm + 1e-6)) && (Bowl <= 1e-12) && (Budget.SignedM3 < -1e-12))
+                {
+                    // A high still on this line or the next is the cut. The source waits.
+                    if (!HasAbove(Line, ResidualMm, Budget.CapMm) && !HasAbove(Next, ResidualMm, Budget.CapMm))
+                    {
+                        PullSource(
+                            ResidualMm,
+                            Mask,
+                            InsideFraction,
+                            Rows,
+                            Cols,
+                            Cell.Row,
+                            Cell.Col,
+                            Area,
+                            BowlM3,
+                            ref Bowl,
+                            Tally,
+                            Budget);
+                    }
+                }
+                if ((ResidualMm[Cell.Row, Cell.Col] < -(Budget.CapMm + 1e-6)) && (Bowl > 1e-12))
                 {
                     // One lift while the machine is on the cell. Deeper holes wait for another visit.
-                    Double Placed = DropOnCell(
-                        ResidualMm,
-                        InsideFraction,
-                        Cell.Row,
-                        Cell.Col,
-                        Area,
-                        FillToBank,
-                        ref Bowl,
-                        Tally);
-                    FillNeed -= Placed;
-                }
-                else if (Surplus && (Residual >= 0.0) && (Residual < (SURPLUS_MAX_MM - 1e-9)) && (Bowl > 1e-12))
-                {
-                    SpreadStep(
+                    DropOnCell(
                         ResidualMm,
                         InsideFraction,
                         Cell.Row,
@@ -607,11 +844,31 @@ namespace HaulBuilder
                         Tally);
                 }
             }
-            // Surplus mode keeps the load for the next line. A real fill still takes the leftover.
-            if (FillNeed >= Quarter)
+            (Int32 Row, Int32 Col) End = Line[Line.Count - 1];
+            Boolean Carry = false;
+            if ((Bowl > 1e-12) && HasBelow(Line, ResidualMm, Budget.CapMm))
             {
-                (Int32 Row, Int32 Col) End = Line[Line.Count - 1];
                 PlaceLeftover(
+                    ResidualMm,
+                    Mask,
+                    InsideFraction,
+                    Line,
+                    End.Row,
+                    End.Col,
+                    Area,
+                    FillToBank,
+                    ref Bowl,
+                    Tally,
+                    Budget.CapMm);
+            }
+            if ((Bowl > 1e-12) && HasBelow(Next, ResidualMm, Budget.CapMm))
+            {
+                // The next line can take the load. Leave it in the bowl.
+                Carry = true;
+            }
+            else if ((Bowl > 1e-12) && (Budget.SignedM3 > 1e-12))
+            {
+                SpreadSink(
                     ResidualMm,
                     Mask,
                     InsideFraction,
@@ -622,64 +879,37 @@ namespace HaulBuilder
                     Area,
                     FillToBank,
                     ref Bowl,
-                    Tally);
+                    Tally,
+                    Budget,
+                    true);
             }
+            if ((Bowl > 1e-12) && !Carry)
+            {
+                // No low on this line or the next, and the surplus did not take the load.
+                return HaulToLow(
+                    ResidualMm,
+                    Mask,
+                    InsideFraction,
+                    Rows,
+                    Cols,
+                    End.Row,
+                    End.Col,
+                    Next,
+                    Area,
+                    CellSizeM,
+                    FillToBank,
+                    ref Bowl,
+                    Tally,
+                    Budget);
+            }
+            return (End.Row, End.Col, false);
         }
 
         /// <summary>
-        /// Adds at most one surplus step to a cell already between the target and +10 mm.
-        /// The cell is not raised past +10 mm.
-        /// </summary>
-        /// <param name="ResidualMm">Residual in millimetres.</param>
-        /// <param name="InsideFraction">Cell fraction, or null for 1.</param>
-        /// <param name="Row">Row.</param>
-        /// <param name="Col">Column.</param>
-        /// <param name="Area">Cell area in square metres.</param>
-        /// <param name="FillToBank">Bank per compacted volume.</param>
-        /// <param name="Bowl">Load in the bowl.</param>
-        /// <param name="Tally">Volumes for this coverage.</param>
-        private static void SpreadStep
-            (
-            Double[,] ResidualMm,
-            Double[,]? InsideFraction,
-            Int32 Row,
-            Int32 Col,
-            Double Area,
-            Double FillToBank,
-            ref Double Bowl,
-            Tally Tally
-            )
-        {
-            Double Fraction = FractionOf(InsideFraction, Row, Col);
-            if ((Fraction <= 0.0) || (Bowl <= 1e-12))
-            {
-                return;
-            }
-            Double Residual = ResidualMm[Row, Col];
-            if ((Residual < 0.0) || (Residual >= SURPLUS_MAX_MM))
-            {
-                return;
-            }
-            Double RoomMm = Math.Min(SURPLUS_STEP_MM, SURPLUS_MAX_MM - Residual);
-            if (RoomMm <= 1e-9)
-            {
-                return;
-            }
-            Double BankRoom = (RoomMm / 1000.0) * Area * Fraction * FillToBank;
-            Double Take = Math.Min(BankRoom, Bowl);
-            if (Take <= 0.0)
-            {
-                return;
-            }
-            Double Depth = Take / (Area * Fraction * FillToBank);
-            ResidualMm[Row, Col] = Residual + (Depth * 1000.0);
-            Bowl -= Take;
-            Tally.SurplusM3 += Take;
-        }
-
-        /// <summary>
-        /// Puts a leftover load on the nearest cell below the target.
-        /// Used only while the field still needs at least a quarter bowl of fill.
+        /// Drives a leftover load to the nearest low, drops it one lift at a time,
+        /// then drives to the start of the next line. Both legs are added to the
+        /// distance, so the hour estimate includes them. With no low left, the
+        /// load is spread on cells at the target and marked unbalanced.
         /// </summary>
         /// <param name="ResidualMm">Residual in millimetres.</param>
         /// <param name="Mask">Mask E.</param>
@@ -688,11 +918,17 @@ namespace HaulBuilder
         /// <param name="Cols">Column count.</param>
         /// <param name="FromRow">The cell the machine just finished.</param>
         /// <param name="FromCol">The column the machine just finished.</param>
+        /// <param name="Next">The following line. Null at the end of the coverage.</param>
         /// <param name="Area">Cell area in square metres.</param>
+        /// <param name="CellSizeM">Cell edge in metres.</param>
         /// <param name="FillToBank">Bank per compacted volume.</param>
         /// <param name="Bowl">Load in the bowl.</param>
-        /// <param name="Tally">Volumes for this coverage.</param>
-        private static void PlaceLeftover
+        /// <param name="Tally">Volumes and distance for this coverage.</param>
+        /// <param name="Budget">The balance cap, and the surplus still unused.</param>
+        /// <returns>
+        /// Where the machine stopped, and whether that cell is the start of the next line.
+        /// </returns>
+        private static (Int32 Row, Int32 Col, Boolean AtNextStart) HaulToLow
             (
             Double[,] ResidualMm,
             Boolean[,] Mask,
@@ -701,15 +937,105 @@ namespace HaulBuilder
             Int32 Cols,
             Int32 FromRow,
             Int32 FromCol,
+            List<(Int32 Row, Int32 Col)>? Next,
+            Double Area,
+            Double CellSizeM,
+            Double FillToBank,
+            ref Double Bowl,
+            Tally Tally,
+            Budget Budget
+            )
+        {
+            Int32 AtRow = FromRow;
+            Int32 AtCol = FromCol;
+            Boolean Hauled = false;
+            while (Bowl > 1e-12)
+            {
+                if (!NearestLow(ResidualMm, Mask, Rows, Cols, AtRow, AtCol, Budget.CapMm, out Int32 Row, out Int32 Col))
+                {
+                    break;
+                }
+                // The trip out to the low is part of this coverage.
+                Tally.DistanceM += StepMetres(AtRow, AtCol, Row, Col, CellSizeM);
+                Double Before = Bowl;
+                DropOnCell(
+                    ResidualMm,
+                    InsideFraction,
+                    Row,
+                    Col,
+                    Area,
+                    FillToBank,
+                    ref Bowl,
+                    Tally);
+                AtRow = Row;
+                AtCol = Col;
+                Hauled = true;
+                // A cell that cannot take soil would spin this loop.
+                if (Bowl >= (Before - 1e-12))
+                {
+                    break;
+                }
+            }
+            if (Bowl > 1e-12)
+            {
+                // No low can take the rest. Spread it and say so.
+                Tally.Unbalanced = true;
+                SpreadSink(
+                    ResidualMm,
+                    Mask,
+                    InsideFraction,
+                    Rows,
+                    Cols,
+                    AtRow,
+                    AtCol,
+                    Area,
+                    FillToBank,
+                    ref Bowl,
+                    Tally,
+                    Budget,
+                    false);
+            }
+            if (Hauled && (Next != null) && (Next.Count > 0))
+            {
+                // The trip back to the next line is charged as well.
+                Tally.DistanceM += StepMetres(AtRow, AtCol, Next[0].Row, Next[0].Col, CellSizeM);
+                return (Next[0].Row, Next[0].Col, true);
+            }
+            return (AtRow, AtCol, false);
+        }
+
+        /// <summary>
+        /// Puts a leftover load on the nearest cell below the target in the list.
+        /// </summary>
+        /// <param name="ResidualMm">Residual in millimetres.</param>
+        /// <param name="Mask">Mask E.</param>
+        /// <param name="InsideFraction">Cell fraction, or null for 1.</param>
+        /// <param name="Cells">Cells the machine may still reach on this line.</param>
+        /// <param name="FromRow">The cell the machine just finished.</param>
+        /// <param name="FromCol">The column the machine just finished.</param>
+        /// <param name="Area">Cell area in square metres.</param>
+        /// <param name="FillToBank">Bank per compacted volume.</param>
+        /// <param name="Bowl">Load in the bowl.</param>
+        /// <param name="Tally">Volumes for this coverage.</param>
+        /// <param name="CapMm">A cell inside this band is at the target, not a low.</param>
+        private static void PlaceLeftover
+            (
+            Double[,] ResidualMm,
+            Boolean[,] Mask,
+            Double[,]? InsideFraction,
+            List<(Int32 Row, Int32 Col)> Cells,
+            Int32 FromRow,
+            Int32 FromCol,
             Double Area,
             Double FillToBank,
             ref Double Bowl,
-            Tally Tally
+            Tally Tally,
+            Double CapMm
             )
         {
             while (Bowl > 1e-12)
             {
-                if (!NearestLow(ResidualMm, Mask, Rows, Cols, FromRow, FromCol, out Int32 Row, out Int32 Col))
+                if (!NearestBelow(ResidualMm, Mask, Cells, FromRow, FromCol, CapMm, out Int32 Row, out Int32 Col))
                 {
                     break;
                 }
@@ -729,6 +1055,135 @@ namespace HaulBuilder
                     break;
                 }
             }
+        }
+
+        /// <summary>
+        /// Raises cells at the target, nearest first, until the bowl, the cap, or S is spent.
+        /// </summary>
+        /// <param name="ResidualMm">Residual in millimetres.</param>
+        /// <param name="Mask">Mask E.</param>
+        /// <param name="InsideFraction">Cell fraction, or null for 1.</param>
+        /// <param name="Rows">Row count.</param>
+        /// <param name="Cols">Column count.</param>
+        /// <param name="FromRow">The cell the machine just finished.</param>
+        /// <param name="FromCol">The column the machine just finished.</param>
+        /// <param name="Area">Cell area in square metres.</param>
+        /// <param name="FillToBank">Bank per compacted volume.</param>
+        /// <param name="Bowl">Load in the bowl.</param>
+        /// <param name="Tally">Volumes for this coverage.</param>
+        /// <param name="Budget">Surplus still unused. Positive is a sink.</param>
+        /// <param name="ChargeBudget">
+        /// True spends the opening surplus. False places a leftover that has no low,
+        /// and does not spend that surplus.
+        /// </param>
+        private static void SpreadSink
+            (
+            Double[,] ResidualMm,
+            Boolean[,] Mask,
+            Double[,]? InsideFraction,
+            Int32 Rows,
+            Int32 Cols,
+            Int32 FromRow,
+            Int32 FromCol,
+            Double Area,
+            Double FillToBank,
+            ref Double Bowl,
+            Tally Tally,
+            Budget Budget,
+            Boolean ChargeBudget
+            )
+        {
+            while ((Bowl > 1e-12) && (!ChargeBudget || (Budget.SignedM3 > 1e-12)))
+            {
+                if (!NearestSink(ResidualMm, Mask, Rows, Cols, FromRow, FromCol, Budget.CapMm, out Int32 Row, out Int32 Col))
+                {
+                    break;
+                }
+                Double Fraction = FractionOf(InsideFraction, Row, Col);
+                Double Residual = ResidualMm[Row, Col];
+                Double RoomMm = Budget.CapMm - Residual;
+                if ((Fraction <= 0.0) || (RoomMm <= 1e-9))
+                {
+                    break;
+                }
+                Double BankRoom = (RoomMm / 1000.0) * Area * Fraction * FillToBank;
+                Double Take = Math.Min(BankRoom, Bowl);
+                if (ChargeBudget)
+                {
+                    Take = Math.Min(Take, Budget.SignedM3);
+                }
+                if (Take <= 0.0)
+                {
+                    break;
+                }
+                Double Depth = Take / (Area * Fraction * FillToBank);
+                ResidualMm[Row, Col] = Residual + (Depth * 1000.0);
+                Bowl -= Take;
+                if (ChargeBudget)
+                {
+                    Budget.SignedM3 -= Take;
+                }
+                Tally.SurplusM3 += Take;
+            }
+        }
+
+        /// <summary>
+        /// Cuts one cell at the target down toward the cap and puts that soil in the bowl.
+        /// </summary>
+        /// <param name="ResidualMm">Residual in millimetres.</param>
+        /// <param name="Mask">Mask E.</param>
+        /// <param name="InsideFraction">Cell fraction, or null for 1.</param>
+        /// <param name="Rows">Row count.</param>
+        /// <param name="Cols">Column count.</param>
+        /// <param name="FromRow">The low the soil is for.</param>
+        /// <param name="FromCol">The column of that low.</param>
+        /// <param name="Area">Cell area in square metres.</param>
+        /// <param name="BowlM3">Bowl capacity in bank cubic metres.</param>
+        /// <param name="Bowl">Load in the bowl.</param>
+        /// <param name="Tally">Volumes for this coverage.</param>
+        /// <param name="Budget">Deficit still unused. Negative is a source.</param>
+        private static void PullSource
+            (
+            Double[,] ResidualMm,
+            Boolean[,] Mask,
+            Double[,]? InsideFraction,
+            Int32 Rows,
+            Int32 Cols,
+            Int32 FromRow,
+            Int32 FromCol,
+            Double Area,
+            Double BowlM3,
+            ref Double Bowl,
+            Tally Tally,
+            Budget Budget
+            )
+        {
+            if ((Budget.SignedM3 >= -1e-12) || (Bowl >= (BowlM3 - 1e-12)))
+            {
+                return;
+            }
+            if (!NearestSource(ResidualMm, Mask, Rows, Cols, FromRow, FromCol, Budget.CapMm, out Int32 Row, out Int32 Col))
+            {
+                return;
+            }
+            Double Fraction = FractionOf(InsideFraction, Row, Col);
+            Double Residual = ResidualMm[Row, Col];
+            Double RoomMm = Residual + Budget.CapMm;
+            if ((Fraction <= 0.0) || (RoomMm <= 1e-9))
+            {
+                return;
+            }
+            Double BankRoom = (RoomMm / 1000.0) * Area * Fraction;
+            Double Take = Math.Min(BankRoom, Math.Min(BowlM3 - Bowl, -Budget.SignedM3));
+            if (Take <= 0.0)
+            {
+                return;
+            }
+            Double Depth = Take / (Area * Fraction);
+            ResidualMm[Row, Col] = Residual - (Depth * 1000.0);
+            Bowl += Take;
+            Budget.SignedM3 += Take;
+            Tally.CutM3 += Take;
         }
 
         /// <summary>
@@ -779,15 +1234,14 @@ namespace HaulBuilder
             return Take;
         }
 
-        /// <summary>
-        /// The nearest masked cell below the target.
-        /// </summary>
+        /// <summary>The nearest masked cell still below the balance cap.</summary>
         /// <param name="ResidualMm">Residual in millimetres.</param>
         /// <param name="Mask">Mask E.</param>
         /// <param name="Rows">Row count.</param>
         /// <param name="Cols">Column count.</param>
         /// <param name="FromRow">Origin row.</param>
         /// <param name="FromCol">Origin column.</param>
+        /// <param name="CapMm">A cell inside this band is at the target, not a low.</param>
         /// <param name="Row">The chosen row.</param>
         /// <param name="Col">The chosen column.</param>
         /// <returns>True when a cell was found.</returns>
@@ -799,6 +1253,104 @@ namespace HaulBuilder
             Int32 Cols,
             Int32 FromRow,
             Int32 FromCol,
+            Double CapMm,
+            out Int32 Row,
+            out Int32 Col
+            )
+        {
+            Row = -1;
+            Col = -1;
+            Double Best = Double.PositiveInfinity;
+            for (Int32 NextRow = 0; NextRow < Rows; NextRow += 1)
+            {
+                for (Int32 NextCol = 0; NextCol < Cols; NextCol += 1)
+                {
+                    if (!Mask[NextRow, NextCol] || (ResidualMm[NextRow, NextCol] >= -(CapMm + 1e-6)))
+                    {
+                        continue;
+                    }
+                    Double Dy = NextRow - FromRow;
+                    Double Dx = NextCol - FromCol;
+                    Double Distance = (Dy * Dy) + (Dx * Dx);
+                    if ((Distance < Best)
+                        || ((Distance == Best) && ((NextRow < Row) || ((NextRow == Row) && (NextCol < Col)))))
+                    {
+                        Best = Distance;
+                        Row = NextRow;
+                        Col = NextCol;
+                    }
+                }
+            }
+            return Row >= 0;
+        }
+
+        /// <summary>The nearest cell in the list that is still below the target.</summary>
+        /// <param name="ResidualMm">Residual in millimetres.</param>
+        /// <param name="Mask">Mask E.</param>
+        /// <param name="Cells">Cells that may be used.</param>
+        /// <param name="FromRow">Origin row.</param>
+        /// <param name="FromCol">Origin column.</param>
+        /// <param name="CapMm">A cell inside this band is at the target, not a low.</param>
+        /// <param name="Row">The chosen row.</param>
+        /// <param name="Col">The chosen column.</param>
+        /// <returns>True when a cell was found.</returns>
+        private static Boolean NearestBelow
+            (
+            Double[,] ResidualMm,
+            Boolean[,] Mask,
+            List<(Int32 Row, Int32 Col)> Cells,
+            Int32 FromRow,
+            Int32 FromCol,
+            Double CapMm,
+            out Int32 Row,
+            out Int32 Col
+            )
+        {
+            Row = -1;
+            Col = -1;
+            Double Best = Double.PositiveInfinity;
+            for (Int32 Index = 0; Index < Cells.Count; Index += 1)
+            {
+                Int32 NextRow = Cells[Index].Row;
+                Int32 NextCol = Cells[Index].Col;
+                if (!Mask[NextRow, NextCol] || (ResidualMm[NextRow, NextCol] >= -(CapMm + 1e-6)))
+                {
+                    continue;
+                }
+                Double Dy = NextRow - FromRow;
+                Double Dx = NextCol - FromCol;
+                Double Distance = (Dy * Dy) + (Dx * Dx);
+                if ((Distance < Best)
+                    || ((Distance == Best) && ((NextRow < Row) || ((NextRow == Row) && (NextCol < Col)))))
+                {
+                    Best = Distance;
+                    Row = NextRow;
+                    Col = NextCol;
+                }
+            }
+            return Row >= 0;
+        }
+
+        /// <summary>The nearest cell at the target that can still be raised by the cap.</summary>
+        /// <param name="ResidualMm">Residual in millimetres.</param>
+        /// <param name="Mask">Mask E.</param>
+        /// <param name="Rows">Row count.</param>
+        /// <param name="Cols">Column count.</param>
+        /// <param name="FromRow">Origin row.</param>
+        /// <param name="FromCol">Origin column.</param>
+        /// <param name="CapMm">Most the cell may sit above the target.</param>
+        /// <param name="Row">The chosen row.</param>
+        /// <param name="Col">The chosen column.</param>
+        /// <returns>True when a cell was found.</returns>
+        private static Boolean NearestSink
+            (
+            Double[,] ResidualMm,
+            Boolean[,] Mask,
+            Int32 Rows,
+            Int32 Cols,
+            Int32 FromRow,
+            Int32 FromCol,
+            Double CapMm,
             out Int32 Row,
             out Int32 Col
             )
@@ -814,7 +1366,65 @@ namespace HaulBuilder
                     {
                         continue;
                     }
-                    if (ResidualMm[NextRow, NextCol] >= -1e-6)
+                    Double Residual = ResidualMm[NextRow, NextCol];
+                    // A high is cut, not used as a sink. Room remains up to the cap.
+                    if ((Residual < -1e-6) || (Residual >= (CapMm - 1e-6)))
+                    {
+                        continue;
+                    }
+                    Double Dy = NextRow - FromRow;
+                    Double Dx = NextCol - FromCol;
+                    Double Distance = (Dy * Dy) + (Dx * Dx);
+                    if ((Distance < Best)
+                        || ((Distance == Best) && ((NextRow < Row) || ((NextRow == Row) && (NextCol < Col)))))
+                    {
+                        Best = Distance;
+                        Row = NextRow;
+                        Col = NextCol;
+                    }
+                }
+            }
+            return Row >= 0;
+        }
+
+        /// <summary>The nearest cell at the target that can still be lowered by the cap.</summary>
+        /// <param name="ResidualMm">Residual in millimetres.</param>
+        /// <param name="Mask">Mask E.</param>
+        /// <param name="Rows">Row count.</param>
+        /// <param name="Cols">Column count.</param>
+        /// <param name="FromRow">Origin row.</param>
+        /// <param name="FromCol">Origin column.</param>
+        /// <param name="CapMm">Most the cell may sit below the target.</param>
+        /// <param name="Row">The chosen row.</param>
+        /// <param name="Col">The chosen column.</param>
+        /// <returns>True when a cell was found.</returns>
+        private static Boolean NearestSource
+            (
+            Double[,] ResidualMm,
+            Boolean[,] Mask,
+            Int32 Rows,
+            Int32 Cols,
+            Int32 FromRow,
+            Int32 FromCol,
+            Double CapMm,
+            out Int32 Row,
+            out Int32 Col
+            )
+        {
+            Row = -1;
+            Col = -1;
+            Double Best = Double.PositiveInfinity;
+            for (Int32 NextRow = 0; NextRow < Rows; NextRow += 1)
+            {
+                for (Int32 NextCol = 0; NextCol < Cols; NextCol += 1)
+                {
+                    if (!Mask[NextRow, NextCol] || ((NextRow == FromRow) && (NextCol == FromCol)))
+                    {
+                        continue;
+                    }
+                    Double Residual = ResidualMm[NextRow, NextCol];
+                    // A hole is filled, not used as a source. Room remains down to the cap.
+                    if ((Residual > 1e-6) || (Residual <= (-CapMm + 1e-6)))
                     {
                         continue;
                     }
@@ -834,18 +1444,74 @@ namespace HaulBuilder
         }
 
         /// <summary>
-        /// True when another coverage can still help. A long group or a deep group qualifies.
+        /// S = total cut minus total fill, in bank cubic metres, measured once.
+        /// The cap is one third of the tolerance.
         /// </summary>
+        /// <param name="ResidualMm">Residual in millimetres.</param>
+        /// <param name="Mask">Mask E.</param>
+        /// <param name="InsideFraction">Cell fraction, or null for 1.</param>
+        /// <param name="Rows">Row count.</param>
+        /// <param name="Cols">Column count.</param>
+        /// <param name="Area">Cell area in square metres.</param>
+        /// <param name="FillToBank">Bank per compacted volume.</param>
+        /// <param name="ToleranceMm">Grade tolerance in millimetres.</param>
+        /// <returns>The balance.</returns>
+        private static Budget OpeningBalance
+            (
+            Double[,] ResidualMm,
+            Boolean[,] Mask,
+            Double[,]? InsideFraction,
+            Int32 Rows,
+            Int32 Cols,
+            Double Area,
+            Double FillToBank,
+            Double ToleranceMm
+            )
+        {
+            Double Cut = 0.0;
+            Double Fill = 0.0;
+            for (Int32 Row = 0; Row < Rows; Row += 1)
+            {
+                for (Int32 Col = 0; Col < Cols; Col += 1)
+                {
+                    if (!Mask[Row, Col])
+                    {
+                        continue;
+                    }
+                    Double Fraction = FractionOf(InsideFraction, Row, Col);
+                    if (Fraction <= 0.0)
+                    {
+                        continue;
+                    }
+                    Double Residual = ResidualMm[Row, Col];
+                    if (Residual > 0.0)
+                    {
+                        Cut += (Residual / 1000.0) * Area * Fraction;
+                    }
+                    else if (Residual < 0.0)
+                    {
+                        Fill += (-Residual / 1000.0) * Area * Fraction * FillToBank;
+                    }
+                }
+            }
+            return new Budget
+            {
+                SignedM3 = Cut - Fill,
+                CapMm = ToleranceMm / 3.0,
+            };
+        }
+
+        /// <summary>True when a group is still long or deep.</summary>
         /// <param name="Groups">Groups outside +/-30 mm.</param>
-        /// <returns>True when the next coverage should run.</returns>
-        private static Boolean NeedsAnotherCoverage
+        /// <returns>True when the planing gate fails.</returns>
+        private static Boolean GateFails
             (
             List<CorrectingGroup> Groups
             )
         {
             foreach (CorrectingGroup Group in Groups)
             {
-                if ((Group.LengthM > PLANE_LEN_M) || (Group.PeakMm > DEEP_MM))
+                if (FailsPlaningGate(Group))
                 {
                     return true;
                 }
@@ -854,8 +1520,29 @@ namespace HaulBuilder
         }
 
         /// <summary>
+        /// Bank cubic yards in the groups the planing gate still rejects.
+        /// That is the haul error a coverage is measured against.
+        /// </summary>
+        /// <param name="Groups">Groups outside +/-30 mm.</param>
+        /// <returns>The haul error, in bank cubic yards.</returns>
+        private static Double HaulErrorBcy
+            (
+            List<CorrectingGroup> Groups
+            )
+        {
+            Double Error = 0.0;
+            foreach (CorrectingGroup Group in Groups)
+            {
+                if (FailsPlaningGate(Group))
+                {
+                    Error += Group.Bcy;
+                }
+            }
+            return Error;
+        }
+
+        /// <summary>
         /// True when a group is not shorter than 12 m or is outside +/-50 mm.
-        /// Another coverage can still help, until the coverage cap.
         /// </summary>
         /// <param name="Group">One group outside +/-30 mm.</param>
         /// <returns>True when the group is still long or deep.</returns>
@@ -1468,6 +2155,11 @@ namespace HaulBuilder
                 Say(Lines, String.Format(CultureInfo.InvariantCulture, "turns: {0}", Coverage.Turns));
                 Say(Lines, String.Format(CultureInfo.InvariantCulture, "hours: {0:R}", Coverage.Hours));
             }
+            Say(Lines, "stop: " + Result.StopReason);
+            if (Result.UnbalancedSurplus)
+            {
+                Say(Lines, UNBALANCED_SURPLUS);
+            }
             if (Result.ReadyForPlaning)
             {
                 Say(Lines, "correcting finished");
@@ -1517,6 +2209,16 @@ namespace HaulBuilder
             Console.WriteLine(Text);
         }
 
+        /// <summary>The opening imbalance. Positive is surplus still to sink. Negative is deficit still to source.</summary>
+        private sealed class Budget
+        {
+            /// <summary>Gets or sets the unused balance in bank cubic metres.</summary>
+            public Double SignedM3 { get; set; }
+
+            /// <summary>Gets or sets the most one cell at the target may move, in millimetres.</summary>
+            public Double CapMm { get; set; }
+        }
+
         /// <summary>
         /// Volumes and travel for one coverage.
         /// </summary>
@@ -1536,6 +2238,9 @@ namespace HaulBuilder
 
             /// <summary>Gets or sets serpentine turns.</summary>
             public Int32 Turns { get; set; }
+
+            /// <summary>Gets or sets whether a leftover load had no low left to take it.</summary>
+            public Boolean Unbalanced { get; set; }
         }
     }
 
@@ -1669,6 +2374,8 @@ namespace HaulBuilder
         /// <param name="SurplusSpreadM3">Bank cubic metres spread as surplus.</param>
         /// <param name="BowlLeftM3">Bank cubic metres still in the bowl.</param>
         /// <param name="CoveragesRun">How many coverages ran.</param>
+        /// <param name="StopReason">Why the coverages stopped.</param>
+        /// <param name="UnbalancedSurplus">True when a leftover load had no low left to take it.</param>
         public CorrectingResult
             (
             IReadOnlyList<CorrectingCoverage> Coverages,
@@ -1678,7 +2385,9 @@ namespace HaulBuilder
             Double FillPlacedM3,
             Double SurplusSpreadM3,
             Double BowlLeftM3,
-            Int32 CoveragesRun
+            Int32 CoveragesRun,
+            String StopReason,
+            Boolean UnbalancedSurplus
             )
         {
             this.Coverages = Coverages;
@@ -1689,6 +2398,8 @@ namespace HaulBuilder
             this.SurplusSpreadM3 = SurplusSpreadM3;
             this.BowlLeftM3 = BowlLeftM3;
             this.CoveragesRun = CoveragesRun;
+            this.StopReason = StopReason;
+            this.UnbalancedSurplus = UnbalancedSurplus;
         }
 
         /// <summary>Gets the coverage reports.</summary>
@@ -1714,5 +2425,11 @@ namespace HaulBuilder
 
         /// <summary>Gets how many coverages ran.</summary>
         public Int32 CoveragesRun { get; }
+
+        /// <summary>Gets why the coverages stopped.</summary>
+        public String StopReason { get; }
+
+        /// <summary>Gets whether a leftover load had no low left to take it.</summary>
+        public Boolean UnbalancedSurplus { get; }
     }
 }

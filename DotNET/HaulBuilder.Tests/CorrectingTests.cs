@@ -4,10 +4,10 @@ using System.Collections.Generic;
 namespace HaulBuilder.Tests
 {
     /// <summary>
-    /// Coverage passes. One line balances a cut and a fill. A full bowl carries
-    /// and drops. Surplus mode spreads a ridge at most 3 mm per cell, up to
-    /// +10 mm. A deep pocket takes one 100 mm lift per coverage. Cut, fill,
-    /// and surplus share one bank total.
+    /// Coverage passes. One line balances a cut and a fill. The headland lap
+    /// is a second pass in the same coverage. Surplus sinks onto cells at the
+    /// target, up to one third of the tolerance. A deep pocket takes one
+    /// 100 mm lift per visit. Cut, fill, and surplus share one bank total.
     /// </summary>
     public sealed class CorrectingTests
     {
@@ -53,9 +53,9 @@ namespace HaulBuilder.Tests
 
         /// <summary>
         /// Sixty cells at +40 mm are more than one bowl, then sixty at -40 mm.
-        /// The bowl fills, the rest of the high cells are carried past, and the
-        /// load is dropped on the lows. No high cell is cut through the target.
-        /// The cells left high are in the group report. Correcting stops there.
+        /// The first strip fills the bowl and drops it on the lows. The headland
+        /// lap is the second strip and finishes the rest. No high is cut through
+        /// the target. The lap is the one turn.
         /// </summary>
         [Fact]
         public void FullBowlCarriesAndDrops()
@@ -72,7 +72,7 @@ namespace HaulBuilder.Tests
             {
                 Residual[0, Col] = -40.0;
             }
-            // One coverage, so a second pass cannot hide the cells the bowl skipped.
+            // One coverage. The headland lap is inside it, so both strips run.
             CorrectingResult Result = Correcting.Run(
                 Residual,
                 Mask(1, Count),
@@ -82,46 +82,24 @@ namespace HaulBuilder.Tests
                 CELL_M,
                 PAN_M,
                 BowlBcy(10.0),
-                1.0,
-                null,
-                1);
-            Int32 StillHigh = 0;
-            Int32 Raised = 0;
+                1.0);
             for (Int32 Col = 0; Col < Count; Col += 1)
             {
-                if (Col < Highs)
-                {
-                    Assert.True(Residual[0, Col] >= -0.5);
-                    if (Residual[0, Col] > 30.0)
-                    {
-                        StillHigh += 1;
-                    }
-                }
-                else
-                {
-                    Assert.True(Residual[0, Col] >= -40.5);
-                    if (Residual[0, Col] > -5.0)
-                    {
-                        Raised += 1;
-                    }
-                }
+                Assert.InRange(Residual[0, Col], -0.5, 0.5);
             }
-            Assert.True(StillHigh > 0);
-            Assert.True(Raised > 0);
-            Assert.False(Result.ReadyForPlaning);
-            Assert.NotEmpty(Result.FailedGroups);
-            Assert.Contains(Result.Coverages[0].Groups, Group => Group.PeakMm >= 35.0);
-            Assert.True(Result.Coverages[0].DistanceM > 0.0);
-            // One strip the length of the field. There is no turn to make.
-            Assert.Equal(0, Result.Coverages[0].Turns);
+            Assert.True(Result.ReadyForPlaning);
+            Assert.Empty(Result.FailedGroups);
+            // Two strips of 119 steps, plus the return from the far end to the start.
+            Assert.InRange(Result.Coverages[0].DistanceM, 850.0, 950.0);
+            Assert.Equal(1, Result.Coverages[0].Turns);
             Assert.True(Result.Coverages[0].Hours > 0.0);
         }
 
         /// <summary>
         /// The field is on the target except a 10-cell ridge at +150 mm.
-        /// Surplus mode cuts the ridge to the target and spreads that soil
-        /// at most 3 mm per cell, so nothing finishes above +10 mm.
-        /// The cut, the spread, and any load left in the bowl are the same volume.
+        /// The ridge is cut to the target. The surplus sinks onto cells at the
+        /// target, at most one third of the 10 mm tolerance. The cut, the
+        /// spread, and any load left in the bowl are the same volume.
         /// </summary>
         [Fact]
         public void SurplusModeCutsTheRidgeAndSpreadsThinly()
@@ -147,17 +125,18 @@ namespace HaulBuilder.Tests
                 PAN_M,
                 BowlBcy(100.0),
                 1.0);
+            Double CapMm = 10.0 / 3.0;
             Double EndM3 = 0.0;
             for (Int32 Col = 0; Col < Count; Col += 1)
             {
-                Assert.InRange(Residual[0, Col], -0.5, Correcting.SURPLUS_MAX_MM + 0.5);
+                Assert.InRange(Residual[0, Col], -0.5, CapMm + 0.05);
                 if (Col < Ridge)
                 {
                     Assert.InRange(Residual[0, Col], -0.5, 0.5);
                 }
                 else
                 {
-                    Assert.InRange(Residual[0, Col], 0.0, Correcting.SURPLUS_STEP_MM + 0.5);
+                    Assert.InRange(Residual[0, Col], 0.0, CapMm + 0.05);
                 }
                 EndM3 += (Residual[0, Col] / 1000.0) * Area;
             }
@@ -192,9 +171,7 @@ namespace HaulBuilder.Tests
                 CELL_M,
                 PAN_M,
                 BowlBcy(3.0),
-                1.0,
-                null,
-                1);
+                1.0);
             for (Int32 Col = 4; Col < 40; Col += 1)
             {
                 Assert.InRange(Residual[0, Col], -0.5, 0.5);
@@ -208,8 +185,11 @@ namespace HaulBuilder.Tests
         }
 
         /// <summary>
-        /// Three cells at -250 mm take one 100 mm lift on the first coverage
-        /// and finish at -150 mm. The second coverage lifts them again.
+        /// Three cells at -250 mm. The flow strip places one 100 mm lift.
+        /// The headland lap spends the rest of the cut on the same coverage,
+        /// so the pocket is about -50, -90, and -127 mm. Coverages continue
+        /// while that pocket fails the planing gate and each pass reduces
+        /// the haul error by at least one percent.
         /// </summary>
         [Fact]
         public void DeepPocketTakesOneLiftPerCoverage()
@@ -237,33 +217,35 @@ namespace HaulBuilder.Tests
                 PAN_M,
                 BowlBcy(2.0),
                 1.0);
-            Assert.Equal(2, Result.CoveragesRun);
-            Double FirstSum = 0.0;
-            Double FirstLow = 0.0;
+            Assert.True(Result.CoveragesRun > 2);
+            Assert.False(String.IsNullOrEmpty(Result.StopReason));
             Double[,] First = Result.Coverages[0].ResidualMm;
-            for (Int32 Col = Highs; Col < Count; Col += 1)
-            {
-                // The drive places one 100 mm lift. The leftover also goes into the pocket.
-                Assert.InRange(First[0, Col], -151.0, -120.0);
-                FirstSum += First[0, Col];
-                if (First[0, Col] < FirstLow)
-                {
-                    FirstLow = First[0, Col];
-                }
-            }
-            Assert.True(FirstLow <= -149.0);
+            // Flow strip: 100 mm, then the leftover 20 mm on the last cell.
+            // Headland: the last 1.0 m3 of cut, so 100 mm and 60 mm. The last
+            // cell is still low with an empty bowl, so one cap of source follows.
+            Assert.InRange(First[0, Highs], -51.0, -49.0);
+            Assert.InRange(First[0, Highs + 1], -91.0, -89.0);
+            Assert.InRange(First[0, Highs + 2], -127.0, -126.0);
+            Double FirstSum = First[0, Highs] + First[0, Highs + 1] + First[0, Highs + 2];
             Double SecondSum = 0.0;
             for (Int32 Col = Highs; Col < Count; Col += 1)
             {
-                Assert.True(Residual[0, Col] <= 0.5);
+                // Later coverages keep lifting the pocket.
+                Assert.True(Residual[0, Col] > First[0, Col]);
                 SecondSum += Residual[0, Col];
             }
-            Assert.True(SecondSum > (FirstSum + 50.0));
+            Assert.True(SecondSum > FirstSum);
+            Assert.True(
+                (Result.StopReason == Correcting.STOP_PLANING)
+                || (Result.StopReason == Correcting.STOP_HAUL_ERROR));
         }
 
         /// <summary>
         /// Cut bank equals fill bank plus surplus bank. The fill uses the
         /// bank factor, so 100 mm of compacted lift is not 100 mm of bank.
+        /// Later coverages keep cutting cells at the target until each one
+        /// is down at the cap. The hole is still deeper than 50 mm, so the
+        /// stop reason is the haul error.
         /// </summary>
         [Fact]
         public void CutEqualsFillPlusSurplus()
@@ -276,7 +258,7 @@ namespace HaulBuilder.Tests
                 Residual[0, Col] = 40.0;
             }
             Residual[0, Highs] = -200.0;
-            // One coverage. A 3 m3 bowl keeps the hole above a quarter bowl after the 100 mm lift.
+            // The opening cut is 1 m3 and the hole needs 1.5 m3 of bank.
             CorrectingResult Result = Correcting.Run(
                 Residual,
                 Mask(1, Count),
@@ -286,15 +268,19 @@ namespace HaulBuilder.Tests
                 CELL_M,
                 PAN_M,
                 BowlBcy(3.0),
-                1.2,
-                null,
-                1);
-            // The 100 mm lift uses 0.75 m3 at 1.2. The leftover 0.25 m3 goes back into the hole.
-            Assert.InRange(Residual[0, Highs], -68.0, -65.0);
-            Assert.Equal(1.0, Result.CutRemovedM3, 3);
-            Assert.Equal(1.0, Result.FillPlacedM3, 3);
+                1.2);
+            // The first coverage leaves the hole near -63.9 mm. Later coverages
+            // use the other cells at the target, and the hole finishes near -55.6 mm.
+            Assert.InRange(Result.Coverages[0].ResidualMm[0, Highs], -64.0, -63.7);
+            Assert.InRange(Residual[0, Highs], -56.0, -55.0);
+            for (Int32 Col = 0; Col < Highs; Col += 1)
+            {
+                Assert.InRange(Residual[0, Col], (-10.0 / 3.0) - 0.05, (-10.0 / 3.0) + 0.05);
+            }
+            Assert.Equal(Correcting.STOP_HAUL_ERROR, Result.StopReason);
             Assert.Equal(0.0, Result.SurplusSpreadM3, 3);
             Assert.Equal(0.0, Result.BowlLeftM3, 3);
+            Assert.True(Result.CutRemovedM3 > 1.0);
             Assert.Equal(
                 Result.CutRemovedM3,
                 Result.FillPlacedM3 + Result.SurplusSpreadM3 + Result.BowlLeftM3,
@@ -335,6 +321,78 @@ namespace HaulBuilder.Tests
                 Grid.MaxDepthMm / 1000.0,
                 true);
             Assert.True(Validation.Success, String.Join(" | ", Validation.Issues));
+        }
+
+        /// <summary>
+        /// The low is two lines away, so the leftover load leaves the strip,
+        /// drops, and returns to the next line. Both legs are in the distance,
+        /// and the hour estimate uses that distance.
+        /// </summary>
+        [Fact]
+        public void LeftoverLoadHaulsToADistantLow()
+        {
+            const Int32 Rows = 3;
+            const Int32 Cols = 8;
+            Double[,] Residual = new Double[Rows, Cols];
+            Residual[0, 0] = 40.0;
+            Residual[2, 0] = -40.0;
+            CorrectingResult Result = Correcting.Run(
+                Residual,
+                Mask(Rows, Cols),
+                East(Rows, Cols),
+                North(Rows, Cols),
+                Arrows(Rows, Cols),
+                CELL_M,
+                PAN_M,
+                BowlBcy(10.0),
+                1.0);
+            Assert.InRange(Residual[0, 0], -0.5, 0.5);
+            Assert.InRange(Residual[2, 0], -0.5, 0.5);
+            Assert.Equal(0.0, Result.BowlLeftM3, 6);
+            Assert.False(Result.UnbalancedSurplus);
+            Assert.Equal(Correcting.STOP_PLANING, Result.StopReason);
+            // Without the out-and-back the coverage is about 133 m. With both legs it is 167 m.
+            Assert.InRange(Result.Coverages[0].DistanceM, 160.0, 175.0);
+            Double Hours = ((Result.Coverages[0].DistanceM / Correcting.V_PASS_MS)
+                + (Result.Coverages[0].Turns * Correcting.T_TURN_S)) / 3600.0;
+            Assert.Equal(Hours, Result.Coverages[0].Hours, 9);
+        }
+
+        /// <summary>
+        /// Every cell is high, so the bowl cannot find a low. The load that
+        /// does not fit under the cap is reported as unbalanced surplus.
+        /// </summary>
+        [Fact]
+        public void LeftoverWithNoLowIsUnbalancedSurplus()
+        {
+            const Int32 Count = 4;
+            Double[,] Residual = new Double[1, Count];
+            for (Int32 Col = 0; Col < Count; Col += 1)
+            {
+                Residual[0, Col] = 150.0;
+            }
+            CorrectingResult Result = Correcting.Run(
+                Residual,
+                Mask(1, Count),
+                East(1, Count),
+                North(1, Count),
+                Arrows(1, Count),
+                CELL_M,
+                PAN_M,
+                BowlBcy(100.0),
+                1.0);
+            Assert.True(Result.UnbalancedSurplus);
+            Assert.True(Result.BowlLeftM3 > 1.0);
+            Assert.Equal(Correcting.STOP_PLANING, Result.StopReason);
+            Double CapMm = 10.0 / 3.0;
+            for (Int32 Col = 0; Col < Count; Col += 1)
+            {
+                Assert.InRange(Residual[0, Col], 0.0, CapMm + 0.05);
+            }
+            Assert.Equal(
+                Result.CutRemovedM3,
+                Result.FillPlacedM3 + Result.SurplusSpreadM3 + Result.BowlLeftM3,
+                4);
         }
 
         /// <summary>
