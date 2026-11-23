@@ -1502,6 +1502,10 @@ namespace HaulBuilder
         /// <param name="DrawDirectionArrows">Whether to draw arrowheads along the complete route.</param>
         /// <param name="DirectionArrowSpacingM">Distance between route arrowheads in metres.</param>
         /// <param name="BoundsPoints">Optional non-drawn points used to keep animation crops stable.</param>
+        /// <param name="Surface">
+        /// Existing-minus-target still in the ground, in metres, indexed [row, column].
+        /// Null paints the original survey.
+        /// </param>
         /// <returns>Cropped PNG bytes.</returns>
         static public Byte[] RenderCoverageRunsPng
             (
@@ -1516,12 +1520,14 @@ namespace HaulBuilder
             IReadOnlyList<((Double X, Double Y) Point, String Label)>? RouteMarkers = null,
             Boolean DrawDirectionArrows = false,
             Double DirectionArrowSpacingM = 0.0,
-            IReadOnlyList<(Double X, Double Y)>? BoundsPoints = null
+            IReadOnlyList<(Double X, Double Y)>? BoundsPoints = null,
+            Double[,]? Surface = null
             )
         {
             // Draw each work run independently so blade-up repositioning never becomes a thick work overlay.
             Int32 Ppb = Math.Max(1, PixelsPerBin);
-            using Image<Rgba32> Base = DiffToImageDigitize(Grid.Delta(), Grid.Valid, Ppb);
+            // A haul sheet shows the ground this load is about to touch.
+            using Image<Rgba32> Base = DiffToImageDigitize(Surface ?? Grid.Delta(), Grid.Valid, Ppb);
             for (Int32 Y = 0; Y < Base.Height; Y += 1)
             {
                 for (Int32 X = 0; X < Base.Width; X += 1)
@@ -1641,6 +1647,10 @@ namespace HaulBuilder
         /// <param name="BladeWidthM">Blade width in metres.</param>
         /// <param name="PixelsPerBin">Render scale in pixels per grid cell.</param>
         /// <param name="PadCells">Crop padding in cells.</param>
+        /// <param name="Surface">
+        /// Existing-minus-target still in the ground, in metres, indexed [row, column].
+        /// Null paints the original survey.
+        /// </param>
         /// <returns>Cropped PNG bytes.</returns>
         static public Byte[] RenderConsecutiveRouteSequencePng
             (
@@ -1650,7 +1660,8 @@ namespace HaulBuilder
             Int32 RouteCount,
             Double BladeWidthM,
             Int32 PixelsPerBin = 24,
-            Int32 PadCells = 8
+            Int32 PadCells = 8,
+            Double[,]? Surface = null
             )
         {
             if (Lifecycle == null) throw new ArgumentNullException(nameof(Lifecycle));
@@ -1719,7 +1730,8 @@ namespace HaulBuilder
                 ManualRuns,
                 Markers,
                 DrawDirectionArrows: true,
-                DirectionArrowSpacingM: 6.0 * Grid.GridSizeM);
+                DirectionArrowSpacingM: 6.0 * Grid.GridSizeM,
+                Surface: Surface);
         }
 
         /// <summary>
