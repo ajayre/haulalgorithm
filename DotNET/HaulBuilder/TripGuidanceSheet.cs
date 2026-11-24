@@ -100,6 +100,7 @@ namespace HaulBuilder
                 }
 
                 CropToPath(Image, Grid, PixelsPerCell, OriginX, OriginY, Trip);
+                DrawLabel(Image, Trip.TripNumber, Trip.ExecutionIndex);
                 Image.SaveAsPng(Path);
             }
         }
@@ -614,6 +615,117 @@ namespace HaulBuilder
             )
         {
             return ((B.X - A.X) * (C.Y - A.Y)) - ((B.Y - A.Y) * (C.X - A.X));
+        }
+
+        /// <summary>
+        /// Paints the original trip number and the 1-based execution index in
+        /// the corner of the sheet, after the path has been cropped.
+        /// </summary>
+        /// <param name="Image">The sheet.</param>
+        /// <param name="TripNumber">Original 1-based trip number.</param>
+        /// <param name="ExecutionIndex">1-based position in drive order. Zero prints a dash.</param>
+        private static void DrawLabel
+            (
+            Image<Rgba32> Image,
+            Int32 TripNumber,
+            Int32 ExecutionIndex
+            )
+        {
+            String Text = (ExecutionIndex > 0)
+                ? String.Format(System.Globalization.CultureInfo.InvariantCulture, "{0}/{1}", TripNumber, ExecutionIndex)
+                : TripNumber.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            const Int32 Scale = 2;
+            const Int32 Pad = 3;
+            Int32 Width = (Text.Length * 6 * Scale) + (Pad * 2);
+            Int32 Height = (7 * Scale) + (Pad * 2);
+            if (Width > Image.Width)
+            {
+                Width = Image.Width;
+            }
+
+            if (Height > Image.Height)
+            {
+                Height = Image.Height;
+            }
+
+            for (Int32 Y = 0; Y < Height; Y += 1)
+            {
+                for (Int32 X = 0; X < Width; X += 1)
+                {
+                    Image[X, Y] = new Rgba32(255, 255, 255);
+                }
+            }
+
+            Int32 Cursor = Pad;
+            foreach (Char GlyphChar in Text)
+            {
+                String Rows = GlyphRows(GlyphChar);
+                String[] Split = Rows.Split(';');
+                for (Int32 Row = 0; Row < Split.Length; Row += 1)
+                {
+                    for (Int32 Column = 0; Column < Split[Row].Length; Column += 1)
+                    {
+                        if (Split[Row][Column] != '1')
+                        {
+                            continue;
+                        }
+
+                        for (Int32 Y = 0; Y < Scale; Y += 1)
+                        {
+                            for (Int32 X = 0; X < Scale; X += 1)
+                            {
+                                Int32 PixelX = Cursor + (Column * Scale) + X;
+                                Int32 PixelY = Pad + (Row * Scale) + Y;
+                                if ((PixelX >= 0) && (PixelX < Image.Width) && (PixelY >= 0) && (PixelY < Image.Height))
+                                {
+                                    Image[PixelX, PixelY] = new Rgba32(0, 0, 0);
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Cursor += 6 * Scale;
+            }
+        }
+
+        /// <summary>
+        /// Seven rows of a 5-wide glyph, ones for ink, separated by semicolons.
+        /// </summary>
+        /// <param name="GlyphChar">A digit or a slash.</param>
+        /// <returns>The rows.</returns>
+        private static String GlyphRows
+            (
+            Char GlyphChar
+            )
+        {
+            switch (GlyphChar)
+            {
+                case '0':
+                    return "11111;10001;10001;10001;10001;10001;11111";
+                case '1':
+                    return "00100;01100;00100;00100;00100;00100;01110";
+                case '2':
+                    return "11111;00001;00001;11111;10000;10000;11111";
+                case '3':
+                    return "11111;00001;00001;11111;00001;00001;11111";
+                case '4':
+                    return "10001;10001;10001;11111;00001;00001;00001";
+                case '5':
+                    return "11111;10000;10000;11111;00001;00001;11111";
+                case '6':
+                    return "11111;10000;10000;11111;10001;10001;11111";
+                case '7':
+                    return "11111;00001;00001;00010;00100;00100;00100";
+                case '8':
+                    return "11111;10001;10001;11111;10001;10001;11111";
+                case '9':
+                    return "11111;10001;10001;11111;00001;00001;11111";
+                case '/':
+                    return "00001;00010;00010;00100;01000;01000;10000";
+                default:
+                    return "00000;00000;00000;00000;00000;00000;00000";
+            }
         }
 
         /// <summary>

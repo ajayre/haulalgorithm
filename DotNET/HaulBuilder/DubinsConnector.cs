@@ -30,11 +30,14 @@ namespace HaulBuilder
         /// <summary>A word that misses the end heading by more than this is not that word.</summary>
         private const Double END_MISS_RAD = 0.01;
 
-        /// <summary>Same-point test for a connector that has nowhere to drive.</summary>
-        private const Double SAME_POINT_M = 1e-4;
+        /// <summary>
+        /// Poses no farther apart than this are the same place.
+        /// A join inside this distance must not grow into a full circle.
+        /// </summary>
+        private const Double SAME_POINT_M = 0.05;
 
-        /// <summary>Same-heading test, radians.</summary>
-        private const Double SAME_HEADING_RAD = 1e-4;
+        /// <summary>Headings closer than one degree are the same direction.</summary>
+        private const Double SAME_HEADING_DEG = 1.0;
 
         /// <summary>Words in the order a tie keeps. Earlier wins when lengths match.</summary>
         private static readonly String[] WordOrder = new String[]
@@ -245,13 +248,11 @@ namespace HaulBuilder
                 throw new ArgumentOutOfRangeException(nameof(RadiusM));
             }
 
-            // Already there. A zero-length join must not invent a loop.
-            if (IsSamePose(Start, End))
+            // Already there, or a heading that wrapped through a full turn.
+            // That join is empty. A 2πR loop is the bug this guard exists to stop.
+            if (IsEmptyJoin(Start, End))
             {
-                if ((Inside == null) || Inside(Start.X, Start.Y))
-                {
-                    return new Path("S", new List<Piece>(), Start, End, false, 0.0, 0.0);
-                }
+                return new Path("S", new List<Piece>(), Start, End, false, 0.0, 0.0);
             }
 
             Path? Chosen = Select(Start, End, RadiusM, Inside);
@@ -279,6 +280,61 @@ namespace HaulBuilder
             }
 
             return StraightFallback(Start, End);
+        }
+
+        /// <summary>
+        /// Length of the shortest word, with no field test and no piece list.
+        /// Trip ordering uses this so it does not build a path for every candidate.
+        /// </summary>
+        /// <param name="Start">Start pose.</param>
+        /// <param name="End">End pose.</param>
+        /// <param name="RadiusM">Turning radius, metres.</param>
+        /// <returns>Centreline length in metres. Zero when the join is empty.</returns>
+        static public Double ShortestLengthM
+            (
+            Pose Start,
+            Pose End,
+            Double RadiusM
+            )
+        {
+            if (RadiusM <= 0.0)
+            {
+                throw new ArgumentOutOfRangeException(nameof(RadiusM));
+            }
+
+            if (IsEmptyJoin(Start, End))
+            {
+                return 0.0;
+            }
+
+            Double Dx = End.X - Start.X;
+            Double Dy = End.Y - Start.Y;
+            Double Distance = Math.Sqrt((Dx * Dx) + (Dy * Dy));
+            Double Normalized = Distance / RadiusM;
+            Double Theta = (Normalized > 0.0) ? Mod2Pi(Math.Atan2(Dy, Dx)) : 0.0;
+            Double Alpha = Mod2Pi(Start.HeadingRad - Theta);
+            Double Beta = Mod2Pi(End.HeadingRad - Theta);
+            Double Best = Double.PositiveInfinity;
+            for (Int32 Index = 0; Index < WordOrder.Length; Index += 1)
+            {
+                if (!TryParameters(WordOrder[Index], Alpha, Beta, Normalized, out Double First, out Double Middle, out Double Last))
+                {
+                    continue;
+                }
+
+                Double Length = (First + Middle + Last) * RadiusM;
+                if (Length < Best)
+                {
+                    Best = Length;
+                }
+            }
+
+            if (Double.IsPositiveInfinity(Best))
+            {
+                return Distance;
+            }
+
+            return Best;
         }
 
         /// <summary>
@@ -955,11 +1011,13 @@ namespace HaulBuilder
 
         /// <summary>
         /// True when two poses are the same place and the same direction.
+        /// The heading difference is wrapped into (−π, π] first, so a heading
+        /// of 2π is the same direction as 0 and does not earn a full circle.
         /// </summary>
         /// <param name="Start">First pose.</param>
         /// <param name="End">Second pose.</param>
         /// <returns>True when a connector would have no work.</returns>
-        private static Boolean IsSamePose
+        static public Boolean IsEmptyJoin
             (
             Pose Start,
             Pose End
@@ -972,7 +1030,10 @@ namespace HaulBuilder
                 return false;
             }
 
-            return Math.Abs(WrapPi(End.HeadingRad - Start.HeadingRad)) <= SAME_HEADING_RAD;
+            // Less than one degree. A real turnaround is half a turn, so it stays.
+            Double Turn = Math.Abs(WrapPi(End.HeadingRad - Start.HeadingRad));
+            Double Limit = SAME_HEADING_DEG * Math.PI / Constants.DEGREES_PER_HALF_TURN;
+            return Turn < Limit;
         }
 
         /// <summary>

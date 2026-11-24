@@ -10,8 +10,15 @@ namespace HaulBuilder
     /// Each trip may reverse a spread lane, and a cut lane when the lane is flat.
     /// A lane end within a turning radius of the boundary may bend on a
     /// blade-down quarter circle so the turnaround stays in the field.
-    /// A forward Dubins connector joins the chosen shapes, then a grade pass
-    /// runs back over the fill.
+    /// A forward Dubins connector joins the chosen shapes. The loaded connector
+    /// from the cut end to the spread start is part of that score. Lane
+    /// direction is chosen by time alone. A short joint is a straight steer
+    /// across, or a trimmed lane, instead of a loop.
+    /// A grade pass then runs back over the fill. A correcting trip does not
+    /// grade: the land plane follows. Its lines are one sweep, at most three
+    /// cut lines and three spread lines, and the spreads snake. After every
+    /// trip is fixed, trips are reordered inside their own stage to shorten
+    /// the empty returns. Two trips that share a cell keep their order.
     /// </summary>
     static public class TripGuidance
     {
@@ -80,6 +87,60 @@ namespace HaulBuilder
 
         /// <summary>Two samples this close are the same point and are not repeated.</summary>
         private const Double JOINT_M = 1e-4;
+
+        /// <summary>
+        /// Land-plane tolerance, metres. A leftover correcting trip whose cells
+        /// are already inside this is dropped. Correcting does not grade.
+        /// </summary>
+        private const Double GRADE_DEPTH_M = Constants.DEFAULT_TOLERANCE_MM / Constants.MILLIMETERS_PER_METER;
+
+        /// <summary>A connector shorter than this many radii is a short joint.</summary>
+        private const Double SHORT_JOINT_RADII = 4.0;
+
+        /// <summary>Heading change below this, with a small offset, is steered straight.</summary>
+        private const Double STEER_HEADING_DEG = 30.0;
+
+        /// <summary>Cut lines, and spread lines, kept on one correcting trip.</summary>
+        private const Int32 MAX_CORRECTING_LINES = 3;
+
+        /// <summary>A connector that turns more than this is a reversal.</summary>
+        private const Double REVERSAL_DEG = 150.0;
+
+        /// <summary>Connector length over productive length above this is a leftover.</summary>
+        private const Double LEFTOVER_RATIO = 10.0;
+
+        /// <summary>Reordered and unreordered plans must agree to this, metres.</summary>
+        private const Double SURFACE_MATCH_M = 0.001;
+
+        /// <summary>A neighbouring line sits inside this many blade widths.</summary>
+        private const Double ADJACENT_LINE_BLADES = 3.0;
+
+        /// <summary>Headings closer than this, or this close to opposite, are parallel.</summary>
+        private const Double PARALLEL_HEADING_DEG = 20.0;
+
+        /// <summary>
+        /// Fragments whose centre lines sit inside this band are the same line.
+        /// Half a blade would still be the neighbouring pass, so this stays tighter.
+        /// </summary>
+        private const Double LINE_LATERAL_M = 0.75;
+
+        /// <summary>A fragment heading within this many degrees shares the line's direction.</summary>
+        private const Double LINE_ANGLE_DEG = 10.0;
+
+        /// <summary>A lane shorter than this has no chord. Its start heading is the axis.</summary>
+        private const Double LINE_POINT_M = 0.05;
+
+        /// <summary>How many of the worst trips each diagnostic lists.</summary>
+        private const Int32 WORST_COUNT = 20;
+
+        /// <summary>
+        /// Passes of consecutive-pair swaps while shortening empty returns.
+        /// One pass walks every adjacent pair once. Stop earlier when a pass changes nothing.
+        /// </summary>
+        private const Int32 MAX_ORDER_PASSES = 64;
+
+        /// <summary>Empty-return lengths closer than this are a tie. The earlier trip stays first.</summary>
+        private const Double LENGTH_TIE_M = 1e-6;
 
         /// <summary>
         /// What the blade is doing at a guidance point.
@@ -314,6 +375,126 @@ namespace HaulBuilder
                     this.StraightLengthM + this.ArcLengthM,
                     this.StraightLengthM,
                     this.ArcLengthM,
+                    Left);
+            }
+
+            /// <summary>
+            /// Drops the start of the lane and keeps the rest. Cells that fall
+            /// in the dropped part stay on <see cref="Deferred"/> for a later pass.
+            /// </summary>
+            /// <param name="DropM">Metres to slide the start forward along the lane.</param>
+            /// <returns>The shortened lane, or null when the remainder would be too short.</returns>
+            public WorkLane? TrimFromStart
+                (
+                Double DropM
+                )
+            {
+                return TrimSpan(DropM, true);
+            }
+
+            /// <summary>
+            /// Drops the end of the lane and keeps the rest. Cells that fall
+            /// in the dropped part stay on <see cref="Deferred"/> for a later pass.
+            /// </summary>
+            /// <param name="DropM">Metres to trim off the end.</param>
+            /// <returns>The shortened lane, or null when the remainder would be too short.</returns>
+            public WorkLane? TrimFromEnd
+                (
+                Double DropM
+                )
+            {
+                return TrimSpan(DropM, false);
+            }
+
+            /// <summary>
+            /// Cuts one end off the centreline. The kept cells are the same
+            /// fraction of the cell list as the kept length, in drive order.
+            /// </summary>
+            /// <param name="DropM">Metres removed.</param>
+            /// <param name="FromStart">True drops the start. False drops the end.</param>
+            /// <returns>The shortened lane, or null when it cannot be shortened.</returns>
+            private WorkLane? TrimSpan
+                (
+                Double DropM,
+                Boolean FromStart
+                )
+            {
+                if (DropM <= 0.05)
+                {
+                    return this;
+                }
+
+                Double Poly = PolylineLength(this.Centerline);
+                if (Poly <= (DropM + MIN_STRAIGHT_AFTER_BEND_M))
+                {
+                    // The lane would vanish. Leave it for another option.
+                    return null;
+                }
+
+                Double StartM = FromStart ? DropM : 0.0;
+                Double EndM = FromStart ? Poly : (Poly - DropM);
+                List<(Double X, Double Y)> Line = SlicePolyline(this.Centerline, StartM, EndM);
+                if (Line.Count < 2)
+                {
+                    return null;
+                }
+
+                Double Keep = EndM - StartM;
+                Int32 DropCount = 0;
+                if ((this.Cells.Count > 0) && (Poly > 1e-6))
+                {
+                    DropCount = (Int32)Math.Round(this.Cells.Count * (DropM / Poly));
+                    if (DropCount < 0)
+                    {
+                        DropCount = 0;
+                    }
+
+                    if (DropCount > this.Cells.Count)
+                    {
+                        DropCount = this.Cells.Count;
+                    }
+                }
+
+                List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Kept =
+                    new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>();
+                List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Left =
+                    new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>(this.Deferred);
+                if (FromStart)
+                {
+                    for (Int32 Index = 0; Index < DropCount; Index += 1)
+                    {
+                        Left.Add(this.Cells[Index]);
+                    }
+
+                    for (Int32 Index = DropCount; Index < this.Cells.Count; Index += 1)
+                    {
+                        Kept.Add(this.Cells[Index]);
+                    }
+                }
+                else
+                {
+                    Int32 KeepCount = this.Cells.Count - DropCount;
+                    for (Int32 Index = 0; Index < KeepCount; Index += 1)
+                    {
+                        Kept.Add(this.Cells[Index]);
+                    }
+
+                    for (Int32 Index = KeepCount; Index < this.Cells.Count; Index += 1)
+                    {
+                        Left.Add(this.Cells[Index]);
+                    }
+                }
+
+                Double Fallback = FromStart ? this.End.HeadingRad : this.Start.HeadingRad;
+                WorkLane Fresh = FromCenterline(Line, Kept, Fallback);
+                return new WorkLane(
+                    Fresh.Centerline,
+                    Fresh.Start,
+                    Fresh.End,
+                    Fresh.Cells,
+                    Keep,
+                    Keep,
+                    0.0,
                     Left);
             }
         }
@@ -610,6 +791,12 @@ namespace HaulBuilder
             public GradeLedger Grade { get; }
 
             /// <summary>
+            /// Gets or sets the 1-based position in the order the trips are driven.
+            /// Zero until the empty-return reorder assigns it.
+            /// </summary>
+            public Int32 ExecutionIndex { get; set; }
+
+            /// <summary>
             /// Productive seconds of the six components, before field efficiency.
             /// </summary>
             public Double ProductiveSeconds
@@ -637,16 +824,28 @@ namespace HaulBuilder
             /// <param name="Course">Connectors, turnaround, and grade pass for these directions.</param>
             /// <param name="Cuts">Cut lanes in the chosen drive order.</param>
             /// <param name="Fills">Spread lanes in the chosen drive order.</param>
+            /// <param name="CutLines">Line id of each cut lane. Equal ids share a straight blade-up gap.</param>
+            /// <param name="FillLines">Line id of each spread lane.</param>
+            /// <param name="HeldCuts">Cut cells past the three-line cap.</param>
+            /// <param name="HeldFills">Spread cells past the three-line cap.</param>
             public DirectionChoice
                 (
                 TripCourse Course,
                 List<WorkLane> Cuts,
-                List<WorkLane> Fills
+                List<WorkLane> Fills,
+                List<Int32> CutLines,
+                List<Int32> FillLines,
+                List<((Int32 Bx, Int32 By) Cell, Double DepthM)> HeldCuts,
+                List<((Int32 Bx, Int32 By) Cell, Double DepthM)> HeldFills
                 )
             {
                 this.Course = Course;
                 this.Cuts = Cuts;
                 this.Fills = Fills;
+                this.CutLines = CutLines;
+                this.FillLines = FillLines;
+                this.HeldCuts = HeldCuts;
+                this.HeldFills = HeldFills;
             }
 
             /// <summary>Gets the course for the chosen directions.</summary>
@@ -657,6 +856,22 @@ namespace HaulBuilder
 
             /// <summary>Gets the spread lanes in the chosen drive order.</summary>
             public List<WorkLane> Fills { get; }
+
+            /// <summary>Gets the line id of each cut lane.</summary>
+            public List<Int32> CutLines { get; }
+
+            /// <summary>Gets the line id of each spread lane.</summary>
+            public List<Int32> FillLines { get; }
+
+            /// <summary>
+            /// Gets cut cells past the three-line cap. They are not driven on this trip.
+            /// </summary>
+            public List<((Int32 Bx, Int32 By) Cell, Double DepthM)> HeldCuts { get; }
+
+            /// <summary>
+            /// Gets spread cells past the three-line cap. They are not driven on this trip.
+            /// </summary>
+            public List<((Int32 Bx, Int32 By) Cell, Double DepthM)> HeldFills { get; }
         }
 
         /// <summary>
@@ -669,24 +884,39 @@ namespace HaulBuilder
             /// </summary>
             /// <param name="Trips">Trips in haul order.</param>
             /// <param name="Surface">Ground after every trip, including grade passes.</param>
-        /// <param name="Snapshot">Ground at the start of the requested trip. Null when none was asked for.</param>
-        /// <param name="Efficiency">Field efficiency used to turn productive seconds into hours.</param>
-        /// <param name="Snapshots">Ground at the start of each requested trip, keyed by 0-based index.</param>
-        public JobGuidance
-            (
-            List<TripCourse> Trips,
-            Double[,] Surface,
-            Double[,]? Snapshot,
-            Double Efficiency,
-            Dictionary<Int32, Double[,]> Snapshots
-            )
-        {
-            this.Trips = Trips;
-            this.Surface = Surface;
-            this.Snapshot = Snapshot;
-            this.Efficiency = Efficiency;
-            this.Snapshots = Snapshots;
-        }
+            /// <param name="Snapshot">Ground at the start of the requested trip. Null when none was asked for.</param>
+            /// <param name="Efficiency">Field efficiency used to turn productive seconds into hours.</param>
+            /// <param name="Snapshots">Ground at the start of each requested trip, keyed by 0-based index.</param>
+            /// <param name="EmptyReturnHoursBefore">Charged empty-return hours in the planner's trip order.</param>
+            /// <param name="EmptyReturnHoursAfter">Charged empty-return hours after the empty-travel reorder.</param>
+            /// <param name="DriveOrder">Original 0-based trip indexes in the order they are driven.</param>
+            /// <param name="MergedCount">Correcting trips folded into an adjacent-line trip.</param>
+            /// <param name="DroppedCount">Correcting trips dropped because their cells were already within tolerance.</param>
+            public JobGuidance
+                (
+                List<TripCourse> Trips,
+                Double[,] Surface,
+                Double[,]? Snapshot,
+                Double Efficiency,
+                Dictionary<Int32, Double[,]> Snapshots,
+                Double EmptyReturnHoursBefore,
+                Double EmptyReturnHoursAfter,
+                List<Int32> DriveOrder,
+                Int32 MergedCount,
+                Int32 DroppedCount
+                )
+            {
+                this.Trips = Trips;
+                this.Surface = Surface;
+                this.Snapshot = Snapshot;
+                this.Efficiency = Efficiency;
+                this.Snapshots = Snapshots;
+                this.EmptyReturnHoursBefore = EmptyReturnHoursBefore;
+                this.EmptyReturnHoursAfter = EmptyReturnHoursAfter;
+                this.DriveOrder = DriveOrder;
+                this.MergedCount = MergedCount;
+                this.DroppedCount = DroppedCount;
+            }
 
             /// <summary>Gets the trips.</summary>
             public List<TripCourse> Trips { get; }
@@ -702,6 +932,21 @@ namespace HaulBuilder
 
             /// <summary>Gets the ground at the start of each requested trip.</summary>
             public Dictionary<Int32, Double[,]> Snapshots { get; }
+
+            /// <summary>Gets charged empty-return hours before the trips were reordered.</summary>
+            public Double EmptyReturnHoursBefore { get; }
+
+            /// <summary>Gets charged empty-return hours after the trips were reordered.</summary>
+            public Double EmptyReturnHoursAfter { get; }
+
+            /// <summary>Gets original trip indexes in drive order.</summary>
+            public List<Int32> DriveOrder { get; }
+
+            /// <summary>Gets how many correcting trips were merged into a neighbour.</summary>
+            public Int32 MergedCount { get; }
+
+            /// <summary>Gets how many correcting trips were dropped.</summary>
+            public Int32 DroppedCount { get; }
 
             /// <summary>
             /// Hours by component and by stage, Dubins counts, leads, and outside connectors.
@@ -791,6 +1036,48 @@ namespace HaulBuilder
                 AppendComponent(Text, "turnaround", Turn, Factor);
                 AppendComponent(Text, "grade pass", Grade, Factor);
                 AppendComponent(Text, "empty connectors", Empty, Factor);
+                Text.AppendLine(String.Format(
+                    CultureInfo.InvariantCulture,
+                    "Empty return before reorder  {0:F3} h",
+                    this.EmptyReturnHoursBefore));
+                Text.AppendLine(String.Format(
+                    CultureInfo.InvariantCulture,
+                    "Empty return after reorder   {0:F3} h",
+                    this.EmptyReturnHoursAfter));
+                Text.AppendLine(String.Format(
+                    CultureInfo.InvariantCulture,
+                    "Correcting trips merged  {0}",
+                    this.MergedCount));
+                Text.AppendLine(String.Format(
+                    CultureInfo.InvariantCulture,
+                    "Correcting trips dropped {0}",
+                    this.DroppedCount));
+                Text.AppendLine();
+                Text.AppendLine("Reversals (connector turn over 150 deg)");
+                foreach (HaulStage Stage in new HaulStage[]
+                {
+                    HaulStage.Flow,
+                    HaulStage.Clusters,
+                    HaulStage.ThinCut,
+                    HaulStage.Correcting,
+                })
+                {
+                    Int32 Reversals = 0;
+                    foreach (TripCourse Trip in this.Trips)
+                    {
+                        if (Trip.Stage == Stage)
+                        {
+                            Reversals += ReversalCount(Trip);
+                        }
+                    }
+
+                    Text.AppendLine(String.Format(
+                        CultureInfo.InvariantCulture,
+                        "{0}  {1}",
+                        Stage,
+                        Reversals));
+                }
+
                 Text.AppendLine();
                 Text.AppendLine("Hours by stage");
                 foreach (HaulStage Stage in new HaulStage[]
@@ -847,6 +1134,31 @@ namespace HaulBuilder
                 }
 
                 Text.AppendLine();
+                Text.AppendLine("Outside connectors by type");
+                foreach (GuidanceAction Action in new GuidanceAction[]
+                {
+                    GuidanceAction.Carry,
+                    GuidanceAction.Turn,
+                    GuidanceAction.Grade,
+                    GuidanceAction.Return,
+                })
+                {
+                    Int32 Count = 0;
+                    foreach (ConnectorNote Note in Outside)
+                    {
+                        if (Note.Action == Action)
+                        {
+                            Count += 1;
+                        }
+                    }
+
+                    Text.AppendLine(String.Format(
+                        CultureInfo.InvariantCulture,
+                        "{0}  {1}",
+                        Action,
+                        Count));
+                }
+
                 Text.AppendLine(String.Format(
                     CultureInfo.InvariantCulture,
                     "OUTSIDE {0}",
@@ -887,14 +1199,15 @@ namespace HaulBuilder
                         (Trip.EmptySeconds / Factor) / Constants.SECONDS_PER_HOUR));
                 }
 
+                AppendDiagnostics(Text, this.Trips);
                 return Text.ToString();
             }
         }
 
         /// <summary>
         /// Builds guidance for every trip. Cell choice is the pass list's.
-        /// Lane direction is chosen so the connectors stay in the field.
-        /// The grade pass is the only extra earthwork.
+        /// Lane direction is chosen by time. The grade pass is the only extra
+        /// earthwork, and a correcting trip does not grade.
         /// </summary>
         /// <param name="Grid">Field grid. Its mask is the field test.</param>
         /// <param name="Passes">Trips in haul order.</param>
@@ -961,54 +1274,108 @@ namespace HaulBuilder
             }
 
             Double CircleFt = RadiusM / (Constants.FEET_TO_METERS * Constants.HALF_SCALE);
-            Int32 Count = Passes.Count;
-            List<WorkLane>[] PlannedCuts = new List<WorkLane>[Count];
-            List<WorkLane>[] PlannedFills = new List<WorkLane>[Count];
-            for (Int32 Index = 0; Index < Count; Index += 1)
+            List<Pass> Active = new List<Pass>(Passes.Count);
+            Int32[] Origin = new Int32[Passes.Count];
+            for (Int32 Index = 0; Index < Passes.Count; Index += 1)
             {
-                Pass Current = Passes[Index];
-                PlannedCuts[Index] = LanesOf(Current.CutCells, Current.RibbonOrder, Grid, BladeWidthM, CircleFt);
-                PlannedFills[Index] = LanesOf(Current.FillCells, Current.RibbonOrder, Grid, BladeWidthM, CircleFt);
+                Active.Add(Passes[Index]);
+                Origin[Index] = Index;
             }
 
-            TripCourse[] Courses = new TripCourse[Count];
-            List<WorkLane>[] ChosenCuts = new List<WorkLane>[Count];
-            List<WorkLane>[] ChosenFills = new List<WorkLane>[Count];
-            // The return aims at the next trip's first cut. Choose the later
-            // trip first so that pose is the direction it will actually drive.
-            for (Int32 Index = Count - 1; Index >= 0; Index -= 1)
+            TripCourse[] Courses;
+            List<WorkLane>[] ChosenCuts;
+            List<WorkLane>[] ChosenFills;
+            List<Int32>[] CutLines;
+            List<Int32>[] FillLines;
+            List<((Int32 Bx, Int32 By) Cell, Double DepthM)>[] HeldCuts;
+            List<((Int32 Bx, Int32 By) Cell, Double DepthM)>[] HeldFills;
+            PlanCourses(
+                Grid, Active, Origin, Clock, BladeWidthM, RadiusM, CircleFt,
+                out Courses, out ChosenCuts, out ChosenFills, out CutLines, out FillLines,
+                out HeldCuts, out HeldFills);
+            Int32 Merged = 0;
+            Int32 Dropped = 0;
+            List<Pass> MergedPasses;
+            Int32[] MergedOrigin;
+            Int32 MergedNow;
+            Int32 DroppedNow;
+            if (MergeLeftovers(
+                Active,
+                Origin,
+                Courses,
+                ChosenCuts,
+                ChosenFills,
+                BowlCapacityM3,
+                RadiusM,
+                BladeWidthM,
+                out MergedPasses,
+                out MergedOrigin,
+                out MergedNow,
+                out DroppedNow))
             {
+                // The merged trips are new passes. Plan them once, then stop.
+                Active = MergedPasses;
+                Origin = MergedOrigin;
+                Merged = MergedNow;
+                Dropped = DroppedNow;
+                PlanCourses(
+                    Grid, Active, Origin, Clock, BladeWidthM, RadiusM, CircleFt,
+                    out Courses, out ChosenCuts, out ChosenFills, out CutLines, out FillLines,
+                    out HeldCuts, out HeldFills);
+            }
+
+            Int32 Count = Active.Count;
+            Double EmptyBeforeS = 0.0;
+            for (Int32 Index = 0; Index < Count; Index += 1)
+            {
+                EmptyBeforeS += Courses[Index].EmptySeconds;
+            }
+
+            Int32[] DriveIndexes = OrderTrips(Courses, ChosenCuts, ChosenFills, Active, RadiusM);
+            RequireSameSurface(Grid, Active, DriveIndexes, ChosenCuts, ChosenFills, HeldCuts, HeldFills);
+            TripCourse[] Rebuilt = new TripCourse[Count];
+            for (Int32 Step = 0; Step < Count; Step += 1)
+            {
+                Int32 Index = DriveIndexes[Step];
                 DubinsConnector.Pose? NextCut = null;
-                if (Index + 1 < Count)
+                if ((Step + 1) < Count)
                 {
-                    List<WorkLane>? NextLanes = ChosenCuts[Index + 1];
+                    List<WorkLane> NextLanes = ChosenCuts[DriveIndexes[Step + 1]];
                     if ((NextLanes != null) && (NextLanes.Count > 0))
                     {
                         NextCut = NextLanes[0].Start;
                     }
                 }
 
-                DirectionChoice Choice = ChooseDirections(
-                    PlannedCuts[Index],
-                    PlannedFills[Index],
+                // Same lanes. Only the empty return changes, because the next cut moved.
+                // Joints were already trimmed while the directions were chosen.
+                Rebuilt[Index] = BuildCourse(
+                    ChosenCuts[Index],
+                    ChosenFills[Index],
                     NextCut,
-                    Grid,
                     Grid.ContainsWorldXy,
                     Clock,
                     RadiusM,
-                    BladeWidthM,
                     Grid.GridSizeM,
-                    Index + 1,
-                    Passes[Index].Stage);
-                Courses[Index] = Choice.Course;
-                ChosenCuts[Index] = Choice.Cuts;
-                ChosenFills[Index] = Choice.Fills;
+                    Origin[Index] + 1,
+                    Active[Index].Stage,
+                    CutLines[Index],
+                    FillLines[Index],
+                    BladeWidthM,
+                    false);
+                Rebuilt[Index].ExecutionIndex = Step + 1;
+            }
+
+            Double EmptyAfterS = 0.0;
+            for (Int32 Index = 0; Index < Count; Index += 1)
+            {
+                EmptyAfterS += Rebuilt[Index].EmptySeconds;
             }
 
             Double[,] Surface = Grid.Delta();
             Double[,]? Snapshot = null;
             HashSet<Int32> KeepGround = new HashSet<Int32>();
-            if ((SnapshotTripIndex >= 0) && (SnapshotTripIndex < Count))
+            if ((SnapshotTripIndex >= 0) && (SnapshotTripIndex < Passes.Count))
             {
                 KeepGround.Add(SnapshotTripIndex);
             }
@@ -1017,7 +1384,7 @@ namespace HaulBuilder
             {
                 foreach (Int32 Index in SnapshotIndexes)
                 {
-                    if ((Index >= 0) && (Index < Count))
+                    if ((Index >= 0) && (Index < Passes.Count))
                     {
                         KeepGround.Add(Index);
                     }
@@ -1027,24 +1394,29 @@ namespace HaulBuilder
             Dictionary<Int32, Double[,]> KeptGround = new Dictionary<Int32, Double[,]>(KeepGround.Count);
             Double CarryM3 = 0.0;
             TripCourse? Previous = null;
-            List<TripCourse> Trips = new List<TripCourse>(Count);
-            for (Int32 Index = 0; Index < Count; Index += 1)
+            // Earthwork follows the shortened empty-return order. The trip list
+            // stays in planner order so a trip number still names the same haul.
+            for (Int32 Step = 0; Step < Count; Step += 1)
             {
-                if (KeepGround.Contains(Index))
+                Int32 Index = DriveIndexes[Step];
+                Int32 Original = Origin[Index];
+                if (KeepGround.Contains(Original))
                 {
-                    // Clone before this trip's cut and fill, so the sheet shows the ground it starts on.
+                    // Clone before this trip's cut and fill, in the order it is driven.
                     Double[,] Copy = (Double[,])Surface.Clone();
-                    KeptGround[Index] = Copy;
-                    if (Index == SnapshotTripIndex)
+                    KeptGround[Original] = Copy;
+                    if (Original == SnapshotTripIndex)
                     {
                         Snapshot = Copy;
                     }
                 }
 
-                Pass Current = Passes[Index];
-                TripCourse Trip = Courses[Index];
+                Pass Current = Active[Index];
+                TripCourse Trip = Rebuilt[Index];
                 HashSet<(Int32 Bx, Int32 By)> CutSkip = DeferredCells(ChosenCuts[Index]);
                 HashSet<(Int32 Bx, Int32 By)> FillSkip = DeferredCells(ChosenFills[Index]);
+                AddHeld(CutSkip, HeldCuts[Index]);
+                AddHeld(FillSkip, HeldFills[Index]);
                 // A bend leaves the cells it no longer sweeps. Apply them on a later trip.
                 ApplyPass(Surface, Current, CutSkip, FillSkip);
                 // Leftover from the previous grade rides the next spread.
@@ -1052,20 +1424,50 @@ namespace HaulBuilder
                 {
                     CarryM3 = PlaceOnCells(Surface, Grid, Current.FillCells, CarryM3, Previous.Grade);
                 }
-                List<((Int32 Bx, Int32 By) Cell, Double DepthM)> GradeOrder =
-                    GradeOrderOf(ChosenFills[Index], Current.FillCells, FillSkip);
-                List<DubinsConnector.Pose>? ReturnSamples = ReturnSamplesOf(Trip);
-                GradeLedger Moved = GradeCells(Surface, Grid, GradeOrder, BowlCapacityM3, ReturnSamples);
-                Trip.Grade.CutM3 = Moved.CutM3;
-                Trip.Grade.PlacedM3 = Moved.PlacedM3;
-                Trip.Grade.BowlM3 = Moved.BowlM3;
-                CarryM3 = Moved.BowlM3;
+
+                if (HasGradeLane(Trip))
+                {
+                    List<((Int32 Bx, Int32 By) Cell, Double DepthM)> GradeOrder =
+                        GradeOrderOf(ChosenFills[Index], Current.FillCells, FillSkip);
+                    List<DubinsConnector.Pose>? ReturnSamples = ReturnSamplesOf(Trip);
+                    GradeLedger Moved = GradeCells(Surface, Grid, GradeOrder, BowlCapacityM3, ReturnSamples);
+                    Trip.Grade.CutM3 = Moved.CutM3;
+                    Trip.Grade.PlacedM3 = Moved.PlacedM3;
+                    Trip.Grade.BowlM3 = Moved.BowlM3;
+                    CarryM3 = Moved.BowlM3;
+                }
+
                 Previous = Trip;
-                Trips.Add(Trip);
             }
 
-            Double Efficiency = Clock.FieldEfficiency;
-            return new JobGuidance(Trips, Surface, Snapshot, Efficiency, KeptGround);
+            List<TripCourse> Trips = new List<TripCourse>(Count);
+            for (Int32 Index = 0; Index < Count; Index += 1)
+            {
+                Trips.Add(Rebuilt[Index]);
+            }
+
+            List<Int32> DriveOrder = new List<Int32>(Count);
+            for (Int32 Step = 0; Step < Count; Step += 1)
+            {
+                DriveOrder.Add(Origin[DriveIndexes[Step]]);
+            }
+
+            Double Factor = ((Clock.FieldEfficiency > 0.0) && (Clock.FieldEfficiency <= 1.0))
+                ? Clock.FieldEfficiency
+                : 1.0;
+            Double BeforeHours = (EmptyBeforeS / Factor) / Constants.SECONDS_PER_HOUR;
+            Double AfterHours = (EmptyAfterS / Factor) / Constants.SECONDS_PER_HOUR;
+            return new JobGuidance(
+                Trips,
+                Surface,
+                Snapshot,
+                Clock.FieldEfficiency,
+                KeptGround,
+                BeforeHours,
+                AfterHours,
+                DriveOrder,
+                Merged,
+                Dropped);
         }
 
         /// <summary>
@@ -1073,9 +1475,15 @@ namespace HaulBuilder
         /// lane may face either way. A cut lane may face either way only when it
         /// is flat; a slope keeps the downhill direction. An end within a radius
         /// of the boundary may also bend left or right. At most four lanes on
-        /// each side are tried, and at most 256 combinations. The winner has the
-        /// fewest connectors outside the field, then the least time. An equal
-        /// score keeps the earlier combination, which is the planned lane.
+        /// each side are tried, and at most 256 combinations. The winner is the
+        /// least time. That time
+        /// includes the loaded connector from the last cut to the first spread,
+        /// at the connector's real length. An equal time keeps the earlier
+        /// combination, which is the planned lane. Outside connectors are
+        /// counted in the report and do not decide the direction. A correcting
+        /// trip gathers fragments that share a line, visits each line once in
+        /// offset order, and keeps at most three cut lines and three spread
+        /// lines. Spread lines snake. Those lines are not reversed one at a time.
         /// </summary>
         /// <param name="CutLanes">Cut lanes in the planner's drive order.</param>
         /// <param name="FillLanes">Spread lanes in the planner's drive order.</param>
@@ -1119,31 +1527,78 @@ namespace HaulBuilder
                 throw new ArgumentNullException(nameof(Grid));
             }
 
-            List<WorkLane> PreparedCuts = PrepareCuts(CutLanes, Grid, out List<Int32> FlatCuts);
-            List<Int32> AllFills = new List<Int32>(FillLanes.Count);
-            for (Int32 Index = 0; Index < FillLanes.Count; Index += 1)
+            List<WorkLane> PreparedCuts;
+            List<WorkLane> FillSource;
+            List<Int32> CutLines;
+            List<Int32> FillLines;
+            List<Int32> FlatCuts;
+            List<Int32> CutVariable;
+            List<Int32> FillVariable;
+            List<((Int32 Bx, Int32 By) Cell, Double DepthM)> HeldCuts =
+                new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>();
+            List<((Int32 Bx, Int32 By) Cell, Double DepthM)> HeldFills =
+                new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>();
+            if (Stage == HaulStage.Correcting)
             {
-                AllFills.Add(Index);
+                // One direction per line, then one sweep by offset. Extra lines are not driven.
+                List<WorkLane> GroupedCuts = ArrangeOnLines(CutLanes, out CutLines);
+                GroupedCuts = SweepLines(GroupedCuts, CutLines, false, out CutLines, out HeldCuts);
+                FillSource = ArrangeOnLines(FillLanes, out FillLines);
+                FillSource = SweepLines(FillSource, FillLines, true, out FillLines, out HeldFills);
+                CutVariable = SoloIndexes(CutLines);
+                // The serpentine sets every spread direction. The search must not flip it back.
+                FillVariable = new List<Int32>();
+                HashSet<Int32> CutSolo = new HashSet<Int32>(CutVariable);
+                PreparedCuts = new List<WorkLane>(GroupedCuts.Count);
+                FlatCuts = new List<Int32>();
+                for (Int32 Index = 0; Index < GroupedCuts.Count; Index += 1)
+                {
+                    if (!CutSolo.Contains(Index))
+                    {
+                        // A shared line stays in the direction ArrangeOnLines picked.
+                        PreparedCuts.Add(GroupedCuts[Index]);
+                        continue;
+                    }
+
+                    List<WorkLane> One = PrepareCuts(
+                        new List<WorkLane> { GroupedCuts[Index] },
+                        Grid,
+                        out List<Int32> OneFlat);
+                    PreparedCuts.Add(One[0]);
+                    if (OneFlat.Count > 0)
+                    {
+                        FlatCuts.Add(Index);
+                    }
+                }
+            }
+            else
+            {
+                PreparedCuts = PrepareCuts(CutLanes, Grid, out FlatCuts);
+                FillSource = new List<WorkLane>(FillLanes);
+                CutLines = IdentityLines(PreparedCuts.Count);
+                FillLines = IdentityLines(FillSource.Count);
+                CutVariable = IdentityLines(PreparedCuts.Count);
+                FillVariable = IdentityLines(FillSource.Count);
             }
 
             // Straight is variant 0, so a tie keeps the planned direction.
+            // On a correcting trip only a line of its own may reverse or bend.
             List<LaneVariants> CutVariants = VariantsFor(
-                PreparedCuts, FlatCuts, Grid, Inside, RadiusM, BladeWidthM);
+                PreparedCuts, CutVariable, FlatCuts, Grid, Inside, RadiusM, BladeWidthM);
             List<LaneVariants> FillVariants = VariantsFor(
-                FillLanes, AllFills, Grid, Inside, RadiusM, BladeWidthM);
+                FillSource, FillVariable, FillVariable, Grid, Inside, RadiusM, BladeWidthM);
             List<LaneVariants> Sides = new List<LaneVariants>(CutVariants.Count + FillVariants.Count);
             Sides.AddRange(CutVariants);
             Sides.AddRange(FillVariants);
             TrimToBudget(Sides);
             Int32[] Choice = new Int32[Sides.Count];
             DirectionChoice? Best = null;
-            Int32 BestOutside = 0;
             Double BestTime = 0.0;
             Boolean More = true;
             while (More)
             {
                 List<WorkLane> Cuts = Assemble(PreparedCuts, Sides, Choice, 0, CutVariants.Count);
-                List<WorkLane> Fills = Assemble(FillLanes, Sides, Choice, CutVariants.Count, FillVariants.Count);
+                List<WorkLane> Fills = Assemble(FillSource, Sides, Choice, CutVariants.Count, FillVariants.Count);
                 TripCourse Course = BuildCourse(
                     Cuts,
                     Fills,
@@ -1153,17 +1608,18 @@ namespace HaulBuilder
                     RadiusM,
                     LaneSampleM,
                     TripNumber,
-                    Stage);
-                Int32 Outside = OutsideCount(Course);
+                    Stage,
+                    CutLines,
+                    FillLines,
+                    BladeWidthM,
+                    true);
+                // Productive seconds include the loaded cut-to-spread connector.
+                // A loop is charged at that connector's real length, not as zero.
                 Double Time = Course.ProductiveSeconds;
-                // Fewer outside connectors wins. Equal counts take the faster course.
-                // The first variant is the planned lane, so a tie leaves it alone.
-                if ((Best == null)
-                    || (Outside < BestOutside)
-                    || ((Outside == BestOutside) && ((Time + TIME_TIE_S) < BestTime)))
+                // Time alone. The first variant is the planned lane, so a tie leaves it alone.
+                if ((Best == null) || ((Time + TIME_TIE_S) < BestTime))
                 {
-                    Best = new DirectionChoice(Course, Cuts, Fills);
-                    BestOutside = Outside;
+                    Best = new DirectionChoice(Course, Cuts, Fills, CutLines, FillLines, HeldCuts, HeldFills);
                     BestTime = Time;
                 }
 
@@ -1362,6 +1818,7 @@ namespace HaulBuilder
         /// Builds the shapes for the lanes this side may vary.
         /// </summary>
         /// <param name="Lanes">Lanes in the legal drive order.</param>
+        /// <param name="Variable">Indexes that may bend or, when also reversible, turn around.</param>
         /// <param name="Reversible">Indexes that may be driven the other way.</param>
         /// <param name="Grid">Field grid.</param>
         /// <param name="Inside">Field test.</param>
@@ -1371,6 +1828,7 @@ namespace HaulBuilder
         private static List<LaneVariants> VariantsFor
             (
             IReadOnlyList<WorkLane> Lanes,
+            IReadOnlyList<Int32> Variable,
             IReadOnlyList<Int32> Reversible,
             Grid Grid,
             Func<Double, Double, Boolean>? Inside,
@@ -1378,14 +1836,8 @@ namespace HaulBuilder
             Double BladeWidthM
             )
         {
-            List<Int32> Every = new List<Int32>(Lanes.Count);
-            for (Int32 Index = 0; Index < Lanes.Count; Index += 1)
-            {
-                Every.Add(Index);
-            }
-
             HashSet<Int32> MayReverse = new HashSet<Int32>(Reversible);
-            List<Int32> Picked = FlipCandidates(Lanes, Every, Inside, RadiusM);
+            List<Int32> Picked = FlipCandidates(Lanes, Variable, Inside, RadiusM);
             List<LaneVariants> Variants = new List<LaneVariants>();
             foreach (Int32 Index in Picked)
             {
@@ -2395,6 +2847,10 @@ namespace HaulBuilder
         /// <param name="LaneSampleM">Point spacing on a lane.</param>
         /// <param name="TripNumber">1-based trip number.</param>
         /// <param name="Stage">Stage label.</param>
+        /// <param name="CutLineIds">Line id of each cut lane. Null gives every lane its own line.</param>
+        /// <param name="FillLineIds">Line id of each spread lane. Null gives every lane its own line.</param>
+        /// <param name="BladeWidthM">Blade width. Zero leaves short joints as Dubins paths.</param>
+        /// <param name="FitJoints">True trims a short joint. False draws the lanes as they already are.</param>
         /// <returns>The trip path and clock.</returns>
         static public TripCourse BuildCourse
             (
@@ -2406,9 +2862,23 @@ namespace HaulBuilder
             Double RadiusM,
             Double LaneSampleM,
             Int32 TripNumber,
-            HaulStage Stage
+            HaulStage Stage,
+            IReadOnlyList<Int32>? CutLineIds = null,
+            IReadOnlyList<Int32>? FillLineIds = null,
+            Double BladeWidthM = 0.0,
+            Boolean FitJoints = true
             )
         {
+            List<WorkLane> CutWork = new List<WorkLane>(CutLanes);
+            List<WorkLane> FillWork = new List<WorkLane>(FillLanes);
+            if (FitJoints && (BladeWidthM > 0.0) && (RadiusM > 0.0))
+            {
+                // Short joints are trimmed on copies, then written back so the cells they skip stay deferred.
+                FitShortJoints(CutWork, FillWork, RadiusM, BladeWidthM);
+                CopyLanes(CutLanes, CutWork);
+                CopyLanes(FillLanes, FillWork);
+            }
+
             List<CourseSegment> Segments = new List<CourseSegment>();
             List<GuidancePoint> Points = new List<GuidancePoint>();
             List<ConnectorNote> Notes = new List<ConnectorNote>();
@@ -2419,44 +2889,31 @@ namespace HaulBuilder
             Double GradeSeconds = 0.0;
             Double EmptySeconds = 0.0;
             Int32 Sequence = 1;
-            DubinsConnector.Pose? Cursor = null;
-            foreach (WorkLane Lane in CutLanes)
-            {
-                if (Cursor.HasValue)
-                {
-                    AddConnector(
-                        Segments, Points, Notes, ref Sequence, ref LoadedSeconds, ref TurnSeconds,
-                        ref GradeSeconds, ref EmptySeconds, Cursor.Value, Lane.Start,
-                        GuidanceAction.Carry, Inside, Clock, RadiusM, TripNumber);
-                }
+            // Correcting fragments on one line get a straight blade-up gap, not a Dubins bulb.
+            Boolean StraightOnLine = Stage == HaulStage.Correcting;
+            DubinsConnector.Pose? Cursor = DriveSide(
+                Segments, Points, Notes, ref Sequence, ref CutSeconds, ref LoadedSeconds, ref SpreadSeconds,
+                ref TurnSeconds, ref GradeSeconds, ref EmptySeconds, null, CutWork, CutLineIds,
+                GuidanceAction.Cut, GuidanceAction.Carry, StraightOnLine, Inside, Clock, RadiusM, LaneSampleM, TripNumber, BladeWidthM);
+            Cursor = DriveSide(
+                Segments, Points, Notes, ref Sequence, ref CutSeconds, ref LoadedSeconds, ref SpreadSeconds,
+                ref TurnSeconds, ref GradeSeconds, ref EmptySeconds, Cursor, FillWork, FillLineIds,
+                GuidanceAction.Fill, GuidanceAction.Carry, StraightOnLine, Inside, Clock, RadiusM, LaneSampleM, TripNumber, BladeWidthM);
 
-                AddLane(Segments, Points, ref Sequence, ref CutSeconds, ref SpreadSeconds, ref GradeSeconds, Lane, GuidanceAction.Cut, LaneSampleM, Clock);
-                Cursor = Lane.End;
-            }
-
-            foreach (WorkLane Lane in FillLanes)
-            {
-                if (Cursor.HasValue)
-                {
-                    AddConnector(
-                        Segments, Points, Notes, ref Sequence, ref LoadedSeconds, ref TurnSeconds,
-                        ref GradeSeconds, ref EmptySeconds, Cursor.Value, Lane.Start,
-                        GuidanceAction.Carry, Inside, Clock, RadiusM, TripNumber);
-                }
-
-                AddLane(Segments, Points, ref Sequence, ref CutSeconds, ref SpreadSeconds, ref GradeSeconds, Lane, GuidanceAction.Fill, LaneSampleM, Clock);
-                Cursor = Lane.End;
-            }
-
-            // Grade drives the spread lanes backwards, last one first.
-            if (FillLanes.Count > 0)
+            if (FillWork.Count > 0)
             {
                 List<WorkLane> GradeLanes = new List<WorkLane>();
-                for (Int32 Index = FillLanes.Count - 1; Index >= 0; Index -= 1)
+                List<Int32> GradeLineIds = new List<Int32>();
+                for (Int32 Index = FillWork.Count - 1; Index >= 0; Index -= 1)
                 {
-                    GradeLanes.Add(FillLanes[Index].Reversed());
+                    GradeLanes.Add(FillWork[Index].Reversed());
+                    if (FillLineIds != null)
+                    {
+                        GradeLineIds.Add(FillLineIds[Index]);
+                    }
                 }
 
+                // One turnaround, onto the reversed last spread. Later lines do not each turn around.
                 if (Cursor.HasValue)
                 {
                     AddConnector(
@@ -2465,22 +2922,20 @@ namespace HaulBuilder
                         GuidanceAction.Turn, Inside, Clock, RadiusM, TripNumber);
                 }
 
-                for (Int32 Index = 0; Index < GradeLanes.Count; Index += 1)
+                // Correcting leaves the grade to the land plane, whatever the depth.
+                Boolean DriveGrade = Stage != HaulStage.Correcting;
+                if (DriveGrade)
                 {
-                    if (Index > 0)
-                    {
-                        AddConnector(
-                            Segments, Points, Notes, ref Sequence, ref LoadedSeconds, ref TurnSeconds,
-                            ref GradeSeconds, ref EmptySeconds, GradeLanes[Index - 1].End, GradeLanes[Index].Start,
-                            GuidanceAction.Grade, Inside, Clock, RadiusM, TripNumber);
-                    }
-
-                    AddLane(
-                        Segments, Points, ref Sequence, ref CutSeconds, ref SpreadSeconds, ref GradeSeconds,
-                        GradeLanes[Index], GuidanceAction.Grade, LaneSampleM, Clock);
+                    IReadOnlyList<Int32>? GradeIds = (FillLineIds == null) ? null : GradeLineIds;
+                    Cursor = DriveSide(
+                        Segments, Points, Notes, ref Sequence, ref CutSeconds, ref LoadedSeconds, ref SpreadSeconds,
+                        ref TurnSeconds, ref GradeSeconds, ref EmptySeconds, null, GradeLanes, GradeIds,
+                        GuidanceAction.Grade, GuidanceAction.Grade, StraightOnLine, Inside, Clock, RadiusM, LaneSampleM, TripNumber, BladeWidthM);
                 }
-
-                Cursor = GradeLanes[GradeLanes.Count - 1].End;
+                else
+                {
+                    Cursor = GradeLanes[0].Start;
+                }
             }
 
             if (NextCutStart.HasValue && Cursor.HasValue)
@@ -2986,12 +3441,17 @@ namespace HaulBuilder
             Int32 TripNumber
             )
         {
-            if (SamePose(Start, End))
+            // A wrapped full turn at the same point is an empty join, not a 2πR loop.
+            if (DubinsConnector.IsEmptyJoin(Start, End))
             {
                 return;
             }
 
             DubinsConnector.Path Path = DubinsConnector.Connect(Start, End, RadiusM, Inside);
+            if (Path.LengthM <= 0.0)
+            {
+                return;
+            }
             List<DrawnPiece> Drawn = new List<DrawnPiece>();
             Double Seconds = 0.0;
             DubinsConnector.Pose Cursor = Start;
@@ -3137,9 +3597,11 @@ namespace HaulBuilder
             CourseSegment Segment
             )
         {
-            Boolean Blade = (Segment.Action == GuidanceAction.Cut)
-                || (Segment.Action == GuidanceAction.Fill)
-                || (Segment.Action == GuidanceAction.Grade);
+            // A grade connector between fragments is blade-up. Only the lane itself grades.
+            Boolean Blade = Segment.IsLane
+                && ((Segment.Action == GuidanceAction.Cut)
+                    || (Segment.Action == GuidanceAction.Fill)
+                    || (Segment.Action == GuidanceAction.Grade));
             foreach (DrawnPiece Piece in Segment.Pieces)
             {
                 foreach (DubinsConnector.Pose Sample in Piece.Samples)
@@ -3169,6 +3631,2154 @@ namespace HaulBuilder
         }
 
         /// <summary>
+        /// Drives a side of the trip. A correcting gap on the same line is a
+        /// straight with the blade up. Every other gap is a Dubins connector.
+        /// </summary>
+        /// <param name="Segments">Segments being built.</param>
+        /// <param name="Points">Guidance samples.</param>
+        /// <param name="Notes">Connector notes.</param>
+        /// <param name="Sequence">Next sample number.</param>
+        /// <param name="CutSeconds">Cut seconds so far.</param>
+        /// <param name="LoadedSeconds">Loaded-connector seconds so far.</param>
+        /// <param name="SpreadSeconds">Spread seconds so far.</param>
+        /// <param name="TurnSeconds">Turnaround seconds so far.</param>
+        /// <param name="GradeSeconds">Grade seconds so far.</param>
+        /// <param name="EmptySeconds">Empty-connector seconds so far.</param>
+        /// <param name="Cursor">Pose the previous lane ended on. Null before the first lane.</param>
+        /// <param name="Lanes">Lanes in drive order.</param>
+        /// <param name="LineIds">Line id of each lane. Null means each lane is its own line.</param>
+        /// <param name="LaneAction">Action while the blade is down on the lane.</param>
+        /// <param name="JoinAction">Action on the gap before a lane.</param>
+        /// <param name="StraightOnLine">True when a shared line uses a straight gap.</param>
+        /// <param name="Inside">Field test.</param>
+        /// <param name="Clock">Speeds and acceleration.</param>
+        /// <param name="RadiusM">Turning radius.</param>
+        /// <param name="LaneSampleM">Lane sample spacing.</param>
+        /// <param name="TripNumber">1-based trip number.</param>
+        /// <param name="BladeWidthM">Blade width. Zero does not steer a short joint straight.</param>
+        /// <returns>The pose at the end of the last lane, or <paramref name="Cursor"/> when there are none.</returns>
+        private static DubinsConnector.Pose? DriveSide
+            (
+            List<CourseSegment> Segments,
+            List<GuidancePoint> Points,
+            List<ConnectorNote> Notes,
+            ref Int32 Sequence,
+            ref Double CutSeconds,
+            ref Double LoadedSeconds,
+            ref Double SpreadSeconds,
+            ref Double TurnSeconds,
+            ref Double GradeSeconds,
+            ref Double EmptySeconds,
+            DubinsConnector.Pose? Cursor,
+            IReadOnlyList<WorkLane> Lanes,
+            IReadOnlyList<Int32>? LineIds,
+            GuidanceAction LaneAction,
+            GuidanceAction JoinAction,
+            Boolean StraightOnLine,
+            Func<Double, Double, Boolean>? Inside,
+            TimeParams Clock,
+            Double RadiusM,
+            Double LaneSampleM,
+            Int32 TripNumber,
+            Double BladeWidthM
+            )
+        {
+            for (Int32 Index = 0; Index < Lanes.Count; Index += 1)
+            {
+                WorkLane Lane = Lanes[Index];
+                if (Cursor.HasValue)
+                {
+                    Boolean SameLine = StraightOnLine
+                        && (LineIds != null)
+                        && (Index > 0)
+                        && (LineIds[Index] == LineIds[Index - 1]);
+                    // A gentle short gap is steered across. A shared correcting line was already straight.
+                    Boolean Steer = (!SameLine) && SteerAcross(Cursor.Value, Lane.Start, RadiusM, BladeWidthM);
+                    if (SameLine || Steer)
+                    {
+                        AddStraight(
+                            Segments, Points, Notes, ref Sequence, ref LoadedSeconds, ref TurnSeconds,
+                            ref GradeSeconds, ref EmptySeconds, Cursor.Value, Lane.Start,
+                            JoinAction, Clock, TripNumber);
+                    }
+                    else
+                    {
+                        AddConnector(
+                            Segments, Points, Notes, ref Sequence, ref LoadedSeconds, ref TurnSeconds,
+                            ref GradeSeconds, ref EmptySeconds, Cursor.Value, Lane.Start,
+                            JoinAction, Inside, Clock, RadiusM, TripNumber);
+                    }
+                }
+
+                AddLane(
+                    Segments, Points, ref Sequence, ref CutSeconds, ref SpreadSeconds, ref GradeSeconds,
+                    Lane, LaneAction, LaneSampleM, Clock);
+                Cursor = Lane.End;
+            }
+
+            return Cursor;
+        }
+
+        /// <summary>
+        /// Adds a straight blade-up gap. Used between correcting fragments that
+        /// already share a line, so the machine does not turn around in the gap.
+        /// </summary>
+        /// <param name="Segments">Segments being built.</param>
+        /// <param name="Points">Guidance samples.</param>
+        /// <param name="Notes">Connector notes.</param>
+        /// <param name="Sequence">Next sample number.</param>
+        /// <param name="LoadedSeconds">Loaded-connector seconds so far.</param>
+        /// <param name="TurnSeconds">Turnaround seconds so far.</param>
+        /// <param name="GradeSeconds">Grade seconds so far.</param>
+        /// <param name="EmptySeconds">Empty-connector seconds so far.</param>
+        /// <param name="Start">Pose the previous fragment ended on.</param>
+        /// <param name="End">Pose the next fragment starts on.</param>
+        /// <param name="Action">Carry between cuts or spreads. Grade on the way back.</param>
+        /// <param name="Clock">Speeds and acceleration.</param>
+        /// <param name="TripNumber">1-based trip number.</param>
+        private static void AddStraight
+            (
+            List<CourseSegment> Segments,
+            List<GuidancePoint> Points,
+            List<ConnectorNote> Notes,
+            ref Int32 Sequence,
+            ref Double LoadedSeconds,
+            ref Double TurnSeconds,
+            ref Double GradeSeconds,
+            ref Double EmptySeconds,
+            DubinsConnector.Pose Start,
+            DubinsConnector.Pose End,
+            GuidanceAction Action,
+            TimeParams Clock,
+            Int32 TripNumber
+            )
+        {
+            if (DubinsConnector.IsEmptyJoin(Start, End))
+            {
+                return;
+            }
+
+            Double Dx = End.X - Start.X;
+            Double Dy = End.Y - Start.Y;
+            Double Length = Math.Sqrt((Dx * Dx) + (Dy * Dy));
+            if (Length <= 1e-6)
+            {
+                return;
+            }
+
+            // The chord is the path. Heading stays on that chord, so the gap is not a turn.
+            Double Heading = Math.Atan2(Dy, Dx);
+            List<DubinsConnector.Pose> Samples = new List<DubinsConnector.Pose>
+            {
+                new DubinsConnector.Pose(Start.X, Start.Y, Heading),
+            };
+            Int32 Count = Math.Max(1, (Int32)Math.Ceiling((Length / DubinsConnector.SAMPLE_M) - 1e-9));
+            for (Int32 Step = 1; Step <= Count; Step += 1)
+            {
+                Double Fraction = (Double)Step / Count;
+                Samples.Add(new DubinsConnector.Pose(
+                    Start.X + (Dx * Fraction),
+                    Start.Y + (Dy * Fraction),
+                    Heading));
+            }
+
+            DubinsConnector.Pose Arrow = new DubinsConnector.Pose(
+                Start.X + (Dx * Constants.HALF_SCALE),
+                Start.Y + (Dy * Constants.HALF_SCALE),
+                Heading);
+            List<DrawnPiece> Pieces = new List<DrawnPiece>
+            {
+                new DrawnPiece(DubinsConnector.PieceKind.Straight, Length, 0.0, Samples, Arrow),
+            };
+            Double Seconds = 0.0;
+            if (Action == GuidanceAction.Grade)
+            {
+                Double Speed = Constants.DEFAULT_FILL_SPEED_MPH * Constants.MPH_TO_MPS;
+                if (Speed > 0.0)
+                {
+                    Seconds = Length / Speed;
+                }
+            }
+            else
+            {
+                Double StraightMph = (Action == GuidanceAction.Carry)
+                    ? Clock.LoadedTravelSpeedMph
+                    : Clock.UnloadedTravelSpeedMph;
+                Seconds = TimeModel.MoveTime(
+                    Length,
+                    StraightMph * Constants.MPH_TO_MPS,
+                    Clock.AccelerationTimeS,
+                    Clock.DecelerationTimeS);
+            }
+
+            if (Action == GuidanceAction.Carry)
+            {
+                LoadedSeconds += Seconds;
+            }
+            else if (Action == GuidanceAction.Turn)
+            {
+                TurnSeconds += Seconds;
+            }
+            else if (Action == GuidanceAction.Grade)
+            {
+                GradeSeconds += Seconds;
+            }
+            else
+            {
+                EmptySeconds += Seconds;
+            }
+
+            CourseSegment Segment = new CourseSegment(
+                Action, false, false, "S", 0.0, 0.0, Length, Seconds, Pieces);
+            Segments.Add(Segment);
+            Notes.Add(new ConnectorNote(TripNumber, Action, "S", Length, 0.0, 0.0, false));
+            AppendPoints(Points, ref Sequence, Segment);
+        }
+
+        /// <summary>
+        /// True when the course drives a grade lane. A skipped grade pass has none.
+        /// </summary>
+        /// <param name="Trip">One trip.</param>
+        /// <returns>True when a grade lane is present.</returns>
+        private static Boolean HasGradeLane
+            (
+            TripCourse Trip
+            )
+        {
+            foreach (CourseSegment Segment in Trip.Segments)
+            {
+                if (Segment.IsLane && (Segment.Action == GuidanceAction.Grade))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// Deepest spread cell on the lanes, including cells a bend set aside.
+        /// </summary>
+        /// <param name="Lanes">Spread lanes.</param>
+        /// <returns>Depth in metres. Zero when the lanes carry no cells.</returns>
+        private static Double MaxSpreadDepth
+            (
+            IReadOnlyList<WorkLane> Lanes
+            )
+        {
+            Double Max = 0.0;
+            foreach (WorkLane Lane in Lanes)
+            {
+                Max = Deeper(Max, Lane.Cells);
+                Max = Deeper(Max, Lane.Deferred);
+            }
+
+            return Max;
+        }
+
+        /// <summary>
+        /// Keeps the larger of the running depth and the listed cells.
+        /// </summary>
+        /// <param name="Max">Deepest so far, metres.</param>
+        /// <param name="Cells">Cells to inspect.</param>
+        /// <returns>The deeper depth.</returns>
+        private static Double Deeper
+            (
+            Double Max,
+            IReadOnlyList<((Int32 Bx, Int32 By) Cell, Double DepthM)> Cells
+            )
+        {
+            if (Cells == null)
+            {
+                return Max;
+            }
+
+            foreach (((Int32 Bx, Int32 By) Cell, Double DepthM) Entry in Cells)
+            {
+                if (Entry.DepthM > Max)
+                {
+                    Max = Entry.DepthM;
+                }
+            }
+
+            return Max;
+        }
+
+        /// <summary>
+        /// Groups fragments that share a line, sorts each line by position, and
+        /// drives every fragment on that line in the same direction.
+        /// </summary>
+        /// <param name="Lanes">Fragments in the planner's order.</param>
+        /// <param name="LineIds">Line id of each returned lane. Equal ids are one line.</param>
+        /// <returns>Lanes in drive order.</returns>
+        private static List<WorkLane> ArrangeOnLines
+            (
+            IReadOnlyList<WorkLane> Lanes,
+            out List<Int32> LineIds
+            )
+        {
+            List<List<Int32>> Groups = new List<List<Int32>>();
+            for (Int32 Index = 0; Index < Lanes.Count; Index += 1)
+            {
+                Int32 Found = -1;
+                for (Int32 Group = 0; Group < Groups.Count; Group += 1)
+                {
+                    if (SharesLine(Lanes[Index], Lanes[Groups[Group][0]]))
+                    {
+                        Found = Group;
+                        break;
+                    }
+                }
+
+                if (Found < 0)
+                {
+                    Groups.Add(new List<Int32> { Index });
+                }
+                else
+                {
+                    Groups[Found].Add(Index);
+                }
+            }
+
+            List<WorkLane> Ordered = new List<WorkLane>();
+            LineIds = new List<Int32>();
+            for (Int32 Group = 0; Group < Groups.Count; Group += 1)
+            {
+                // Finish one line before the next, so the only turn is at the line's end.
+                List<WorkLane> Oriented = OrientLine(Lanes, Groups[Group]);
+                for (Int32 Index = 0; Index < Oriented.Count; Index += 1)
+                {
+                    Ordered.Add(Oriented[Index]);
+                    LineIds.Add(Group);
+                }
+            }
+
+            return Ordered;
+        }
+
+        /// <summary>
+        /// Points every fragment along the line and orders them from the low end.
+        /// </summary>
+        /// <param name="Lanes">All fragments.</param>
+        /// <param name="Indexes">Indexes that belong to this line, in discovery order.</param>
+        /// <returns>The line in drive order.</returns>
+        private static List<WorkLane> OrientLine
+            (
+            IReadOnlyList<WorkLane> Lanes,
+            IReadOnlyList<Int32> Indexes
+            )
+        {
+            WorkLane Reference = Lanes[Indexes[0]];
+            LineAxis(Reference, out Double OriginX, out Double OriginY, out Double Cos, out Double Sin, out Double _);
+            List<(Double Station, Int32 Order, WorkLane Lane)> Items =
+                new List<(Double Station, Int32 Order, WorkLane Lane)>(Indexes.Count);
+            for (Int32 Order = 0; Order < Indexes.Count; Order += 1)
+            {
+                WorkLane Lane = Lanes[Indexes[Order]];
+                Double StartS = ((Lane.Start.X - OriginX) * Cos) + ((Lane.Start.Y - OriginY) * Sin);
+                Double EndS = ((Lane.End.X - OriginX) * Cos) + ((Lane.End.Y - OriginY) * Sin);
+                if ((EndS + LINE_POINT_M) < StartS)
+                {
+                    // This fragment faces the other way down the same line. Turn it around once.
+                    Lane = Lane.Reversed();
+                    StartS = ((Lane.Start.X - OriginX) * Cos) + ((Lane.Start.Y - OriginY) * Sin);
+                }
+
+                Items.Add((StartS, Order, Lane));
+            }
+
+            Items.Sort(CompareStation);
+            List<WorkLane> Ordered = new List<WorkLane>(Items.Count);
+            foreach ((Double Station, Int32 Order, WorkLane Lane) Item in Items)
+            {
+                Ordered.Add(Item.Lane);
+            }
+
+            return Ordered;
+        }
+
+        /// <summary>
+        /// Orders a line from the low station. Equal stations keep discovery order.
+        /// </summary>
+        /// <param name="Left">One fragment.</param>
+        /// <param name="Right">The other fragment.</param>
+        /// <returns>A sort comparison.</returns>
+        private static Int32 CompareStation
+            (
+            (Double Station, Int32 Order, WorkLane Lane) Left,
+            (Double Station, Int32 Order, WorkLane Lane) Right
+            )
+        {
+            Int32 ByStation = Left.Station.CompareTo(Right.Station);
+            if (ByStation != 0)
+            {
+                return ByStation;
+            }
+
+            return Left.Order.CompareTo(Right.Order);
+        }
+
+        /// <summary>
+        /// True when <paramref name="Candidate"/> lies on the same centre line as
+        /// <paramref name="AxisLane"/>, facing either way along it.
+        /// </summary>
+        /// <param name="Candidate">Fragment being grouped.</param>
+        /// <param name="AxisLane">The line's first fragment.</param>
+        /// <returns>True when both ends sit in the band and the headings are parallel.</returns>
+        private static Boolean SharesLine
+            (
+            WorkLane Candidate,
+            WorkLane AxisLane
+            )
+        {
+            LineAxis(AxisLane, out Double OriginX, out Double OriginY, out Double Cos, out Double Sin, out Double AxisHeading);
+            LineAxis(Candidate, out Double _, out Double _, out Double _, out Double _, out Double CandidateHeading);
+            Double Delta = Math.Abs(DubinsConnector.WrapPi(CandidateHeading - AxisHeading));
+            Double Limit = LINE_ANGLE_DEG * Math.PI / Constants.DEGREES_PER_HALF_TURN;
+            Boolean Parallel = (Delta <= Limit) || ((Math.PI - Delta) <= Limit);
+            if (!Parallel)
+            {
+                return false;
+            }
+
+            Double StartLateral = Math.Abs(((Cos * (Candidate.Start.Y - OriginY)) - (Sin * (Candidate.Start.X - OriginX))));
+            Double EndLateral = Math.Abs(((Cos * (Candidate.End.Y - OriginY)) - (Sin * (Candidate.End.X - OriginX))));
+            return (StartLateral <= LINE_LATERAL_M) && (EndLateral <= LINE_LATERAL_M);
+        }
+
+        /// <summary>
+        /// Chord of a lane, or its start heading when the lane is only a point.
+        /// </summary>
+        /// <param name="Lane">Lane being measured.</param>
+        /// <param name="OriginX">Easting of the start.</param>
+        /// <param name="OriginY">Northing of the start.</param>
+        /// <param name="Cos">East component of the unit axis.</param>
+        /// <param name="Sin">North component of the unit axis.</param>
+        /// <param name="Heading">Axis heading, radians.</param>
+        private static void LineAxis
+            (
+            WorkLane Lane,
+            out Double OriginX,
+            out Double OriginY,
+            out Double Cos,
+            out Double Sin,
+            out Double Heading
+            )
+        {
+            OriginX = Lane.Start.X;
+            OriginY = Lane.Start.Y;
+            Double Dx = Lane.End.X - Lane.Start.X;
+            Double Dy = Lane.End.Y - Lane.Start.Y;
+            Double Length = Math.Sqrt((Dx * Dx) + (Dy * Dy));
+            if (Length < LINE_POINT_M)
+            {
+                Heading = Lane.Start.HeadingRad;
+            }
+            else
+            {
+                Heading = Math.Atan2(Dy, Dx);
+            }
+
+            Cos = Math.Cos(Heading);
+            Sin = Math.Sin(Heading);
+        }
+
+        /// <summary>
+        /// Indexes whose line id appears once. Those lanes may still reverse or bend.
+        /// </summary>
+        /// <param name="LineIds">Line id of each lane.</param>
+        /// <returns>Indexes of lines that have a single fragment.</returns>
+        private static List<Int32> SoloIndexes
+            (
+            IReadOnlyList<Int32> LineIds
+            )
+        {
+            Dictionary<Int32, Int32> Count = new Dictionary<Int32, Int32>();
+            for (Int32 Index = 0; Index < LineIds.Count; Index += 1)
+            {
+                Int32 Id = LineIds[Index];
+                if (!Count.ContainsKey(Id))
+                {
+                    Count[Id] = 0;
+                }
+
+                Count[Id] += 1;
+            }
+
+            List<Int32> Solo = new List<Int32>();
+            for (Int32 Index = 0; Index < LineIds.Count; Index += 1)
+            {
+                if (Count[LineIds[Index]] == 1)
+                {
+                    Solo.Add(Index);
+                }
+            }
+
+            return Solo;
+        }
+
+        /// <summary>
+        /// Line ids that give every lane a line of its own.
+        /// </summary>
+        /// <param name="Count">How many lanes.</param>
+        /// <returns>0, 1, 2, ...</returns>
+        private static List<Int32> IdentityLines
+            (
+            Int32 Count
+            )
+        {
+            List<Int32> Ids = new List<Int32>(Count);
+            for (Int32 Index = 0; Index < Count; Index += 1)
+            {
+                Ids.Add(Index);
+            }
+
+            return Ids;
+        }
+
+        /// <summary>
+        /// Orders trips to shorten empty returns, inside each stage. Flow stays
+        /// before clusters, thin-cut, and correcting. Two trips that share a
+        /// cut or fill cell keep the planner's relative order. The length is
+        /// the Dubins length with no field mask. The driven return still uses
+        /// the mask.
+        /// </summary>
+        /// <param name="Courses">Courses in planner order, used for the departure pose.</param>
+        /// <param name="Cuts">Chosen cut lanes, for each trip's cut start.</param>
+        /// <param name="Fills">Chosen spread lanes, used when a trip has no cut.</param>
+        /// <param name="Passes">Trips whose cells decide which pairs may swap.</param>
+        /// <param name="RadiusM">Turning radius.</param>
+        /// <returns>Indexes into <paramref name="Passes"/> in drive order.</returns>
+        private static Int32[] OrderTrips
+            (
+            TripCourse[] Courses,
+            List<WorkLane>[] Cuts,
+            List<WorkLane>[] Fills,
+            IReadOnlyList<Pass> Passes,
+            Double RadiusM
+            )
+        {
+            Int32 Count = Courses.Length;
+            Int32[] Order = new Int32[Count];
+            if (Count == 0)
+            {
+                return Order;
+            }
+
+            DubinsConnector.Pose[] Depart = new DubinsConnector.Pose[Count];
+            DubinsConnector.Pose[] Arrive = new DubinsConnector.Pose[Count];
+            Boolean[] HasArrive = new Boolean[Count];
+            HashSet<(Int32 Bx, Int32 By)>[] Cells = new HashSet<(Int32 Bx, Int32 By)>[Count];
+            for (Int32 Index = 0; Index < Count; Index += 1)
+            {
+                Depart[Index] = DepartureOf(Courses[Index]);
+                HasArrive[Index] = TryArrival(Cuts[Index], Fills[Index], out Arrive[Index]);
+                Cells[Index] = CellsOf(Passes[Index]);
+            }
+
+            // Stage blocks stay in enum order. Finishing is not a separate stage.
+            HaulStage[] Stages = new HaulStage[]
+            {
+                HaulStage.Flow,
+                HaulStage.Clusters,
+                HaulStage.ThinCut,
+                HaulStage.Correcting,
+            };
+            Boolean[] Used = new Boolean[Count];
+            Int32 Slot = 0;
+            DubinsConnector.Pose? Incoming = null;
+            foreach (HaulStage Stage in Stages)
+            {
+                List<Int32> Members = new List<Int32>();
+                for (Int32 Index = 0; Index < Count; Index += 1)
+                {
+                    if (Courses[Index].Stage == Stage)
+                    {
+                        Members.Add(Index);
+                    }
+                }
+
+                if (Members.Count == 0)
+                {
+                    continue;
+                }
+
+                List<Int32>[] Blockers = BlockersFor(Members, Cells);
+                // The job starts on the planner's first trip. Later stages may open on any ready trip.
+                Boolean HoldFirst = !Incoming.HasValue;
+                Int32 Placed = 0;
+                while (Placed < Members.Count)
+                {
+                    Int32 Best = -1;
+                    Double BestLength = 0.0;
+                    foreach (Int32 Candidate in Members)
+                    {
+                        if (Used[Candidate] || !Ready(Candidate, Used, Blockers))
+                        {
+                            continue;
+                        }
+
+                        if (HoldFirst && (Candidate != Members[0]))
+                        {
+                            continue;
+                        }
+
+                        Double Length = 0.0;
+                        if (Incoming.HasValue && HasArrive[Candidate])
+                        {
+                            Length = EmptyLinkM(Incoming.Value, Arrive[Candidate], RadiusM);
+                        }
+
+                        Boolean Closer = (Best >= 0) && ((Length + LENGTH_TIE_M) < BestLength);
+                        Boolean EarlierTie = (Best >= 0)
+                            && (Math.Abs(Length - BestLength) <= LENGTH_TIE_M)
+                            && (Candidate < Best);
+                        if ((Best < 0) || Closer || EarlierTie)
+                        {
+                            Best = Candidate;
+                            BestLength = Length;
+                        }
+                    }
+
+                    if (Best < 0)
+                    {
+                        // A blocker cycle would stall. Take the earliest remaining trip.
+                        foreach (Int32 Candidate in Members)
+                        {
+                            if (!Used[Candidate])
+                            {
+                                Best = Candidate;
+                                break;
+                            }
+                        }
+                    }
+
+                    Order[Slot] = Best;
+                    Used[Best] = true;
+                    Slot += 1;
+                    Placed += 1;
+                    HoldFirst = false;
+                    Incoming = Depart[Best];
+                }
+            }
+
+            ImproveOrder(Order, Courses, Depart, Arrive, HasArrive, Cells, RadiusM);
+            return Order;
+        }
+
+        /// <summary>
+        /// Swaps consecutive trips while the swap shortens the empty returns.
+        /// A pair in different stages, or a pair that shares a cell, stays put.
+        /// </summary>
+        /// <param name="Order">Drive order. Updated in place.</param>
+        /// <param name="Courses">Courses, for the stage of each trip.</param>
+        /// <param name="Depart">Pose each trip leaves from.</param>
+        /// <param name="Arrive">Cut start of each trip.</param>
+        /// <param name="HasArrive">False when a trip has no cut or spread start.</param>
+        /// <param name="Cells">Cut and fill cells of each trip.</param>
+        /// <param name="RadiusM">Turning radius.</param>
+        private static void ImproveOrder
+            (
+            Int32[] Order,
+            TripCourse[] Courses,
+            DubinsConnector.Pose[] Depart,
+            DubinsConnector.Pose[] Arrive,
+            Boolean[] HasArrive,
+            HashSet<(Int32 Bx, Int32 By)>[] Cells,
+            Double RadiusM
+            )
+        {
+            Boolean Improved = true;
+            Int32 Pass = 0;
+            while (Improved && (Pass < MAX_ORDER_PASSES))
+            {
+                Improved = false;
+                Pass += 1;
+                for (Int32 Slot = 0; Slot < (Order.Length - 1); Slot += 1)
+                {
+                    if (Slot == 0)
+                    {
+                        // The machine is already at the planner's first trip.
+                        continue;
+                    }
+
+                    Int32 Left = Order[Slot];
+                    Int32 Right = Order[Slot + 1];
+                    if (Courses[Left].Stage != Courses[Right].Stage)
+                    {
+                        continue;
+                    }
+
+                    if (SharesCells(Cells[Left], Cells[Right]))
+                    {
+                        // Shared cells keep the order the greedy pass already respected.
+                        continue;
+                    }
+
+                    Double Before = TouchingLength(Order, Slot, Depart, Arrive, HasArrive, RadiusM);
+                    Order[Slot] = Right;
+                    Order[Slot + 1] = Left;
+                    Double After = TouchingLength(Order, Slot, Depart, Arrive, HasArrive, RadiusM);
+                    if ((After + LENGTH_TIE_M) < Before)
+                    {
+                        Improved = true;
+                    }
+                    else
+                    {
+                        Order[Slot] = Left;
+                        Order[Slot + 1] = Right;
+                    }
+                }
+            }
+        }
+
+        /// <summary>
+        /// Empty-return length of the links that a consecutive swap can change.
+        /// </summary>
+        /// <param name="Order">Drive order.</param>
+        /// <param name="Slot">First trip of the pair.</param>
+        /// <param name="Depart">Departure poses.</param>
+        /// <param name="Arrive">Cut starts.</param>
+        /// <param name="HasArrive">Which trips have a cut start.</param>
+        /// <param name="RadiusM">Turning radius.</param>
+        /// <returns>Sum of the neighbouring empty-return lengths.</returns>
+        private static Double TouchingLength
+            (
+            Int32[] Order,
+            Int32 Slot,
+            DubinsConnector.Pose[] Depart,
+            DubinsConnector.Pose[] Arrive,
+            Boolean[] HasArrive,
+            Double RadiusM
+            )
+        {
+            Double Sum = EdgeLength(Order, Slot - 1, Slot, Depart, Arrive, HasArrive, RadiusM);
+            Sum += EdgeLength(Order, Slot, Slot + 1, Depart, Arrive, HasArrive, RadiusM);
+            Sum += EdgeLength(Order, Slot + 1, Slot + 2, Depart, Arrive, HasArrive, RadiusM);
+            return Sum;
+        }
+
+        /// <summary>
+        /// Dubins length from one trip's departure to the next trip's cut start.
+        /// </summary>
+        /// <param name="Order">Drive order.</param>
+        /// <param name="FromSlot">Slot of the trip being left. Negative is the start of the job.</param>
+        /// <param name="ToSlot">Slot of the trip being entered.</param>
+        /// <param name="Depart">Departure poses.</param>
+        /// <param name="Arrive">Cut starts.</param>
+        /// <param name="HasArrive">Which trips have a cut start.</param>
+        /// <param name="RadiusM">Turning radius.</param>
+        /// <returns>Length in metres. Zero when the slot is off the ends of the route.</returns>
+        private static Double EdgeLength
+            (
+            Int32[] Order,
+            Int32 FromSlot,
+            Int32 ToSlot,
+            DubinsConnector.Pose[] Depart,
+            DubinsConnector.Pose[] Arrive,
+            Boolean[] HasArrive,
+            Double RadiusM
+            )
+        {
+            if ((FromSlot < 0) || (ToSlot >= Order.Length))
+            {
+                return 0.0;
+            }
+
+            Int32 To = Order[ToSlot];
+            if (!HasArrive[To])
+            {
+                return 0.0;
+            }
+
+            return EmptyLinkM(Depart[Order[FromSlot]], Arrive[To], RadiusM);
+        }
+
+        /// <summary>
+        /// Closed-form empty connector. The field mask is not applied.
+        /// </summary>
+        /// <param name="From">Departure pose.</param>
+        /// <param name="To">Next cut start.</param>
+        /// <param name="RadiusM">Turning radius.</param>
+        /// <returns>Centreline length in metres.</returns>
+        private static Double EmptyLinkM
+            (
+            DubinsConnector.Pose From,
+            DubinsConnector.Pose To,
+            Double RadiusM
+            )
+        {
+            // Length only. The driven return is built later, with the field mask.
+            return DubinsConnector.ShortestLengthM(From, To, RadiusM);
+        }
+
+        /// <summary>
+        /// Pose the empty return leaves from: the end of the trip, before the return.
+        /// </summary>
+        /// <param name="Course">One trip.</param>
+        /// <returns>The departure pose.</returns>
+        private static DubinsConnector.Pose DepartureOf
+            (
+            TripCourse Course
+            )
+        {
+            for (Int32 Index = Course.Segments.Count - 1; Index >= 0; Index -= 1)
+            {
+                CourseSegment Segment = Course.Segments[Index];
+                if (Segment.Action == GuidanceAction.Return)
+                {
+                    continue;
+                }
+
+                if (Segment.Pieces.Count == 0)
+                {
+                    continue;
+                }
+
+                List<DubinsConnector.Pose> Samples = Segment.Pieces[Segment.Pieces.Count - 1].Samples;
+                if (Samples.Count == 0)
+                {
+                    continue;
+                }
+
+                return Samples[Samples.Count - 1];
+            }
+
+            if (Course.Points.Count > 0)
+            {
+                GuidancePoint Last = Course.Points[Course.Points.Count - 1];
+                return new DubinsConnector.Pose(Last.X, Last.Y, Last.HeadingRad);
+            }
+
+            return new DubinsConnector.Pose(0.0, 0.0, 0.0);
+        }
+
+        /// <summary>
+        /// Cut start the empty return aims at. A trip with no cut uses its spread start.
+        /// </summary>
+        /// <param name="Cuts">Chosen cut lanes.</param>
+        /// <param name="Fills">Chosen spread lanes.</param>
+        /// <param name="Arrive">The start pose when one exists.</param>
+        /// <returns>False when the trip has neither.</returns>
+        private static Boolean TryArrival
+            (
+            List<WorkLane> Cuts,
+            List<WorkLane> Fills,
+            out DubinsConnector.Pose Arrive
+            )
+        {
+            if ((Cuts != null) && (Cuts.Count > 0))
+            {
+                Arrive = Cuts[0].Start;
+                return true;
+            }
+
+            if ((Fills != null) && (Fills.Count > 0))
+            {
+                Arrive = Fills[0].Start;
+                return true;
+            }
+
+            Arrive = new DubinsConnector.Pose(0.0, 0.0, 0.0);
+            return false;
+        }
+
+        /// <summary>
+        /// Lists the 20 worst trips by connector ratio, loaded heading change, and turnarounds.
+        /// </summary>
+        /// <param name="Text">Report being built.</param>
+        /// <param name="Trips">Trips in planner order.</param>
+        private static void AppendDiagnostics
+            (
+            StringBuilder Text,
+            IReadOnlyList<TripCourse> Trips
+            )
+        {
+            Double[] Ratio = new Double[Trips.Count];
+            Double[] Heading = new Double[Trips.Count];
+            Double[] Turns = new Double[Trips.Count];
+            Double[] ConnectorM = new Double[Trips.Count];
+            Double[] ProductiveM = new Double[Trips.Count];
+            for (Int32 Index = 0; Index < Trips.Count; Index += 1)
+            {
+                TripCourse Trip = Trips[Index];
+                ConnectorM[Index] = ConnectorLengthM(Trip);
+                ProductiveM[Index] = ProductiveLengthM(Trip);
+                if (ProductiveM[Index] < 1e-6)
+                {
+                    Ratio[Index] = Double.PositiveInfinity;
+                }
+                else
+                {
+                    Ratio[Index] = ConnectorM[Index] / ProductiveM[Index];
+                }
+
+                Heading[Index] = LoadedHeadingChange(Trip);
+                Turns[Index] = TurnaroundCount(Trip);
+            }
+
+            Text.AppendLine();
+            Text.AppendLine("Worst trips by connector length / productive length");
+            foreach (Int32 Index in WorstTrips(Trips, Ratio, WORST_COUNT))
+            {
+                String RatioText = Double.IsPositiveInfinity(Ratio[Index])
+                    ? "inf"
+                    : Ratio[Index].ToString("F3", CultureInfo.InvariantCulture);
+                Text.AppendLine(String.Format(
+                    CultureInfo.InvariantCulture,
+                    "trip {0} {1}  {2}  connectors {3:F1} m  productive {4:F1} m",
+                    Trips[Index].TripNumber,
+                    Trips[Index].Stage,
+                    RatioText,
+                    ConnectorM[Index],
+                    ProductiveM[Index]));
+            }
+
+            Text.AppendLine();
+            Text.AppendLine("Worst trips by loaded-connector heading change");
+            foreach (Int32 Index in WorstTrips(Trips, Heading, WORST_COUNT))
+            {
+                String Flag = (Heading[Index] > (2.0 * Math.PI)) ? " FLAG" : "";
+                Text.AppendLine(String.Format(
+                    CultureInfo.InvariantCulture,
+                    "trip {0} {1}  {2:F3} rad{3}",
+                    Trips[Index].TripNumber,
+                    Trips[Index].Stage,
+                    Heading[Index],
+                    Flag));
+            }
+
+            Text.AppendLine();
+            Text.AppendLine("Worst trips by turnaround count");
+            foreach (Int32 Index in WorstTrips(Trips, Turns, WORST_COUNT))
+            {
+                Text.AppendLine(String.Format(
+                    CultureInfo.InvariantCulture,
+                    "trip {0} {1}  {2:F0}",
+                    Trips[Index].TripNumber,
+                    Trips[Index].Stage,
+                    Turns[Index]));
+            }
+        }
+
+        /// <summary>
+        /// Highest scores first. An equal score keeps the earlier trip number.
+        /// </summary>
+        /// <param name="Trips">Trips the scores belong to.</param>
+        /// <param name="Scores">One score per trip.</param>
+        /// <param name="Count">How many to keep.</param>
+        /// <returns>Indexes into <paramref name="Trips"/>.</returns>
+        private static List<Int32> WorstTrips
+            (
+            IReadOnlyList<TripCourse> Trips,
+            Double[] Scores,
+            Int32 Count
+            )
+        {
+            List<Int32> Picked = new List<Int32>();
+            Boolean[] Used = new Boolean[Trips.Count];
+            Int32 Take = Math.Min(Count, Trips.Count);
+            for (Int32 Rank = 0; Rank < Take; Rank += 1)
+            {
+                Int32 Best = -1;
+                for (Int32 Index = 0; Index < Trips.Count; Index += 1)
+                {
+                    if (Used[Index])
+                    {
+                        continue;
+                    }
+
+                    if (Best < 0)
+                    {
+                        Best = Index;
+                        continue;
+                    }
+
+                    if (Scores[Index] > Scores[Best])
+                    {
+                        Best = Index;
+                        continue;
+                    }
+
+                    if ((Scores[Index] == Scores[Best]) && (Trips[Index].TripNumber < Trips[Best].TripNumber))
+                    {
+                        Best = Index;
+                    }
+                }
+
+                if (Best < 0)
+                {
+                    break;
+                }
+
+                Used[Best] = true;
+                Picked.Add(Best);
+            }
+
+            return Picked;
+        }
+
+        /// <summary>
+        /// Length of every connector on the trip, lanes excluded.
+        /// </summary>
+        /// <param name="Trip">One trip.</param>
+        /// <returns>Metres.</returns>
+        private static Double ConnectorLengthM
+            (
+            TripCourse Trip
+            )
+        {
+            Double Length = 0.0;
+            foreach (CourseSegment Segment in Trip.Segments)
+            {
+                if (!Segment.IsLane)
+                {
+                    Length += Segment.LengthM;
+                }
+            }
+
+            return Length;
+        }
+
+        /// <summary>
+        /// Cut length plus spread length. Grade lanes are not included.
+        /// </summary>
+        /// <param name="Trip">One trip.</param>
+        /// <returns>Metres.</returns>
+        private static Double ProductiveLengthM
+            (
+            TripCourse Trip
+            )
+        {
+            Double Length = 0.0;
+            foreach (CourseSegment Segment in Trip.Segments)
+            {
+                if (!Segment.IsLane)
+                {
+                    continue;
+                }
+
+                if ((Segment.Action == GuidanceAction.Cut) || (Segment.Action == GuidanceAction.Fill))
+                {
+                    Length += Segment.LengthM;
+                }
+            }
+
+            return Length;
+        }
+
+        /// <summary>
+        /// Absolute heading change along loaded connectors, radians.
+        /// </summary>
+        /// <param name="Trip">One trip.</param>
+        /// <returns>Radians. A straight adds nothing.</returns>
+        private static Double LoadedHeadingChange
+            (
+            TripCourse Trip
+            )
+        {
+            Double Change = 0.0;
+            foreach (CourseSegment Segment in Trip.Segments)
+            {
+                if (Segment.IsLane || (Segment.Action != GuidanceAction.Carry))
+                {
+                    continue;
+                }
+
+                foreach (DrawnPiece Piece in Segment.Pieces)
+                {
+                    if (Piece.Kind != DubinsConnector.PieceKind.Straight)
+                    {
+                        Change += Piece.LengthM * Piece.CurvaturePerM;
+                    }
+                }
+            }
+
+            return Change;
+        }
+
+        /// <summary>
+        /// How many turnaround segments the trip drives.
+        /// </summary>
+        /// <param name="Trip">One trip.</param>
+        /// <returns>The count.</returns>
+        private static Double TurnaroundCount
+            (
+            TripCourse Trip
+            )
+        {
+            Double Count = 0.0;
+            foreach (CourseSegment Segment in Trip.Segments)
+            {
+                if (Segment.Action == GuidanceAction.Turn)
+                {
+                    Count += 1.0;
+                }
+            }
+
+            return Count;
+        }
+
+        /// <summary>
+        /// Plans every trip in planner order. Later trips are planned first so
+        /// each return aims at the next trip's chosen cut.
+        /// </summary>
+        /// <param name="Grid">Field grid.</param>
+        /// <param name="Passes">Trips in planner order.</param>
+        /// <param name="Origin">Original 0-based index of each trip.</param>
+        /// <param name="Clock">Speeds and acceleration.</param>
+        /// <param name="BladeWidthM">Blade width.</param>
+        /// <param name="RadiusM">Turning radius.</param>
+        /// <param name="CircleFt">Turning diameter in feet, for the lane builder.</param>
+        /// <param name="Courses">Courses aimed at the planner's next trip.</param>
+        /// <param name="ChosenCuts">Cut lanes after the direction search.</param>
+        /// <param name="ChosenFills">Spread lanes after the direction search.</param>
+        /// <param name="CutLines">Line id of each cut lane.</param>
+        /// <param name="FillLines">Line id of each spread lane.</param>
+        /// <param name="HeldCuts">Cut cells past the three-line cap.</param>
+        /// <param name="HeldFills">Spread cells past the three-line cap.</param>
+        private static void PlanCourses
+            (
+            Grid Grid,
+            IReadOnlyList<Pass> Passes,
+            Int32[] Origin,
+            TimeParams Clock,
+            Double BladeWidthM,
+            Double RadiusM,
+            Double CircleFt,
+            out TripCourse[] Courses,
+            out List<WorkLane>[] ChosenCuts,
+            out List<WorkLane>[] ChosenFills,
+            out List<Int32>[] CutLines,
+            out List<Int32>[] FillLines,
+            out List<((Int32 Bx, Int32 By) Cell, Double DepthM)>[] HeldCuts,
+            out List<((Int32 Bx, Int32 By) Cell, Double DepthM)>[] HeldFills
+            )
+        {
+            Int32 Count = Passes.Count;
+            List<WorkLane>[] PlannedCuts = new List<WorkLane>[Count];
+            List<WorkLane>[] PlannedFills = new List<WorkLane>[Count];
+            for (Int32 Index = 0; Index < Count; Index += 1)
+            {
+                Pass Current = Passes[Index];
+                PlannedCuts[Index] = LanesOf(Current.CutCells, Current.RibbonOrder, Grid, BladeWidthM, CircleFt);
+                PlannedFills[Index] = LanesOf(Current.FillCells, Current.RibbonOrder, Grid, BladeWidthM, CircleFt);
+            }
+
+            Courses = new TripCourse[Count];
+            ChosenCuts = new List<WorkLane>[Count];
+            ChosenFills = new List<WorkLane>[Count];
+            CutLines = new List<Int32>[Count];
+            FillLines = new List<Int32>[Count];
+            HeldCuts = new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>[Count];
+            HeldFills = new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>[Count];
+            for (Int32 Index = Count - 1; Index >= 0; Index -= 1)
+            {
+                DubinsConnector.Pose? NextCut = null;
+                if (Index + 1 < Count)
+                {
+                    List<WorkLane>? NextLanes = ChosenCuts[Index + 1];
+                    if ((NextLanes != null) && (NextLanes.Count > 0))
+                    {
+                        NextCut = NextLanes[0].Start;
+                    }
+                }
+
+                DirectionChoice Choice = ChooseDirections(
+                    PlannedCuts[Index],
+                    PlannedFills[Index],
+                    NextCut,
+                    Grid,
+                    Grid.ContainsWorldXy,
+                    Clock,
+                    RadiusM,
+                    BladeWidthM,
+                    Grid.GridSizeM,
+                    Origin[Index] + 1,
+                    Passes[Index].Stage);
+                Courses[Index] = Choice.Course;
+                ChosenCuts[Index] = Choice.Cuts;
+                ChosenFills[Index] = Choice.Fills;
+                CutLines[Index] = Choice.CutLines;
+                FillLines[Index] = Choice.FillLines;
+                HeldCuts[Index] = Choice.HeldCuts;
+                HeldFills[Index] = Choice.HeldFills;
+            }
+        }
+
+        /// <summary>
+        /// Folds a short or connector-heavy correcting trip into an adjacent
+        /// line when the bowl can take the load. Otherwise drops it when every
+        /// cell is already within the land-plane tolerance.
+        /// </summary>
+        /// <param name="Passes">Trips in planner order. Not mutated.</param>
+        /// <param name="Origin">Original index of each trip.</param>
+        /// <param name="Courses">Courses used for the leftover test.</param>
+        /// <param name="Cuts">Chosen cut lanes, for the line axis.</param>
+        /// <param name="Fills">Chosen spread lanes, for the line axis.</param>
+        /// <param name="BowlCapacityM3">Scraper bowl, cubic metres.</param>
+        /// <param name="RadiusM">Turning radius.</param>
+        /// <param name="BladeWidthM">Blade width.</param>
+        /// <param name="NextPasses">Trips after the merge and the drops.</param>
+        /// <param name="NextOrigin">Original index of each remaining trip.</param>
+        /// <param name="Merged">How many trips were merged.</param>
+        /// <param name="Dropped">How many trips were dropped.</param>
+        /// <returns>True when the pass list changed.</returns>
+        private static Boolean MergeLeftovers
+            (
+            List<Pass> Passes,
+            Int32[] Origin,
+            TripCourse[] Courses,
+            List<WorkLane>[] Cuts,
+            List<WorkLane>[] Fills,
+            Double BowlCapacityM3,
+            Double RadiusM,
+            Double BladeWidthM,
+            out List<Pass> NextPasses,
+            out Int32[] NextOrigin,
+            out Int32 Merged,
+            out Int32 Dropped
+            )
+        {
+            NextPasses = Passes;
+            NextOrigin = Origin;
+            Merged = 0;
+            Dropped = 0;
+            Int32 Count = Passes.Count;
+            Double[] Productive = new Double[Count];
+            List<Int32> Pending = new List<Int32>();
+            Double Limit = SHORT_JOINT_RADII * RadiusM;
+            for (Int32 Index = 0; Index < Count; Index += 1)
+            {
+                if (Passes[Index].Stage != HaulStage.Correcting)
+                {
+                    continue;
+                }
+
+                Productive[Index] = ProductiveLengthM(Courses[Index]);
+                Double Connectors = ConnectorLengthM(Courses[Index]);
+                Boolean Short = Productive[Index] < Limit;
+                Boolean Heavy = (Productive[Index] > 1e-6)
+                    ? ((Connectors / Productive[Index]) > LEFTOVER_RATIO)
+                    : (Connectors > 1e-6);
+                if (Short || Heavy)
+                {
+                    Pending.Add(Index);
+                }
+            }
+
+            if (Pending.Count == 0)
+            {
+                return false;
+            }
+
+            Pending.Sort(delegate (Int32 Left, Int32 Right)
+            {
+                Int32 ByLength = Productive[Left].CompareTo(Productive[Right]);
+                if (ByLength != 0)
+                {
+                    return ByLength;
+                }
+
+                return Left.CompareTo(Right);
+            });
+            List<Pass> Working = new List<Pass>(Passes);
+            Boolean[] Removed = new Boolean[Count];
+            Double BowlBcy = BowlCapacityM3 * Constants.M3_TO_CY;
+            foreach (Int32 Source in Pending)
+            {
+                if (Removed[Source])
+                {
+                    continue;
+                }
+
+                Int32 Target = AdjacentTrip(
+                    Source, Working, Removed, Cuts, Fills, BladeWidthM, BowlBcy);
+                if (Target >= 0)
+                {
+                    Working[Target] = CombinePasses(Working[Target], Working[Source]);
+                    Removed[Source] = true;
+                    Merged += 1;
+                }
+                else if (WithinTolerance(Working[Source]))
+                {
+                    Removed[Source] = true;
+                    Dropped += 1;
+                }
+            }
+
+            if ((Merged == 0) && (Dropped == 0))
+            {
+                return false;
+            }
+
+            NextPasses = new List<Pass>();
+            List<Int32> Kept = new List<Int32>();
+            for (Int32 Index = 0; Index < Count; Index += 1)
+            {
+                if (!Removed[Index])
+                {
+                    NextPasses.Add(Working[Index]);
+                    Kept.Add(Origin[Index]);
+                }
+            }
+
+            NextOrigin = Kept.ToArray();
+            return true;
+        }
+
+        /// <summary>
+        /// Nearest correcting trip on a parallel line, close enough to be the
+        /// next pass, whose bowl still has room for this load.
+        /// </summary>
+        /// <param name="Source">Leftover trip index.</param>
+        /// <param name="Passes">Current passes, including earlier merges.</param>
+        /// <param name="Removed">Trips already merged or dropped.</param>
+        /// <param name="Cuts">Cut lanes from the first plan.</param>
+        /// <param name="Fills">Spread lanes from the first plan.</param>
+        /// <param name="BladeWidthM">Blade width.</param>
+        /// <param name="BowlBcy">Bowl capacity in bank cubic yards.</param>
+        /// <returns>The neighbour index, or -1 when none can take the load.</returns>
+        private static Int32 AdjacentTrip
+            (
+            Int32 Source,
+            List<Pass> Passes,
+            Boolean[] Removed,
+            List<WorkLane>[] Cuts,
+            List<WorkLane>[] Fills,
+            Double BladeWidthM,
+            Double BowlBcy
+            )
+        {
+            if (!TryAxis(Cuts[Source], Fills[Source], out DubinsConnector.Pose From, out Double FromHeading))
+            {
+                return -1;
+            }
+
+            Double Band = ADJACENT_LINE_BLADES * BladeWidthM;
+            Double Parallel = PARALLEL_HEADING_DEG * Math.PI / Constants.DEGREES_PER_HALF_TURN;
+            Int32 Best = -1;
+            Double BestLateral = 0.0;
+            for (Int32 Index = 0; Index < Passes.Count; Index += 1)
+            {
+                if ((Index == Source) || Removed[Index] || (Passes[Index].Stage != HaulStage.Correcting))
+                {
+                    continue;
+                }
+
+                if ((Passes[Index].LoadBcy + Passes[Source].LoadBcy) > (BowlBcy + 1e-6))
+                {
+                    continue;
+                }
+
+                if (!TryAxis(Cuts[Index], Fills[Index], out DubinsConnector.Pose To, out Double ToHeading))
+                {
+                    continue;
+                }
+
+                Double Turn = Math.Abs(DubinsConnector.WrapPi(ToHeading - FromHeading));
+                Boolean SameWay = Turn <= Parallel;
+                Boolean Opposite = Turn >= (Math.PI - Parallel);
+                if (!SameWay && !Opposite)
+                {
+                    continue;
+                }
+
+                Double Dx = To.X - From.X;
+                Double Dy = To.Y - From.Y;
+                Double Lateral = Math.Abs((Dx * -Math.Sin(FromHeading)) + (Dy * Math.Cos(FromHeading)));
+                Double Along = Math.Abs((Dx * Math.Cos(FromHeading)) + (Dy * Math.Sin(FromHeading)));
+                Double Reach = Math.Max(AxisLength(Cuts[Source], Fills[Source]), AxisLength(Cuts[Index], Fills[Index]));
+                if ((Lateral > Band) || (Lateral < (0.25 * BladeWidthM)) || (Along > (Reach + Band)))
+                {
+                    continue;
+                }
+
+                if ((Best < 0) || (Lateral < BestLateral))
+                {
+                    Best = Index;
+                    BestLateral = Lateral;
+                }
+            }
+
+            return Best;
+        }
+
+        /// <summary>
+        /// Midpoint and heading of the first cut lane, or the first spread lane.
+        /// </summary>
+        /// <param name="Cuts">Cut lanes.</param>
+        /// <param name="Fills">Spread lanes.</param>
+        /// <param name="Mid">Midpoint pose.</param>
+        /// <param name="Heading">Travel heading, radians.</param>
+        /// <returns>False when the trip has no lane.</returns>
+        private static Boolean TryAxis
+            (
+            List<WorkLane> Cuts,
+            List<WorkLane> Fills,
+            out DubinsConnector.Pose Mid,
+            out Double Heading
+            )
+        {
+            WorkLane? Lane = null;
+            if ((Cuts != null) && (Cuts.Count > 0))
+            {
+                Lane = Cuts[0];
+            }
+            else if ((Fills != null) && (Fills.Count > 0))
+            {
+                Lane = Fills[0];
+            }
+
+            if (Lane == null)
+            {
+                Mid = new DubinsConnector.Pose(0.0, 0.0, 0.0);
+                Heading = 0.0;
+                return false;
+            }
+
+            Mid = new DubinsConnector.Pose(
+                (Lane.Start.X + Lane.End.X) * 0.5,
+                (Lane.Start.Y + Lane.End.Y) * 0.5,
+                Lane.Start.HeadingRad);
+            Heading = Lane.Start.HeadingRad;
+            return true;
+        }
+
+        /// <summary>
+        /// Length of the first cut lane, or the first spread lane.
+        /// </summary>
+        /// <param name="Cuts">Cut lanes.</param>
+        /// <param name="Fills">Spread lanes.</param>
+        /// <returns>Metres. Zero when there is no lane.</returns>
+        private static Double AxisLength
+            (
+            List<WorkLane> Cuts,
+            List<WorkLane> Fills
+            )
+        {
+            if ((Cuts != null) && (Cuts.Count > 0))
+            {
+                return Cuts[0].LengthM;
+            }
+
+            if ((Fills != null) && (Fills.Count > 0))
+            {
+                return Fills[0].LengthM;
+            }
+
+            return 0.0;
+        }
+
+        /// <summary>
+        /// One correcting pass that carries both trips' cells. The lane builder
+        /// retitles them, so the two lines stay separate.
+        /// </summary>
+        /// <param name="Target">The trip that keeps its place in the list.</param>
+        /// <param name="Source">The trip whose cells move.</param>
+        /// <returns>The combined pass.</returns>
+        private static Pass CombinePasses
+            (
+            Pass Target,
+            Pass Source
+            )
+        {
+            List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Cuts =
+                new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>(Target.CutCells);
+            Cuts.AddRange(Source.CutCells);
+            List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Fills =
+                new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>(Target.FillCells);
+            Fills.AddRange(Source.FillCells);
+            Pass Combined = new Pass(
+                Cuts,
+                Fills,
+                Target.LoadBcy + Source.LoadBcy,
+                Target.HaulDistanceM + Source.HaulDistanceM,
+                Target.CutStartXy,
+                Target.CutEndXy,
+                Target.FillStartXy,
+                Target.FillEndXy);
+            Combined.Stage = HaulStage.Correcting;
+            Combined.StackedLifts = true;
+            // Ribbon order would draw the jump between the two lines with the blade down.
+            Combined.RibbonOrder = false;
+            return Combined;
+        }
+
+        /// <summary>
+        /// True when every cut and fill cell is already inside the land-plane tolerance.
+        /// </summary>
+        /// <param name="Trip">One pass.</param>
+        /// <returns>True when the trip can be dropped.</returns>
+        private static Boolean WithinTolerance
+            (
+            Pass Trip
+            )
+        {
+            foreach (((Int32 Bx, Int32 By) Cell, Double DepthM) Entry in Trip.CutCells)
+            {
+                if (Entry.DepthM > GRADE_DEPTH_M)
+                {
+                    return false;
+                }
+            }
+
+            foreach (((Int32 Bx, Int32 By) Cell, Double DepthM) Entry in Trip.FillCells)
+            {
+                if (Entry.DepthM > GRADE_DEPTH_M)
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// Replays the recorded cut and fill in planner order and in drive order.
+        /// The two surfaces must agree to 1 mm. Grade returns follow the empty
+        /// travel, so they are not part of this check.
+        /// </summary>
+        /// <param name="Grid">Field grid.</param>
+        /// <param name="Passes">Trips after leftover merge.</param>
+        /// <param name="DriveOrder">Indexes into <paramref name="Passes"/>.</param>
+        /// <param name="Cuts">Chosen cut lanes.</param>
+        /// <param name="Fills">Chosen spread lanes.</param>
+        /// <param name="HeldCuts">Cut cells the path does not drive.</param>
+        /// <param name="HeldFills">Spread cells the path does not drive.</param>
+        private static void RequireSameSurface
+            (
+            Grid Grid,
+            IReadOnlyList<Pass> Passes,
+            Int32[] DriveOrder,
+            List<WorkLane>[] Cuts,
+            List<WorkLane>[] Fills,
+            List<((Int32 Bx, Int32 By) Cell, Double DepthM)>[] HeldCuts,
+            List<((Int32 Bx, Int32 By) Cell, Double DepthM)>[] HeldFills
+            )
+        {
+            Int32 Count = Passes.Count;
+            HashSet<(Int32 Bx, Int32 By)>[] CutSkip = new HashSet<(Int32 Bx, Int32 By)>[Count];
+            HashSet<(Int32 Bx, Int32 By)>[] FillSkip = new HashSet<(Int32 Bx, Int32 By)>[Count];
+            for (Int32 Index = 0; Index < Count; Index += 1)
+            {
+                CutSkip[Index] = DeferredCells(Cuts[Index]);
+                FillSkip[Index] = DeferredCells(Fills[Index]);
+                AddHeld(CutSkip[Index], HeldCuts[Index]);
+                AddHeld(FillSkip[Index], HeldFills[Index]);
+            }
+
+            Double[,] Planned = Grid.Delta();
+            Double[,] Driven = Grid.Delta();
+            for (Int32 Index = 0; Index < Count; Index += 1)
+            {
+                ApplyPass(Planned, Passes[Index], CutSkip[Index], FillSkip[Index]);
+            }
+
+            for (Int32 Step = 0; Step < DriveOrder.Length; Step += 1)
+            {
+                Int32 Index = DriveOrder[Step];
+                ApplyPass(Driven, Passes[Index], CutSkip[Index], FillSkip[Index]);
+            }
+
+            Double Worst = 0.0;
+            Int32 WorstX = 0;
+            Int32 WorstY = 0;
+            Int32 Height = Planned.GetLength(0);
+            Int32 Width = Planned.GetLength(1);
+            for (Int32 Row = 0; Row < Height; Row += 1)
+            {
+                for (Int32 Column = 0; Column < Width; Column += 1)
+                {
+                    if ((Grid.Valid != null) && !Grid.Valid[Row, Column])
+                    {
+                        continue;
+                    }
+
+                    Double Left = Planned[Row, Column];
+                    Double Right = Driven[Row, Column];
+                    if (Double.IsNaN(Left) || Double.IsNaN(Right))
+                    {
+                        continue;
+                    }
+
+                    Double Gap = Math.Abs(Left - Right);
+                    if (Gap > Worst)
+                    {
+                        Worst = Gap;
+                        WorstX = Column;
+                        WorstY = Row;
+                    }
+                }
+            }
+
+            if (Worst > SURFACE_MATCH_M)
+            {
+                throw new InvalidOperationException(String.Format(
+                    CultureInfo.InvariantCulture,
+                    "Reordered plan differs by {0:F4} m at cell {1},{2}. The limit is 1 mm.",
+                    Worst,
+                    WorstX,
+                    WorstY));
+            }
+        }
+
+        /// <summary>
+        /// Adds cells the path did not drive to a skip set.
+        /// </summary>
+        /// <param name="Skip">Cells already left behind by a bend or a trim.</param>
+        /// <param name="Held">Cells past the line cap.</param>
+        private static void AddHeld
+            (
+            HashSet<(Int32 Bx, Int32 By)> Skip,
+            List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Held
+            )
+        {
+            if (Held == null)
+            {
+                return;
+            }
+
+            foreach (((Int32 Bx, Int32 By) Cell, Double DepthM) Entry in Held)
+            {
+                Skip.Add(Entry.Cell);
+            }
+        }
+
+        /// <summary>
+        /// Orders lines by lateral offset and keeps the first three. Odd spread
+        /// lines are reversed so the spreads snake. Dropped cells are returned
+        /// for a later pass.
+        /// </summary>
+        /// <param name="Lanes">Lanes already grouped onto lines.</param>
+        /// <param name="LineIds">Line id of each lane.</param>
+        /// <param name="Serpentine">True reverses every other line.</param>
+        /// <param name="SweptIds">Line id of each kept lane, in sweep order.</param>
+        /// <param name="Held">Cells on the lines that were not kept.</param>
+        /// <returns>The lanes the trip drives.</returns>
+        private static List<WorkLane> SweepLines
+            (
+            List<WorkLane> Lanes,
+            List<Int32> LineIds,
+            Boolean Serpentine,
+            out List<Int32> SweptIds,
+            out List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Held
+            )
+        {
+            SweptIds = new List<Int32>();
+            Held = new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>();
+            if ((Lanes == null) || (Lanes.Count == 0))
+            {
+                return new List<WorkLane>();
+            }
+
+            List<Int32> Seen = new List<Int32>();
+            Dictionary<Int32, List<WorkLane>> Groups = new Dictionary<Int32, List<WorkLane>>();
+            for (Int32 Index = 0; Index < Lanes.Count; Index += 1)
+            {
+                Int32 Id = (Index < LineIds.Count) ? LineIds[Index] : Index;
+                if (!Groups.ContainsKey(Id))
+                {
+                    Groups[Id] = new List<WorkLane>();
+                    Seen.Add(Id);
+                }
+
+                Groups[Id].Add(Lanes[Index]);
+            }
+
+            WorkLane OriginLane = Groups[Seen[0]][0];
+            Double Heading = OriginLane.Start.HeadingRad;
+            Double OriginX = OriginLane.Start.X;
+            Double OriginY = OriginLane.Start.Y;
+            List<Int32> Ranked = new List<Int32>(Seen);
+            Ranked.Sort(delegate (Int32 Left, Int32 Right)
+            {
+                Double LeftOffset = LineOffset(Groups[Left][0], OriginX, OriginY, Heading);
+                Double RightOffset = LineOffset(Groups[Right][0], OriginX, OriginY, Heading);
+                Int32 ByOffset = LeftOffset.CompareTo(RightOffset);
+                if (ByOffset != 0)
+                {
+                    return ByOffset;
+                }
+
+                return Seen.IndexOf(Left).CompareTo(Seen.IndexOf(Right));
+            });
+            Int32 Keep = Ranked.Count;
+            if (Keep > MAX_CORRECTING_LINES)
+            {
+                Keep = MAX_CORRECTING_LINES;
+            }
+
+            for (Int32 Index = Keep; Index < Ranked.Count; Index += 1)
+            {
+                foreach (WorkLane Lane in Groups[Ranked[Index]])
+                {
+                    Held.AddRange(Lane.Cells);
+                    Held.AddRange(Lane.Deferred);
+                }
+            }
+
+            List<WorkLane> Result = new List<WorkLane>();
+            for (Int32 Index = 0; Index < Keep; Index += 1)
+            {
+                List<WorkLane> Group = Groups[Ranked[Index]];
+                if (Serpentine && ((Index % 2) == 1))
+                {
+                    // Start this line at the end the previous line just reached.
+                    for (Int32 LaneIndex = Group.Count - 1; LaneIndex >= 0; LaneIndex -= 1)
+                    {
+                        Result.Add(Group[LaneIndex].Reversed());
+                        SweptIds.Add(Index);
+                    }
+                }
+                else
+                {
+                    foreach (WorkLane Lane in Group)
+                    {
+                        Result.Add(Lane);
+                        SweptIds.Add(Index);
+                    }
+                }
+            }
+
+            return Result;
+        }
+
+        /// <summary>
+        /// Signed sideways position of a lane start, metres.
+        /// </summary>
+        /// <param name="Lane">One lane on the line.</param>
+        /// <param name="OriginX">Easting of the first line.</param>
+        /// <param name="OriginY">Northing of the first line.</param>
+        /// <param name="Heading">Heading of the first line.</param>
+        /// <returns>Metres to the left of the first line.</returns>
+        private static Double LineOffset
+            (
+            WorkLane Lane,
+            Double OriginX,
+            Double OriginY,
+            Double Heading
+            )
+        {
+            Double Dx = Lane.Start.X - OriginX;
+            Double Dy = Lane.Start.Y - OriginY;
+            return (Dx * -Math.Sin(Heading)) + (Dy * Math.Cos(Heading));
+        }
+
+        /// <summary>
+        /// Tries the start slides and the end trims of a short joint and keeps
+        /// the shortest. A gentle gap is left alone so the operator can steer it.
+        /// </summary>
+        /// <param name="Cuts">Cut lanes. Updated in place.</param>
+        /// <param name="Fills">Spread lanes. Updated in place.</param>
+        /// <param name="RadiusM">Turning radius.</param>
+        /// <param name="BladeWidthM">Blade width.</param>
+        private static void FitShortJoints
+            (
+            List<WorkLane> Cuts,
+            List<WorkLane> Fills,
+            Double RadiusM,
+            Double BladeWidthM
+            )
+        {
+            List<WorkLane> All = new List<WorkLane>(Cuts.Count + Fills.Count);
+            All.AddRange(Cuts);
+            All.AddRange(Fills);
+            Double[] Slides = new Double[] { 0.0, 0.5, 1.0, 1.5, 2.0 };
+            for (Int32 Index = 0; Index < (All.Count - 1); Index += 1)
+            {
+                WorkLane Left = All[Index];
+                WorkLane Right = All[Index + 1];
+                Double Gap = PoseGap(Left.End, Right.Start);
+                if (Gap >= (SHORT_JOINT_RADII * RadiusM))
+                {
+                    continue;
+                }
+
+                if (SteerAcross(Left.End, Right.Start, RadiusM, BladeWidthM))
+                {
+                    continue;
+                }
+
+                WorkLane BestLeft = Left;
+                WorkLane BestRight = Right;
+                Double Best = JointLength(Left.End, Right.Start, RadiusM, BladeWidthM);
+                foreach (Double EndSlide in Slides)
+                {
+                    foreach (Double StartSlide in Slides)
+                    {
+                        if ((EndSlide == 0.0) && (StartSlide == 0.0))
+                        {
+                            continue;
+                        }
+
+                        // A bend is the end of the lane. Trimming it would straighten the boundary.
+                        WorkLane? TrimmedLeft = (EndSlide == 0.0)
+                            ? Left
+                            : ((Left.ArcLengthM > 0.0) ? null : Left.TrimFromEnd(EndSlide * RadiusM));
+                        WorkLane? TrimmedRight = (StartSlide == 0.0) ? Right : Right.TrimFromStart(StartSlide * RadiusM);
+                        if ((TrimmedLeft == null) || (TrimmedRight == null))
+                        {
+                            continue;
+                        }
+
+                        Double Length = JointLength(TrimmedLeft.End, TrimmedRight.Start, RadiusM, BladeWidthM);
+                        if ((Length + LENGTH_TIE_M) < Best)
+                        {
+                            Best = Length;
+                            BestLeft = TrimmedLeft;
+                            BestRight = TrimmedRight;
+                        }
+                    }
+                }
+
+                All[Index] = BestLeft;
+                All[Index + 1] = BestRight;
+            }
+
+            for (Int32 Index = 0; Index < Cuts.Count; Index += 1)
+            {
+                Cuts[Index] = All[Index];
+            }
+
+            for (Int32 Index = 0; Index < Fills.Count; Index += 1)
+            {
+                Fills[Index] = All[Cuts.Count + Index];
+            }
+        }
+
+        /// <summary>
+        /// Writes trimmed lanes back into the list the caller owns.
+        /// </summary>
+        /// <param name="Target">The caller's list.</param>
+        /// <param name="Source">The trimmed lanes.</param>
+        private static void CopyLanes
+            (
+            IReadOnlyList<WorkLane> Target,
+            List<WorkLane> Source
+            )
+        {
+            List<WorkLane>? List = Target as List<WorkLane>;
+            if ((List == null) || (List.Count != Source.Count))
+            {
+                return;
+            }
+
+            for (Int32 Index = 0; Index < List.Count; Index += 1)
+            {
+                List[Index] = Source[Index];
+            }
+        }
+
+        /// <summary>
+        /// True when a short gap is a small heading change and at most one blade
+        /// of sideways offset, so the operator steers across it in a straight line.
+        /// </summary>
+        /// <param name="From">Pose the previous lane ended on.</param>
+        /// <param name="To">Pose the next lane starts on.</param>
+        /// <param name="RadiusM">Turning radius.</param>
+        /// <param name="BladeWidthM">Blade width. Zero never steers.</param>
+        /// <returns>True when the connector should be a straight line.</returns>
+        private static Boolean SteerAcross
+            (
+            DubinsConnector.Pose From,
+            DubinsConnector.Pose To,
+            Double RadiusM,
+            Double BladeWidthM
+            )
+        {
+            if ((BladeWidthM <= 0.0) || (RadiusM <= 0.0))
+            {
+                return false;
+            }
+
+            Double Gap = PoseGap(From, To);
+            if (Gap >= (SHORT_JOINT_RADII * RadiusM))
+            {
+                return false;
+            }
+
+            Double Turn = Math.Abs(DubinsConnector.WrapPi(To.HeadingRad - From.HeadingRad));
+            if (Turn >= (STEER_HEADING_DEG * Math.PI / Constants.DEGREES_PER_HALF_TURN))
+            {
+                return false;
+            }
+
+            Double Dx = To.X - From.X;
+            Double Dy = To.Y - From.Y;
+            Double Side = (Dx * -Math.Sin(From.HeadingRad)) + (Dy * Math.Cos(From.HeadingRad));
+            return Math.Abs(Side) <= (BladeWidthM + 1e-6);
+        }
+
+        /// <summary>
+        /// Length of the connector a short joint would drive.
+        /// </summary>
+        /// <param name="From">Departure pose.</param>
+        /// <param name="To">Arrival pose.</param>
+        /// <param name="RadiusM">Turning radius.</param>
+        /// <param name="BladeWidthM">Blade width.</param>
+        /// <returns>Metres.</returns>
+        private static Double JointLength
+            (
+            DubinsConnector.Pose From,
+            DubinsConnector.Pose To,
+            Double RadiusM,
+            Double BladeWidthM
+            )
+        {
+            if (DubinsConnector.IsEmptyJoin(From, To))
+            {
+                return 0.0;
+            }
+
+            if (SteerAcross(From, To, RadiusM, BladeWidthM))
+            {
+                return PoseGap(From, To);
+            }
+
+            return DubinsConnector.ShortestLengthM(From, To, RadiusM);
+        }
+
+        /// <summary>
+        /// Straight-line distance between two poses.
+        /// </summary>
+        /// <param name="From">Start pose.</param>
+        /// <param name="To">End pose.</param>
+        /// <returns>Metres.</returns>
+        private static Double PoseGap
+            (
+            DubinsConnector.Pose From,
+            DubinsConnector.Pose To
+            )
+        {
+            Double Dx = To.X - From.X;
+            Double Dy = To.Y - From.Y;
+            return Math.Sqrt((Dx * Dx) + (Dy * Dy));
+        }
+
+        /// <summary>
+        /// Length of a polyline.
+        /// </summary>
+        /// <param name="Points">Points in order.</param>
+        /// <returns>Metres.</returns>
+        private static Double PolylineLength
+            (
+            IReadOnlyList<(Double X, Double Y)> Points
+            )
+        {
+            Double Length = 0.0;
+            for (Int32 Index = 1; Index < Points.Count; Index += 1)
+            {
+                Double Dx = Points[Index].X - Points[Index - 1].X;
+                Double Dy = Points[Index].Y - Points[Index - 1].Y;
+                Length += Math.Sqrt((Dx * Dx) + (Dy * Dy));
+            }
+
+            return Length;
+        }
+
+        /// <summary>
+        /// The part of a polyline between two stations, with the cut ends interpolated.
+        /// </summary>
+        /// <param name="Points">Points in order.</param>
+        /// <param name="StartM">Station where the kept part starts.</param>
+        /// <param name="EndM">Station where the kept part ends.</param>
+        /// <returns>The kept points. Empty when the range is empty.</returns>
+        private static List<(Double X, Double Y)> SlicePolyline
+            (
+            IReadOnlyList<(Double X, Double Y)> Points,
+            Double StartM,
+            Double EndM
+            )
+        {
+            List<(Double X, Double Y)> Result = new List<(Double X, Double Y)>();
+            if ((Points.Count == 0) || (EndM <= StartM))
+            {
+                return Result;
+            }
+
+            Double Cursor = 0.0;
+            for (Int32 Index = 1; Index < Points.Count; Index += 1)
+            {
+                Double Dx = Points[Index].X - Points[Index - 1].X;
+                Double Dy = Points[Index].Y - Points[Index - 1].Y;
+                Double Segment = Math.Sqrt((Dx * Dx) + (Dy * Dy));
+                Double Next = Cursor + Segment;
+                if ((Result.Count == 0) && (Next >= StartM))
+                {
+                    Double T = (Segment <= 1e-9) ? 0.0 : ((StartM - Cursor) / Segment);
+                    Result.Add((Points[Index - 1].X + (T * Dx), Points[Index - 1].Y + (T * Dy)));
+                }
+
+                if (Result.Count > 0)
+                {
+                    if (Next >= EndM)
+                    {
+                        Double T = (Segment <= 1e-9) ? 0.0 : ((EndM - Cursor) / Segment);
+                        Result.Add((Points[Index - 1].X + (T * Dx), Points[Index - 1].Y + (T * Dy)));
+                        break;
+                    }
+
+                    Result.Add(Points[Index]);
+                }
+
+                Cursor = Next;
+            }
+
+            return Result;
+        }
+
+        /// <summary>
+        /// Cut and fill cells of one trip.
+        /// </summary>
+        /// <param name="Trip">One pass.</param>
+        /// <returns>The cell indexes.</returns>
+        private static HashSet<(Int32 Bx, Int32 By)> CellsOf
+            (
+            Pass Trip
+            )
+        {
+            HashSet<(Int32 Bx, Int32 By)> Cells = new HashSet<(Int32 Bx, Int32 By)>();
+            foreach (((Int32 Bx, Int32 By) Cell, Double DepthM) Entry in Trip.CutCells)
+            {
+                Cells.Add(Entry.Cell);
+            }
+
+            foreach (((Int32 Bx, Int32 By) Cell, Double DepthM) Entry in Trip.FillCells)
+            {
+                Cells.Add(Entry.Cell);
+            }
+
+            return Cells;
+        }
+
+        /// <summary>
+        /// For each trip, the earlier trips that share a cell and must stay ahead of it.
+        /// </summary>
+        /// <param name="Members">Trip indexes in planner order, one stage.</param>
+        /// <param name="Cells">Cells of every trip.</param>
+        /// <returns>Blockers indexed by trip.</returns>
+        private static List<Int32>[] BlockersFor
+            (
+            List<Int32> Members,
+            HashSet<(Int32 Bx, Int32 By)>[] Cells
+            )
+        {
+            List<Int32>[] Blockers = new List<Int32>[Cells.Length];
+            for (Int32 Index = 0; Index < Blockers.Length; Index += 1)
+            {
+                Blockers[Index] = new List<Int32>();
+            }
+
+            Dictionary<(Int32 Bx, Int32 By), Int32> Last = new Dictionary<(Int32 Bx, Int32 By), Int32>();
+            foreach (Int32 Member in Members)
+            {
+                HashSet<Int32> Wait = new HashSet<Int32>();
+                foreach ((Int32 Bx, Int32 By) Cell in Cells[Member])
+                {
+                    Int32 Previous;
+                    if (Last.TryGetValue(Cell, out Previous) && (Previous != Member))
+                    {
+                        Wait.Add(Previous);
+                    }
+
+                    Last[Cell] = Member;
+                }
+
+                Blockers[Member].AddRange(Wait);
+            }
+
+            return Blockers;
+        }
+
+        /// <summary>
+        /// True when every earlier overlapping trip is already in the drive order.
+        /// </summary>
+        /// <param name="Candidate">Trip being considered.</param>
+        /// <param name="Used">Trips already placed.</param>
+        /// <param name="Blockers">Earlier trips that share a cell.</param>
+        /// <returns>True when the candidate may be next.</returns>
+        private static Boolean Ready
+            (
+            Int32 Candidate,
+            Boolean[] Used,
+            List<Int32>[] Blockers
+            )
+        {
+            foreach (Int32 Blocker in Blockers[Candidate])
+            {
+                if (!Used[Blocker])
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// True when the two trips share a cut or fill cell.
+        /// </summary>
+        /// <param name="Left">Cells of one trip.</param>
+        /// <param name="Right">Cells of the other trip.</param>
+        /// <returns>True when they overlap.</returns>
+        private static Boolean SharesCells
+            (
+            HashSet<(Int32 Bx, Int32 By)> Left,
+            HashSet<(Int32 Bx, Int32 By)> Right
+            )
+        {
+            HashSet<(Int32 Bx, Int32 By)> Smaller = (Left.Count <= Right.Count) ? Left : Right;
+            HashSet<(Int32 Bx, Int32 By)> Larger = (Left.Count <= Right.Count) ? Right : Left;
+            foreach ((Int32 Bx, Int32 By) Cell in Smaller)
+            {
+                if (Larger.Contains(Cell))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// Connectors whose path turns more than 150 degrees.
+        /// </summary>
+        /// <param name="Trip">One trip.</param>
+        /// <returns>The count.</returns>
+        private static Int32 ReversalCount
+            (
+            TripCourse Trip
+            )
+        {
+            Int32 Count = 0;
+            Double Limit = REVERSAL_DEG * Math.PI / Constants.DEGREES_PER_HALF_TURN;
+            foreach (CourseSegment Segment in Trip.Segments)
+            {
+                if (Segment.IsLane)
+                {
+                    continue;
+                }
+
+                Double Turn = 0.0;
+                foreach (DrawnPiece Piece in Segment.Pieces)
+                {
+                    if (Piece.Kind != DubinsConnector.PieceKind.Straight)
+                    {
+                        Turn += Piece.LengthM * Piece.CurvaturePerM;
+                    }
+                }
+
+                if (Turn > Limit)
+                {
+                    Count += 1;
+                }
+            }
+
+            return Count;
+        }
+
+        /// <summary>
         /// Compass degrees to radians anticlockwise from east.
         /// </summary>
         /// <param name="HeadingDeg">Compass heading. 0 is north, 90 is east.</param>
@@ -3180,25 +5790,6 @@ namespace HaulBuilder
         {
             Double Radians = HeadingDeg * Math.PI / Constants.DEGREES_PER_HALF_TURN;
             return DubinsConnector.WrapPi((Math.PI / 2.0) - Radians);
-        }
-
-        /// <summary>
-        /// True when two poses are the same place and the same direction.
-        /// </summary>
-        private static Boolean SamePose
-            (
-            DubinsConnector.Pose Start,
-            DubinsConnector.Pose End
-            )
-        {
-            Double Dx = End.X - Start.X;
-            Double Dy = End.Y - Start.Y;
-            if (((Dx * Dx) + (Dy * Dy)) > (JOINT_M * JOINT_M))
-            {
-                return false;
-            }
-
-            return Math.Abs(DubinsConnector.WrapPi(End.HeadingRad - Start.HeadingRad)) <= 1e-4;
         }
 
         /// <summary>
