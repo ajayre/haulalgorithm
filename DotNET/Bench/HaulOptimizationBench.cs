@@ -166,8 +166,7 @@ internal static class HaulOptimizationBench
 
         HaulBuilderOptions Options = new HaulBuilderOptions
         {
-            this.AgdPath = AgdPath,
-            LaneAxisHeadingDeg = HeadingAxisDeg ?? 0.0,
+            AgdPath = AgdPath,
         };
         AgdField Field = Agd.Parse(AgdPath);
         Grid Grid = GridMath.BuildGrid(

@@ -67,14 +67,11 @@ namespace HaulBuilder
             HaulWorkLedger FullLedger,
             HaulLaneBuilder.LaneAxis Axis,
             Double MaximumLoadBcy,
-            Int32 MaximumRunsPerKind,
-            Double FlowPenaltyWeight,
             Int32 PairRefinementRounds,
             HaulPairDistanceRefiner.PairMetric PairMetric,
             Double BladeWidthM,
             Boolean GradeReturn,
             ObstacleField? Obstacles = null,
-            Double? HeadingAxisDeg = null,
             Double TurningCircleFt = Constants.DEFAULT_TURNING_CIRCLE_FT
             )
         {
@@ -91,11 +88,8 @@ namespace HaulBuilder
                 ResidualLedger,
                 Axis,
                 MaximumLoadBcy,
-                MaximumRunsPerKind,
                 false,
-                FlowPenaltyWeight,
                 ActiveObstacles,
-                HeadingAxisDeg,
                 false,
                 BladeWidthM,
                 TurningCircleFt);

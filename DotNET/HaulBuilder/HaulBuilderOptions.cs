@@ -1,10 +1,11 @@
 namespace HaulBuilder
 {
     /// <summary>
-    /// User-facing inputs for the production haul planner. The current lane-first
-    /// optimizer and mandatory production guidance are always used unless
-    /// <see cref="SkipGuidance"/> requests a fast plan-only preview; this type does
-    /// not expose the retired greedy allocation mode.
+    /// User-facing inputs for the production haul planner. Flow-ribbon haul
+    /// selection and production guidance are always used unless
+    /// <see cref="SkipGuidance"/> requests a fast plan-only preview. This type
+    /// does not expose the retired greedy allocation mode. Dubins path rules
+    /// live on <see cref="Guidance"/>.
     /// </summary>
     public sealed class HaulBuilderOptions
     {
@@ -19,7 +20,6 @@ namespace HaulBuilder
             CutFillRatio = Constants.DEFAULT_COMPACTION;
             MaxDepthMm = Constants.DEFAULT_MAX_DEPTH_MM;
             BladeWidthMm = Constants.DEFAULT_BLADE_WIDTH_MM;
-            LaneAxisHeadingDeg = 0.0;
             FieldEfficiency = Constants.DEFAULT_FIELD_EFFICIENCY;
             CutSpeedMph = Constants.DEFAULT_CUT_SPEED_MPH;
             LoadedTravelSpeedMph = Constants.DEFAULT_LOADED_TRAVEL_SPEED_MPH;
@@ -47,6 +47,7 @@ namespace HaulBuilder
             PivotAnimationStride = 15;
             EquipmentWidthFt = 14.0;
             Optimization = new HaulOptimizationOptions();
+            Guidance = new GuidanceOptions();
             Ponding = new PondingOptions();
             ExcludePolygonSpecs = new List<String>();
             RandomSeed = Constants.DEFAULT_SEED;
@@ -78,14 +79,6 @@ namespace HaulBuilder
 
         /// <summary>Gets or sets blade width in millimetres.</summary>
         public Double BladeWidthMm { get; set; }
-
-        /// <summary>
-        /// Gets or sets the undirected work-lane axis in compass degrees. Values
-        /// normalize into [0, 180), so 0 and 180 describe the same north-south
-        /// axis. Production guidance independently chooses either bearing for
-        /// every cut and fill.
-        /// </summary>
-        public Double LaneAxisHeadingDeg { get; set; }
 
         /// <summary>Gets or sets operational availability in [0, 1].</summary>
         public Double FieldEfficiency { get; set; }
@@ -133,10 +126,18 @@ namespace HaulBuilder
         /// </summary>
         public Boolean IncludeGuidanceCsv { get; set; }
 
-        /// <summary>Gets or sets turn speed in miles per hour.</summary>
+        /// <summary>
+        /// Gets or sets turn speed in miles per hour for route order and the
+        /// production guidance planner. Dubins arcs use
+        /// <see cref="GuidanceOptions.ArcSpeedMph"/>.
+        /// </summary>
         public Double TurnSpeedMph { get; set; }
 
-        /// <summary>Gets or sets mandatory grade-return speed in miles per hour.</summary>
+        /// <summary>
+        /// Gets or sets grade-return speed in miles per hour for the production
+        /// guidance planner. A Dubins grade lane uses
+        /// <see cref="GuidanceOptions.GradeLaneSpeedMph"/>.
+        /// </summary>
         public Double GradeSpeedMph { get; set; }
 
         /// <summary>Gets or sets minimum tractor turning diameter in feet.</summary>
@@ -260,6 +261,12 @@ namespace HaulBuilder
 
         /// <summary>Gets current optimizer tuning. Production defaults are measured.</summary>
         public HaulOptimizationOptions Optimization { get; }
+
+        /// <summary>
+        /// Gets the Dubins guidance rules. <see cref="TripGuidance"/> reads them.
+        /// The defaults are the rules the measured guidance was built with.
+        /// </summary>
+        public GuidanceOptions Guidance { get; }
 
         /// <summary>Gets ponding-aware audit and sequencing options.</summary>
         public PondingOptions Ponding { get; }

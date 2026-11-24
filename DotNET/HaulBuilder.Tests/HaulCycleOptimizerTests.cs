@@ -23,12 +23,9 @@ namespace HaulBuilder.Tests
 
             Assert.Equal(200.0,
                 Constants.GOLDEN_MOVE_RATE_BCY_PER_HOUR);
-            Assert.Equal(0.0, Options.LaneAxisHeadingDeg);
-            Assert.Equal(12, Options.Optimization.EdgeMaxLaneSlicesPerCycle);
             Assert.True(Options.Optimization.EnableRouteConsolidation);
             Assert.Equal(8, Options.Optimization.RouteConsolidationGroupSize);
             Assert.Equal(50, Options.Optimization.RouteConsolidationMaximumCycles);
-            Assert.Equal(10, Options.Optimization.MaxLaneSlicesPerCycle);
             Assert.Equal(8, Options.Optimization.PairRefinementRounds);
             Assert.False(Options.Optimization.EnableCycleChainOptimization);
             Assert.True(Options.Optimization.EnableEarlyFullStripBanding);

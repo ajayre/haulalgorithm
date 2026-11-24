@@ -186,14 +186,12 @@ namespace HaulBuilder.Tests
                 HaulBuilderOptions Off = new HaulBuilderOptions
                 {
                     AgdPath = AgdPath,
-                    LaneAxisHeadingDeg = 90.0,
                     EnableMinimumWorkLength = false,
                     MinimumWorkLengthFt = 21.5,
                 };
                 HaulBuilderOptions Tiny = new HaulBuilderOptions
                 {
                     AgdPath = AgdPath,
-                    LaneAxisHeadingDeg = 90.0,
                     MinimumWorkLengthFt = 0.001,
                 };
                 HaulBuilderResult OffResult = new HaulBuilderEngine().Run(Off);
@@ -224,7 +222,6 @@ namespace HaulBuilder.Tests
                 HaulBuilderOptions Options = new HaulBuilderOptions
                 {
                     AgdPath = AgdPath,
-                    LaneAxisHeadingDeg = 90.0,
                 };
                 HaulBuilderResult Result = new HaulBuilderEngine().Run(Options);
                 Assert.Contains(

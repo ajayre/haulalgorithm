@@ -1531,6 +1531,41 @@ namespace HaulBuilder.Tests
         }
 
         /// <summary>
+        /// Turning the near-empty limit off keeps a spread shorter than half a radius
+        /// as its own lane.
+        /// </summary>
+        [Fact]
+        public void NearEmptyLane_StaysWhenTheRuleIsOff
+            (
+            )
+        {
+            Double Radius = DubinsConnector.DefaultRadiusM;
+            TripGuidance.WorkLane Cut = Lane((10.0, 30.0), (40.0, 30.0), 0.2);
+            TripGuidance.WorkLane LongFill = Lane((10.0, 10.0), (40.0, 10.0), 0.2);
+            TripGuidance.WorkLane TinyFill = Lane((41.0, 10.0), (42.0, 10.0), 0.2);
+            Assert.True(TinyFill.LengthM < (0.5 * Radius));
+            GuidanceOptions Rules = new GuidanceOptions
+            {
+                NearEmptyRadii = 0.0,
+                NearEmptyBowlFraction = 0.0,
+            };
+            DubinsConnector.Pose Next = new DubinsConnector.Pose(10.0, 50.0, Math.PI / 2.0);
+            TripGuidance.TripCourse Course = TripGuidance.BuildCourse(
+                new List<TripGuidance.WorkLane> { Cut },
+                new List<TripGuidance.WorkLane> { LongFill, TinyFill },
+                Next,
+                null,
+                Clock(),
+                Radius,
+                1.0,
+                1,
+                HaulStage.Flow,
+                Rules: Rules);
+            List<TripGuidance.CourseSegment> Fills = LanesOf(Course, TripGuidance.GuidanceAction.Fill);
+            Assert.Equal(2, Fills.Count);
+        }
+
+        /// <summary>
         /// A lane longer than half a radius is still skipped when its volume is
         /// under one percent of the bowl. A heavier lane of the same length stays.
         /// </summary>
@@ -1688,11 +1723,8 @@ namespace HaulBuilder.Tests
                 Ledger,
                 HaulLaneBuilder.LaneAxis.UserHeading,
                 ScraperBcy,
-                Options.Optimization.MaxLaneSlicesPerCycle,
                 true,
-                Options.Optimization.FlowPenaltyWeight,
                 null,
-                HaulLaneBuilder.NormalizeAxisHeadingDeg(Options.LaneAxisHeadingDeg),
                 false,
                 Options.BladeWidthMm / Constants.MILLIMETERS_PER_METER,
                 Options.MinimumTurningDiameterFt,
@@ -1717,7 +1749,8 @@ namespace HaulBuilder.Tests
                 BowlM3,
                 Options.BladeWidthMm / Constants.MILLIMETERS_PER_METER,
                 DubinsConnector.DefaultRadiusM,
-                2988);
+                2988,
+                Options.Guidance);
             String Folder = Path.GetFullPath(Path.Combine(
                 AppContext.BaseDirectory,
                 "..",

@@ -66,9 +66,6 @@ namespace HaulBuilder
         /// <param name="Grid">Field grid.</param>
         /// <param name="Flow">Transport flow field.</param>
         /// <param name="MaximumLoadBcy">Scraper capacity in bank cubic yards.</param>
-        /// <param name="MaximumRunsPerKind">Nearby lanes grouped per cycle side.</param>
-        /// <param name="FlowPenaltyWeight">Flow-aware pair cost weight.</param>
-        /// <param name="HeadingAxisDeg">Optional user lane heading.</param>
         /// <param name="Obstacles">Optional exclusion obstacles.</param>
         /// <param name="ToleranceMm">Ledger depth tolerance.</param>
         /// <param name="TurningCircleFt">Turning circle diameter in feet. The edge may turn this tight.</param>
@@ -79,9 +76,6 @@ namespace HaulBuilder
             Grid Grid,
             FlowField Flow,
             Double MaximumLoadBcy,
-            Int32 MaximumRunsPerKind,
-            Double FlowPenaltyWeight,
-            Double? HeadingAxisDeg = null,
             ObstacleField? Obstacles = null,
             Double ToleranceMm = Constants.DEFAULT_TOLERANCE_MM,
             Double TurningCircleFt = Constants.DEFAULT_TURNING_CIRCLE_FT
@@ -136,11 +130,8 @@ namespace HaulBuilder
                 CleanupLedger,
                 HaulLaneBuilder.LaneAxis.UserHeading,
                 MaximumLoadBcy,
-                MaximumRunsPerKind,
                 false,
-                FlowPenaltyWeight,
                 Obstacles ?? EMPTY_OBSTACLES,
-                HeadingAxisDeg,
                 true,
                 TurningCircleFt: TurningCircleFt);
 

@@ -112,13 +112,11 @@ namespace HaulBuilder.Tests
                 HaulBuilderOptions WithoutCsv = new HaulBuilderOptions
                 {
                     AgdPath = AgdPath,
-                    LaneAxisHeadingDeg = 90.0,
                     IncludeGuidanceCsv = false,
                 };
                 HaulBuilderOptions WithCsv = new HaulBuilderOptions
                 {
                     AgdPath = AgdPath,
-                    LaneAxisHeadingDeg = 90.0,
                     IncludeGuidanceCsv = true,
                 };
                 HaulBuilderResult Without = new HaulBuilderEngine().Run(WithoutCsv);

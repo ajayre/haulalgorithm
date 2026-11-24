@@ -136,8 +136,8 @@ namespace HaulBuilder
                 return Result;
             }
 
-            Double HeadingDeg = HaulLaneBuilder.NormalizeAxisHeadingDeg(
-                Opt.LaneAxisHeadingDeg);
+            // The ribbon takes each heading from the flow. The reported axis stays north-south.
+            Double HeadingDeg = 0.0;
             Double ScraperBcy = (Opt.ScraperCapacityLcy / Opt.SwellFactor);
             // Captured before consolidation can move boundary cells into other loads.
             HashSet<(Int32 Bx, Int32 By)> EdgeCutCells =
@@ -156,11 +156,8 @@ namespace HaulBuilder
                         Ledger,
                         HaulLaneBuilder.LaneAxis.UserHeading,
                         ScraperBcy,
-                        Opt.Optimization.MaxLaneSlicesPerCycle,
                         true,
-                        Opt.Optimization.FlowPenaltyWeight,
                         Obstacles,
-                        HeadingDeg,
                         false,
                         Opt.BladeWidthMm / Constants.MILLIMETERS_PER_METER,
                         Opt.MinimumTurningDiameterFt,
@@ -202,14 +199,11 @@ namespace HaulBuilder
                         Ledger,
                         HaulLaneBuilder.LaneAxis.UserHeading,
                         ScraperBcy,
-                        Opt.Optimization.EdgeMaxLaneSlicesPerCycle,
-                        Opt.Optimization.FlowPenaltyWeight,
                         Opt.Optimization.PairRefinementRounds,
                         HaulPairDistanceRefiner.PairMetric.Centroid,
                         Opt.BladeWidthMm / Constants.MILLIMETERS_PER_METER,
                         GradeReturn: true,
                         Obstacles,
-                        HeadingDeg,
                         Opt.MinimumTurningDiameterFt);
                 foreach (Pass EdgePass in EdgeCompletion.Passes)
                 {
@@ -1043,20 +1037,12 @@ namespace HaulBuilder
                     "Deferred cleanup requires a computed flow field.");
             Double ScraperBcy = Options.ScraperCapacityLcy / Options.SwellFactor;
             // Intent: pack nearby deferred scraps into local area cycles at job end.
-            Int32 MaximumRunsPerKind = Math.Max(
-                4,
-                Math.Max(
-                    Options.Optimization.MaxLaneSlicesPerCycle,
-                    Options.Optimization.EdgeMaxLaneSlicesPerCycle));
             HaulDeferredCleanupCompleter.Result Cleanup =
                 HaulDeferredCleanupCompleter.Complete(
                     Plan.Passes,
                     Grid,
                     Flow,
                     ScraperBcy,
-                    MaximumRunsPerKind,
-                    Options.Optimization.FlowPenaltyWeight,
-                    HeadingDeg,
                     HaulBuilder.Obstacles.EMPTY_OBSTACLES,
                     Options.ToleranceMm,
                     Options.MinimumTurningDiameterFt);
@@ -2326,7 +2312,6 @@ namespace HaulBuilder
                 CutFillRatio = Options.CutFillRatio,
                 MaxDepthMm = Options.MaxDepthMm,
                 BladeWidthMm = Options.BladeWidthMm,
-                LaneAxisHeadingDeg = Options.LaneAxisHeadingDeg,
                 FieldEfficiency = Options.FieldEfficiency,
                 CutSpeedMph = Options.CutSpeedMph,
                 LoadedTravelSpeedMph = Options.LoadedTravelSpeedMph,
@@ -2372,6 +2357,7 @@ namespace HaulBuilder
                 RandomSeed = Options.RandomSeed,
             };
             CopyOptimization(Options.Optimization, Copy.Optimization);
+            CopyGuidance(Options.Guidance, Copy.Guidance);
             CopyPonding(Options.Ponding, Copy.Ponding);
             Copy.ExcludePolygonSpecs.AddRange(Options.ExcludePolygonSpecs);
             return Copy;
@@ -2447,9 +2433,6 @@ namespace HaulBuilder
             HaulOptimizationOptions Source,
             HaulOptimizationOptions Destination)
         {
-            Destination.MaxLaneSlicesPerCycle = Source.MaxLaneSlicesPerCycle;
-            Destination.FlowPenaltyWeight = Source.FlowPenaltyWeight;
-            Destination.EdgeMaxLaneSlicesPerCycle = Source.EdgeMaxLaneSlicesPerCycle;
             Destination.EnableRouteConsolidation = Source.EnableRouteConsolidation;
             Destination.RouteConsolidationGroupSize = Source.RouteConsolidationGroupSize;
             Destination.RouteConsolidationMaximumCycles = Source.RouteConsolidationMaximumCycles;
@@ -2468,6 +2451,32 @@ namespace HaulBuilder
             Destination.OptimizeRouteOrderByDistance = Source.OptimizeRouteOrderByDistance;
             Destination.ClusterModeAverageWindow = Source.ClusterModeAverageWindow;
             Destination.ClusterModeLoadFraction = Source.ClusterModeLoadFraction;
+        }
+
+        /// <summary>
+        /// Copies Dubins guidance rules onto the clone's own group.
+        /// </summary>
+        /// <param name="Source">Rules to read.</param>
+        /// <param name="Destination">Rules on the cloned options.</param>
+        private static void CopyGuidance
+            (
+            GuidanceOptions Source,
+            GuidanceOptions Destination
+            )
+        {
+            Destination.ShortJointRadii = Source.ShortJointRadii;
+            Destination.ConnectorTieFraction = Source.ConnectorTieFraction;
+            Destination.ConnectorTieRadii = Source.ConnectorTieRadii;
+            Destination.SteerHeadingDeg = Source.SteerHeadingDeg;
+            Destination.MaxCorrectingLines = Source.MaxCorrectingLines;
+            Destination.LeftoverRatio = Source.LeftoverRatio;
+            Destination.MergeRouteRadii = Source.MergeRouteRadii;
+            Destination.EndFragmentSpanRadii = Source.EndFragmentSpanRadii;
+            Destination.EndFragmentGapRadii = Source.EndFragmentGapRadii;
+            Destination.NearEmptyRadii = Source.NearEmptyRadii;
+            Destination.NearEmptyBowlFraction = Source.NearEmptyBowlFraction;
+            Destination.ArcSpeedMph = Source.ArcSpeedMph;
+            Destination.GradeLaneSpeedMph = Source.GradeLaneSpeedMph;
         }
 
         /// <summary>
@@ -2500,9 +2509,6 @@ namespace HaulBuilder
             Positive(Options.CutFillRatio, nameof(Options.CutFillRatio));
             Positive(Options.MaxDepthMm, nameof(Options.MaxDepthMm));
             Positive(Options.BladeWidthMm, nameof(Options.BladeWidthMm));
-            if (!Double.IsFinite(Options.LaneAxisHeadingDeg))
-                throw new ArgumentOutOfRangeException(
-                    nameof(Options.LaneAxisHeadingDeg));
             if (!Double.IsFinite(Options.FieldEfficiency)
                 || (Options.FieldEfficiency <= 0.0)
                 || (Options.FieldEfficiency > 1.0))
@@ -2596,9 +2602,76 @@ namespace HaulBuilder
             }
 
             ValidateOptimizationOptions(Options);
+            ValidateGuidanceOptions(Options.Guidance);
             ValidatePondingOptions(Options.Ponding);
         }
 
+        /// <summary>
+        /// Rejects a Dubins rule that is not a finite limit.
+        /// </summary>
+        /// <param name="Rules">Guidance rules to check.</param>
+        private static void ValidateGuidanceOptions
+            (
+            GuidanceOptions Rules
+            )
+        {
+            if (Rules == null)
+            {
+                throw new ArgumentNullException(nameof(Rules));
+            }
+
+            // A zero radius or fraction turns that limit off. A negative does not.
+            static void NonNegative(Double Value, String Name)
+            {
+                if (!Double.IsFinite(Value) || (Value < 0.0))
+                {
+                    throw new ArgumentOutOfRangeException(
+                        Name, "Value must be finite and zero or greater.");
+                }
+            }
+
+            static void Positive(Double Value, String Name)
+            {
+                if (!Double.IsFinite(Value) || (Value <= 0.0))
+                {
+                    throw new ArgumentOutOfRangeException(
+                        Name, "Value must be finite and greater than zero.");
+                }
+            }
+
+            NonNegative(Rules.ShortJointRadii, nameof(Rules.ShortJointRadii));
+            NonNegative(Rules.ConnectorTieFraction, nameof(Rules.ConnectorTieFraction));
+            NonNegative(Rules.ConnectorTieRadii, nameof(Rules.ConnectorTieRadii));
+            if (!Double.IsFinite(Rules.SteerHeadingDeg)
+                || (Rules.SteerHeadingDeg < 0.0)
+                || (Rules.SteerHeadingDeg > Constants.DEGREES_PER_HALF_TURN))
+            {
+                throw new ArgumentOutOfRangeException(nameof(Rules.SteerHeadingDeg));
+            }
+
+            if (Rules.MaxCorrectingLines < 1)
+            {
+                throw new ArgumentOutOfRangeException(nameof(Rules.MaxCorrectingLines));
+            }
+
+            Positive(Rules.LeftoverRatio, nameof(Rules.LeftoverRatio));
+            NonNegative(Rules.MergeRouteRadii, nameof(Rules.MergeRouteRadii));
+            NonNegative(Rules.EndFragmentSpanRadii, nameof(Rules.EndFragmentSpanRadii));
+            NonNegative(Rules.EndFragmentGapRadii, nameof(Rules.EndFragmentGapRadii));
+            NonNegative(Rules.NearEmptyRadii, nameof(Rules.NearEmptyRadii));
+            if (!Double.IsFinite(Rules.NearEmptyBowlFraction)
+                || (Rules.NearEmptyBowlFraction < 0.0)
+                || (Rules.NearEmptyBowlFraction > 1.0))
+            {
+                throw new ArgumentOutOfRangeException(nameof(Rules.NearEmptyBowlFraction));
+            }
+
+            Positive(Rules.ArcSpeedMph, nameof(Rules.ArcSpeedMph));
+            Positive(Rules.GradeLaneSpeedMph, nameof(Rules.GradeLaneSpeedMph));
+        }
+
+        /// <summary>Rejects a ponding setting that is not a finite limit.</summary>
+        /// <param name="Options">Ponding settings to check.</param>
         private static void ValidatePondingOptions(PondingOptions Options)
         {
             if (!Double.IsFinite(Options.SpillToleranceFt)
@@ -2638,16 +2711,6 @@ namespace HaulBuilder
             )
         {
             HaulOptimizationOptions Optimization = Options.Optimization;
-            if (Optimization.MaxLaneSlicesPerCycle <= 0)
-                throw new ArgumentOutOfRangeException(
-                    nameof(Optimization.MaxLaneSlicesPerCycle));
-            if (Optimization.EdgeMaxLaneSlicesPerCycle <= 0)
-                throw new ArgumentOutOfRangeException(
-                    nameof(Optimization.EdgeMaxLaneSlicesPerCycle));
-            if (!Double.IsFinite(Optimization.FlowPenaltyWeight)
-                || (Optimization.FlowPenaltyWeight < 0.0))
-                throw new ArgumentOutOfRangeException(
-                    nameof(Optimization.FlowPenaltyWeight));
             if (Optimization.PairRefinementRounds < 0)
                 throw new ArgumentOutOfRangeException(
                     nameof(Optimization.PairRefinementRounds));

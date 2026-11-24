@@ -39,7 +39,7 @@ public sealed class FlowRibbonSearchTests
 		FlowField flowField = FlowFieldSolver.Compute(grid);
 		HaulWorkLedger ledger = HaulWorkLedger.Build(grid, 1.0);
 		double num = 15.384615384615383;
-		HaulOptimizationResult haulOptimizationResult = FlowRibbonSearch.Optimize(grid, flowField, ledger, HaulLaneBuilder.LaneAxis.UserHeading, num, 2, DeferEdgeWork: false, 0.2, null, null, AllowAnyDeferredRemainder: false, 2.5908);
+		HaulOptimizationResult haulOptimizationResult = FlowRibbonSearch.Optimize(grid, flowField, ledger, HaulLaneBuilder.LaneAxis.UserHeading, num, DeferEdgeWork: false, null, AllowAnyDeferredRemainder: false, 2.5908);
 		Assert.True(haulOptimizationResult.Validation.Success, string.Join("; ", haulOptimizationResult.Validation.Issues.Take(8)));
 		Assert.NotEmpty(haulOptimizationResult.PassResult.Passes);
 		Assert.All(haulOptimizationResult.PassResult.Passes, (Pass Pass) =>
@@ -203,7 +203,7 @@ public sealed class FlowRibbonSearchTests
 		Pass pass = haulBuilderResult.Route.OrderedPasses[0];
 		AgdField field = Agd.Parse(text);
 		Route route = new Route(new List<int> { 0 }, new List<Pass> { pass }, 0.0);
-		GuidancePlanner.BuildResult Built = GuidancePlanner.Build(route, haulBuilderResult.Grid, field, haulBuilderOptions.LaneAxisHeadingDeg, haulBuilderOptions);
+		GuidancePlanner.BuildResult Built = GuidancePlanner.Build(route, haulBuilderResult.Grid, field, 0.0, haulBuilderOptions);
 		int num = Enumerable.Count(Built.Guidance.Points, (GuidancePoint Point) => Point.Action == "CUT" && Point.Blade == "DOWN");
 		int num2 = Enumerable.Count(Built.Guidance.Points, (GuidancePoint Point) => Point.Action == "FILL" && Point.Blade == "DOWN");
 		double num3 = WorstBladeBendDeg(Built.Guidance.Points, "CUT");
@@ -850,7 +850,7 @@ public sealed class FlowRibbonSearchTests
 		List<Pass> list = haulBuilderResult.Route.OrderedPasses.Take(num).ToList();
 		Route route = new Route(Enumerable.Range(0, list.Count).ToList(), list, 0.0);
 		AgdField field = Agd.Parse(text);
-		GuidancePlanner.BuildResult buildResult = GuidancePlanner.Build(route, haulBuilderResult.Grid, field, haulBuilderOptions.LaneAxisHeadingDeg, haulBuilderOptions);
+		GuidancePlanner.BuildResult buildResult = GuidancePlanner.Build(route, haulBuilderResult.Grid, field, 0.0, haulBuilderOptions);
 		string fullPath = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "Fixtures", "FlowRibbonProof", "shop2-first-100"));
 		Directory.CreateDirectory(fullPath);
 		double bladeWidthM = 2.5908;
@@ -1160,7 +1160,7 @@ public sealed class FlowRibbonSearchTests
 		HaulWorkLedger ledger = HaulWorkLedger.Build(grid, 10.0);
 		FlowField flow = new FlowField(phi, array3, array4, array5, array6, "test");
 		double maximumLoadBcy = 15.384615384615383;
-		HaulOptimizationResult haulOptimizationResult = FlowRibbonSearch.Optimize(grid, flow, ledger, HaulLaneBuilder.LaneAxis.UserHeading, maximumLoadBcy, 2, DeferEdgeWork: false, 0.2, null, null, AllowAnyDeferredRemainder: false, 2.5908);
+		HaulOptimizationResult haulOptimizationResult = FlowRibbonSearch.Optimize(grid, flow, ledger, HaulLaneBuilder.LaneAxis.UserHeading, maximumLoadBcy, DeferEdgeWork: false, null, AllowAnyDeferredRemainder: false, 2.5908);
 		Assert.True(haulOptimizationResult.Validation.Success, string.Join("; ", haulOptimizationResult.Validation.Issues.Take(6)));
 		Assert.NotEmpty(haulOptimizationResult.PassResult.Passes);
 		Pass pass = haulOptimizationResult.PassResult.Passes[0];

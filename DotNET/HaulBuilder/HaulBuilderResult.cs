@@ -400,7 +400,8 @@ namespace HaulBuilder
         public Double AverageMoveDistanceYards { get; set; }
 
         /// <summary>
-        /// Gets or sets the normalized undirected work-lane axis in degrees.
+        /// Gets or sets the reported work-lane axis in degrees. A ribbon plan
+        /// takes each heading from the flow and reports 0.
         /// </summary>
         public Double LaneAxisHeadingDeg { get; set; }
 

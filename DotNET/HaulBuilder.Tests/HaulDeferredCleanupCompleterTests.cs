@@ -51,10 +51,7 @@ namespace HaulBuilder.Tests
                     GuidancePasses,
                     Grid,
                     Flow,
-                    MaximumLoadBcy: 50.0,
-                    MaximumRunsPerKind: 4,
-                    FlowPenaltyWeight: 0.2,
-                    HeadingAxisDeg: 90.0);
+                    MaximumLoadBcy: 50.0);
 
             Assert.NotEmpty(Cleanup.Passes);
             Assert.True(Cleanup.AssignedCutBcy > 0.0);
@@ -93,10 +90,7 @@ namespace HaulBuilder.Tests
                     GuidancePasses,
                     Grid,
                     Flow,
-                    MaximumLoadBcy: 50.0,
-                    MaximumRunsPerKind: 4,
-                    FlowPenaltyWeight: 0.2,
-                    HeadingAxisDeg: 90.0);
+                    MaximumLoadBcy: 50.0);
 
             Assert.Empty(Cleanup.Passes);
             Assert.Equal(2, Cleanup.RemainingDeferred.Count);

@@ -1,22 +1,16 @@
 namespace HaulBuilder
 {
     /// <summary>
-    /// Advanced tuning for the production lane-first haul optimizer. Fixed
-    /// correctness policy—edge ledger completion, grade return, direction-aware
-    /// guidance, Poisson flow, and exact validation—is intentionally not optional.
+    /// Advanced tuning for haul selection and route order. Route order,
+    /// banding, and the cluster window apply to every plan. Fixed correctness
+    /// policy is intentionally not optional.
     /// </summary>
     public sealed class HaulOptimizationOptions
     {
-        /// <summary>Gets or sets the maximum source-lane slices per work kind and cycle.</summary>
-        public Int32 MaxLaneSlicesPerCycle { get; set; } = 10;
-
-        /// <summary>Gets or sets the unchanged Poisson-flow deviation weight.</summary>
-        public Double FlowPenaltyWeight { get; set; } = 1.0;
-
-        /// <summary>Gets or sets the residual-edge lane-slice bound.</summary>
-        public Int32 EdgeMaxLaneSlicesPerCycle { get; set; } = 12;
-
-        /// <summary>Gets or sets whether capacity-flexible route consolidation runs.</summary>
+        /// <summary>
+        /// Gets or sets whether capacity-flexible route consolidation runs.
+        /// A plan whose passes already have ribbon order keeps those passes.
+        /// </summary>
         public Boolean EnableRouteConsolidation { get; set; } = true;
 
         /// <summary>Gets or sets the maximum routes pooled in one consolidation transaction.</summary>
@@ -25,7 +19,11 @@ namespace HaulBuilder
         /// <summary>Gets or sets the maximum cycles removed by consolidation.</summary>
         public Int32 RouteConsolidationMaximumCycles { get; set; } = 50;
 
-        /// <summary>Gets or sets deterministic equal-load fill-pair refinement rounds.</summary>
+        /// <summary>
+        /// Gets or sets deterministic equal-load fill-pair refinement rounds.
+        /// A ribbon plan keeps the passes the search built. Zero skips
+        /// refinement on every other plan.
+        /// </summary>
         public Int32 PairRefinementRounds { get; set; } = 8;
 
         /// <summary>Gets or sets whether the slower closed multi-route exchange runs.</summary>
@@ -94,9 +92,6 @@ namespace HaulBuilder
         /// <summary>Copies all resolved tuning values.</summary>
         internal HaulOptimizationOptions Clone() => new HaulOptimizationOptions
         {
-            MaxLaneSlicesPerCycle = MaxLaneSlicesPerCycle,
-            FlowPenaltyWeight = FlowPenaltyWeight,
-            EdgeMaxLaneSlicesPerCycle = EdgeMaxLaneSlicesPerCycle,
             EnableRouteConsolidation = EnableRouteConsolidation,
             RouteConsolidationGroupSize = RouteConsolidationGroupSize,
             RouteConsolidationMaximumCycles = RouteConsolidationMaximumCycles,

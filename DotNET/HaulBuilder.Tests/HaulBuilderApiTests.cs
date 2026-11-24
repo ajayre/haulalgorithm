@@ -41,6 +41,7 @@ namespace HaulBuilder.Tests
                 nameof(HaulBuilderOptions.FlowArrowStrideCells),
                 nameof(HaulBuilderOptions.GradeSpeedMph),
                 nameof(HaulBuilderOptions.GridSizeFt),
+                nameof(HaulBuilderOptions.Guidance),
                 nameof(HaulBuilderOptions.IncludeAnimationFrames),
                 nameof(HaulBuilderOptions.IncludeAnimationGif),
                 nameof(HaulBuilderOptions.IncludeCutFillPairCsv),
@@ -49,7 +50,6 @@ namespace HaulBuilder.Tests
                 nameof(HaulBuilderOptions.IncludeGuidancePng),
                 nameof(HaulBuilderOptions.IncludePivotAnimationFrames),
                 nameof(HaulBuilderOptions.IncludePivotAnimationGif),
-                nameof(HaulBuilderOptions.LaneAxisHeadingDeg),
                 nameof(HaulBuilderOptions.LoadedTravelSpeedMph),
                 nameof(HaulBuilderOptions.MaxDepthMm),
                 nameof(HaulBuilderOptions.MinimumTurningDiameterFt),
@@ -85,6 +85,30 @@ namespace HaulBuilder.Tests
         }
 
         /// <summary>
+        /// Verifies Dubins guidance defaults are the measured rules.
+        /// </summary>
+        [Fact]
+        public void GuidanceOptionsMatchTheMeasuredRules
+            (
+            )
+        {
+            GuidanceOptions Rules = new GuidanceOptions();
+            Assert.Equal(4.0, Rules.ShortJointRadii);
+            Assert.Equal(0.02, Rules.ConnectorTieFraction);
+            Assert.Equal(0.5, Rules.ConnectorTieRadii);
+            Assert.Equal(30.0, Rules.SteerHeadingDeg);
+            Assert.Equal(3, Rules.MaxCorrectingLines);
+            Assert.Equal(10.0, Rules.LeftoverRatio);
+            Assert.Equal(2.0, Rules.MergeRouteRadii);
+            Assert.Equal(1.0, Rules.EndFragmentSpanRadii);
+            Assert.Equal(4.0, Rules.EndFragmentGapRadii);
+            Assert.Equal(0.5, Rules.NearEmptyRadii);
+            Assert.Equal(0.01, Rules.NearEmptyBowlFraction);
+            Assert.Equal(TripGuidance.TURN_SPEED_MPH, Rules.ArcSpeedMph);
+            Assert.Equal(Constants.DEFAULT_FILL_SPEED_MPH, Rules.GradeLaneSpeedMph);
+        }
+
+        /// <summary>
         /// Verifies optimizer options expose only measured production tuning.
         /// </summary>
 
@@ -98,13 +122,10 @@ namespace HaulBuilder.Tests
                 nameof(HaulOptimizationOptions.CycleChainCandidatesPerRoute),
                 nameof(HaulOptimizationOptions.CycleChainMinimumImprovementSeconds),
                 nameof(HaulOptimizationOptions.CycleChainRounds),
-                nameof(HaulOptimizationOptions.EdgeMaxLaneSlicesPerCycle),
                 nameof(HaulOptimizationOptions.EnableCycleChainOptimization),
                 nameof(HaulOptimizationOptions.EnableEarlyFullStripBanding),
                 nameof(HaulOptimizationOptions.EnableMultiRouteExchange),
                 nameof(HaulOptimizationOptions.EnableRouteConsolidation),
-                nameof(HaulOptimizationOptions.FlowPenaltyWeight),
-                nameof(HaulOptimizationOptions.MaxLaneSlicesPerCycle),
                 nameof(HaulOptimizationOptions.MultiRouteExchangeGroupSize),
                 nameof(HaulOptimizationOptions.MultiRouteExchangeMaximumGroups),
                 nameof(HaulOptimizationOptions.MultiRouteExchangeMinimumImprovementM),
@@ -261,12 +282,6 @@ namespace HaulBuilder.Tests
                     AgdPath = FixturePath,
                     CutSpeedMph = 0.0,
                 }));
-            Assert.Throws<ArgumentOutOfRangeException>(() => Engine.Run(
-                new HaulBuilderOptions
-                {
-                    AgdPath = FixturePath,
-                    LaneAxisHeadingDeg = Double.NaN,
-                }));
             Assert.Throws<ArgumentException>(() => Engine.Run(
                 new HaulBuilderOptions
                 {
@@ -288,6 +303,7 @@ namespace HaulBuilder.Tests
             HaulBuilderOptions Copy = Source.Clone();
             AssertOptionsEqual(Source, Copy);
             Assert.NotSame(Source.Optimization, Copy.Optimization);
+            Assert.NotSame(Source.Guidance, Copy.Guidance);
             Assert.NotSame(Source.Ponding, Copy.Ponding);
             Assert.NotSame(Source.ExcludePolygonSpecs, Copy.ExcludePolygonSpecs);
             Assert.NotSame(Source.Ponding.OutletSpecs, Copy.Ponding.OutletSpecs);

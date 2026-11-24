@@ -29,9 +29,6 @@ namespace HaulBuilder.Tests
         /// <summary>Height of the existing ground above or below the design, in metres.</summary>
         private const Double OFFSET_M = 0.1;
 
-        /// <summary>Lane axis for east-west lanes, which keeps a run on this field to seconds.</summary>
-        private const Double LANE_AXIS_EAST_WEST_DEG = 90.0;
-
         /// <summary>Start of the message that totals the unrecorded depth of one guidance build.</summary>
         private const String UNRECORDED_MESSAGE_PREFIX = "whole_plan unrecorded ";
 
@@ -65,7 +62,6 @@ namespace HaulBuilder.Tests
                 HaulBuilderOptions Options = new HaulBuilderOptions
                 {
                     AgdPath = AgdPath,
-                    LaneAxisHeadingDeg = LANE_AXIS_EAST_WEST_DEG,
                 };
                 HaulBuilderResult Result = new HaulBuilderEngine().Run(Options);
                 Assert.NotNull(Result.HaulOptimization);

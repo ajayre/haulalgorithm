@@ -35,7 +35,10 @@ namespace HaulBuilder
     /// </summary>
     static public class TripGuidance
     {
-        /// <summary>Speed on every arc, miles per hour. Straights keep the haul clock.</summary>
+        /// <summary>
+        /// Default speed on every arc, miles per hour. Straights keep the haul clock.
+        /// <see cref="GuidanceOptions.ArcSpeedMph"/> starts at this value.
+        /// </summary>
         public const Double TURN_SPEED_MPH = 5.0;
 
         /// <summary>
@@ -107,67 +110,55 @@ namespace HaulBuilder
         /// </summary>
         private const Double GRADE_DEPTH_M = Constants.DEFAULT_TOLERANCE_MM / Constants.MILLIMETERS_PER_METER;
 
-        /// <summary>A connector shorter than this many radii is a short joint.</summary>
-        private const Double SHORT_JOINT_RADII = 4.0;
+        /// <summary>
+        /// Rules for the build running on this thread. A nested course keeps the
+        /// outer rules when it does not pass its own.
+        /// </summary>
+        private static readonly AsyncLocal<GuidanceOptions?> ActiveRules =
+            new AsyncLocal<GuidanceOptions?>();
 
         /// <summary>
-        /// A connector this much longer than the shortest is still a tie.
-        /// Two percent of the shortest length.
+        /// Installs <paramref name="Requested"/> for this call.
         /// </summary>
-        private const Double CONNECTOR_TIE_FRACTION = 0.02;
+        /// <param name="Requested">Rules for this call. Null keeps the outer rules.</param>
+        /// <returns>The rules to restore when the call ends.</returns>
+        private static GuidanceOptions? InstallRules
+            (
+            GuidanceOptions? Requested
+            )
+        {
+            GuidanceOptions? Previous = ActiveRules.Value;
+            // A course built inside a job keeps that job's rules.
+            ActiveRules.Value = Requested ?? Previous ?? new GuidanceOptions();
+            return Previous;
+        }
 
-        /// <summary>
-        /// A connector this many radii longer than the shortest is still a tie
-        /// when that exceeds <see cref="CONNECTOR_TIE_FRACTION"/>.
-        /// </summary>
-        private const Double CONNECTOR_TIE_RADII = 0.5;
+        /// <summary>Gets the rules for this thread, or the production defaults.</summary>
+        private static GuidanceOptions CurrentRules
+        {
+            get
+            {
+                GuidanceOptions? Current = ActiveRules.Value;
+                if (Current == null)
+                {
+                    return new GuidanceOptions();
+                }
 
-        /// <summary>Heading change below this, with a small offset, is steered straight.</summary>
-        private const Double STEER_HEADING_DEG = 30.0;
-
-        /// <summary>Cut lines, and spread lines, kept on one correcting trip.</summary>
-        private const Int32 MAX_CORRECTING_LINES = 3;
+                return Current;
+            }
+        }
 
         /// <summary>A connector that turns more than this is a reversal.</summary>
         private const Double REVERSAL_DEG = 150.0;
 
-        /// <summary>Connector length over productive length above this is a leftover.</summary>
-        private const Double LEFTOVER_RATIO = 10.0;
-
         /// <summary>Reordered and unreordered plans must agree to this, metres.</summary>
         private const Double SURFACE_MATCH_M = 0.001;
-
-        /// <summary>
-        /// A later correcting route within this many radii can take a leftover fragment.
-        /// </summary>
-        private const Double MERGE_ROUTE_RADII = 2.0;
 
         /// <summary>
         /// Half a cell past the first and last fragment. The blade still covers
         /// the cell. Anything further is empty travel and belongs to the connector.
         /// </summary>
         private const Double FRAGMENT_PAD_CELLS = 0.5;
-
-        /// <summary>
-        /// An end fragment shorter than this many radii is not worth the gap.
-        /// One radius is the simple form of the end-fragment cost check.
-        /// </summary>
-        private const Double END_FRAGMENT_SPAN_RADII = 1.0;
-
-        /// <summary>
-        /// Gap past the next fragment, in radii, that defers a short end.
-        /// </summary>
-        private const Double END_FRAGMENT_GAP_RADII = 4.0;
-
-        /// <summary>
-        /// A cut or spread shorter than this many radii does not separate connectors.
-        /// </summary>
-        private const Double NEAR_EMPTY_RADII = 0.5;
-
-        /// <summary>
-        /// A cut or spread lighter than this fraction of the bowl does not separate connectors.
-        /// </summary>
-        private const Double NEAR_EMPTY_BOWL_FRACTION = 0.01;
 
         /// <summary>
         /// Fragments whose centre lines sit inside this band are the same line.
@@ -1320,6 +1311,7 @@ namespace HaulBuilder
         /// <param name="BladeWidthM">Blade width. Used only to keep the existing lanes.</param>
         /// <param name="RadiusM">Turning radius, metres.</param>
         /// <param name="SnapshotTripIndex">0-based trip whose start ground is kept. Negative keeps none.</param>
+        /// <param name="Rules">Dubins rules. Null uses the production defaults.</param>
         /// <returns>The job.</returns>
         static public JobGuidance Build
             (
@@ -1329,7 +1321,8 @@ namespace HaulBuilder
             Double BowlCapacityM3,
             Double BladeWidthM,
             Double RadiusM,
-            Int32 SnapshotTripIndex
+            Int32 SnapshotTripIndex,
+            GuidanceOptions? Rules = null
             )
         {
             return Build(
@@ -1340,7 +1333,8 @@ namespace HaulBuilder
                 BladeWidthM,
                 RadiusM,
                 SnapshotTripIndex,
-                null);
+                null,
+                Rules);
         }
 
         /// <summary>
@@ -1354,6 +1348,7 @@ namespace HaulBuilder
         /// <param name="RadiusM">Turning radius, metres.</param>
         /// <param name="SnapshotTripIndex">0-based trip whose start ground is kept on <see cref="JobGuidance.Snapshot"/>. Negative keeps none.</param>
         /// <param name="SnapshotIndexes">Other 0-based trips whose start ground is kept. Null keeps only the single snapshot.</param>
+        /// <param name="Rules">Dubins rules. Null uses the production defaults, or the rules of the build that called this.</param>
         /// <returns>The job.</returns>
         static public JobGuidance Build
             (
@@ -1364,9 +1359,13 @@ namespace HaulBuilder
             Double BladeWidthM,
             Double RadiusM,
             Int32 SnapshotTripIndex,
-            IReadOnlyCollection<Int32>? SnapshotIndexes
+            IReadOnlyCollection<Int32>? SnapshotIndexes,
+            GuidanceOptions? Rules = null
             )
         {
+            GuidanceOptions? PreviousRules = InstallRules(Rules);
+            try
+            {
             if (Grid == null)
             {
                 throw new ArgumentNullException(nameof(Grid));
@@ -1665,6 +1664,11 @@ namespace HaulBuilder
                 Merged,
                 Dropped,
                 DeferredFragments);
+            }
+            finally
+            {
+                ActiveRules.Value = PreviousRules;
+            }
         }
 
         /// <summary>
@@ -1699,6 +1703,7 @@ namespace HaulBuilder
             /// <param name="CellAreaM2">Cell area. Zero skips the light-lane volume test.</param>
             /// <param name="BowlCapacityM3">Bowl capacity. Zero skips the light-lane volume test.</param>
             /// <param name="DeferEnds">True defers a short isolated end fragment. Sweep-up trips pass false.</param>
+            /// <param name="Rules">Dubins rules. Null uses the production defaults, or the rules of the build that called this.</param>
             /// <returns>The chosen lanes and the course they drive.</returns>
             static public DirectionChoice ChooseDirections
             (
@@ -1715,9 +1720,13 @@ namespace HaulBuilder
             HaulStage Stage,
             Double CellAreaM2 = 0.0,
             Double BowlCapacityM3 = 0.0,
-            Boolean DeferEnds = true
+            Boolean DeferEnds = true,
+            GuidanceOptions? Rules = null
             )
         {
+            GuidanceOptions? PreviousRules = InstallRules(Rules);
+            try
+            {
             if (CutLanes == null)
             {
                 throw new ArgumentNullException(nameof(CutLanes));
@@ -1858,6 +1867,11 @@ namespace HaulBuilder
             }
 
             return Best;
+            }
+            finally
+            {
+                ActiveRules.Value = PreviousRules;
+            }
         }
 
         /// <summary>
@@ -3090,6 +3104,7 @@ namespace HaulBuilder
         /// <param name="FitJoints">True trims a short joint. False draws the lanes as they already are.</param>
         /// <param name="CellAreaM2">Cell area. Zero skips the light-lane volume test.</param>
         /// <param name="BowlCapacityM3">Bowl capacity. Zero skips the light-lane volume test.</param>
+        /// <param name="Rules">Dubins rules. Null uses the production defaults, or the rules of the build that called this.</param>
         /// <returns>The trip path and clock.</returns>
         static public TripCourse BuildCourse
             (
@@ -3107,9 +3122,13 @@ namespace HaulBuilder
             Double BladeWidthM = 0.0,
             Boolean FitJoints = true,
             Double CellAreaM2 = 0.0,
-            Double BowlCapacityM3 = 0.0
+            Double BowlCapacityM3 = 0.0,
+            GuidanceOptions? Rules = null
             )
         {
+            GuidanceOptions? PreviousRules = InstallRules(Rules);
+            try
+            {
             List<WorkLane> CutWork = new List<WorkLane>(CutLanes);
             List<WorkLane> FillWork = new List<WorkLane>(FillLanes);
             // Judge the lane before a short joint trims it. A trim is not a light load.
@@ -3229,6 +3248,11 @@ namespace HaulBuilder
                 GradeSeconds,
                 EmptySeconds,
                 new GradeLedger(0.0, 0.0, 0.0));
+            }
+            finally
+            {
+                ActiveRules.Value = PreviousRules;
+            }
         }
 
         /// <summary>
@@ -3619,7 +3643,7 @@ namespace HaulBuilder
 
         /// <summary>
         /// Adds a lane and its points. Lane time is length over the lane speed.
-        /// The grade pass uses the fill speed constant, not the haul clock.
+        /// The grade pass uses <see cref="GuidanceOptions.GradeLaneSpeedMph"/>.
         /// </summary>
         private static void AddLane
             (
@@ -3653,15 +3677,15 @@ namespace HaulBuilder
             }
             else if (Action == GuidanceAction.Grade)
             {
-                SpeedMph = Constants.DEFAULT_FILL_SPEED_MPH;
+                SpeedMph = CurrentRules.GradeLaneSpeedMph;
             }
 
             Double Seconds = 0.0;
             if (SpeedMph > 0.0)
             {
                 // The straight runs at cut or fill speed. The quarter circle is
-                // the same speed, and never faster than the turn speed.
-                Double ArcMph = Math.Min(SpeedMph, TURN_SPEED_MPH);
+                // the same speed, and never faster than the arc speed.
+                Double ArcMph = Math.Min(SpeedMph, CurrentRules.ArcSpeedMph);
                 Seconds = Lane.StraightLengthM / (SpeedMph * Constants.MPH_TO_MPS);
                 if (ArcMph > 0.0)
                 {
@@ -3689,9 +3713,8 @@ namespace HaulBuilder
         }
 
         /// <summary>
-        /// Adds a Dubins connector. Arcs use the turn speed. Straights use the
+        /// Adds a Dubins connector. Arcs use the guidance arc speed. Straights use the
         /// loaded speed on a carry and the return speed everywhere else.
-        /// A correcting line change keeps the faster of the in-field path and the open path.
         /// </summary>
         /// <param name="Segments">Segments being built.</param>
         /// <param name="Points">Guidance samples.</param>
@@ -3816,9 +3839,9 @@ namespace HaulBuilder
                 }
             }
 
-            // Half a radius, or two percent of a long connector, is still a tie.
-            // Past that, the shorter path wins even when it leaves the field.
-            Double Allowance = Math.Max(CONNECTOR_TIE_FRACTION * Shortest, CONNECTOR_TIE_RADII * RadiusM);
+            // The tie band is a fraction of the shortest length, or a number of
+            // radii when that is wider. Past the band, the shorter path wins.
+            Double Allowance = Math.Max(CurrentRules.ConnectorTieFraction * Shortest, CurrentRules.ConnectorTieRadii * RadiusM);
             Double Limit = Shortest + Allowance;
             Int32 Best = 0;
             Double BestOutside = Double.PositiveInfinity;
@@ -4018,7 +4041,7 @@ namespace HaulBuilder
                 }
                 else
                 {
-                    Seconds += Piece.LengthM / (TURN_SPEED_MPH * Constants.MPH_TO_MPS);
+                    Seconds += Piece.LengthM / (CurrentRules.ArcSpeedMph * Constants.MPH_TO_MPS);
                 }
             }
 
@@ -5623,7 +5646,7 @@ namespace HaulBuilder
             Int32 Count = Passes.Count;
             Double[] Productive = new Double[Count];
             List<Int32> Pending = new List<Int32>();
-            Double Limit = SHORT_JOINT_RADII * RadiusM;
+            Double Limit = CurrentRules.ShortJointRadii * RadiusM;
             for (Int32 Index = 0; Index < Count; Index += 1)
             {
                 if (Passes[Index].Stage != HaulStage.Correcting)
@@ -5635,7 +5658,7 @@ namespace HaulBuilder
                 Double Connectors = ConnectorLengthM(Courses[Index]);
                 Boolean Short = Productive[Index] < Limit;
                 Boolean Heavy = (Productive[Index] > 1e-6)
-                    ? ((Connectors / Productive[Index]) > LEFTOVER_RATIO)
+                    ? ((Connectors / Productive[Index]) > CurrentRules.LeftoverRatio)
                     : (Connectors > 1e-6);
                 if (Short || Heavy)
                 {
@@ -5879,7 +5902,7 @@ namespace HaulBuilder
             Double BowlCapacityM3
             )
         {
-            if ((RadiusM > 0.0) && (Lane.LengthM < (NEAR_EMPTY_RADII * RadiusM)))
+            if ((RadiusM > 0.0) && (Lane.LengthM < (CurrentRules.NearEmptyRadii * RadiusM)))
             {
                 return true;
             }
@@ -5895,7 +5918,7 @@ namespace HaulBuilder
                 return false;
             }
 
-            return Volume < (NEAR_EMPTY_BOWL_FRACTION * BowlCapacityM3);
+            return Volume < (CurrentRules.NearEmptyBowlFraction * BowlCapacityM3);
         }
 
         /// <summary>
@@ -6044,7 +6067,7 @@ namespace HaulBuilder
         {
             List<Int32> Drop = new List<Int32>();
             Dictionary<Int32, List<Int32>> Groups = IndexesByLine(LineIds);
-            Double SpanLimit = END_FRAGMENT_SPAN_RADII * RadiusM;
+            Double SpanLimit = CurrentRules.EndFragmentSpanRadii * RadiusM;
             foreach (List<Int32> Group in Groups.Values)
             {
                 // A multi-lane line already peeled its own ends.
@@ -6129,7 +6152,7 @@ namespace HaulBuilder
             Double RadiusM
             )
         {
-            if ((Line.Count == 0) || (Fragment.LengthM >= (END_FRAGMENT_SPAN_RADII * RadiusM)))
+            if ((Line.Count == 0) || (Fragment.LengthM >= (CurrentRules.EndFragmentSpanRadii * RadiusM)))
             {
                 return false;
             }
@@ -6169,7 +6192,7 @@ namespace HaulBuilder
 
             // AxisHeading is only carried so the axis call stays complete.
             _ = AxisHeading;
-            return Gap > (END_FRAGMENT_GAP_RADII * RadiusM);
+            return Gap > (CurrentRules.EndFragmentGapRadii * RadiusM);
         }
 
         /// <summary>
@@ -6301,7 +6324,7 @@ namespace HaulBuilder
             Double RadiusM
             )
         {
-            if (End.LengthM >= (END_FRAGMENT_SPAN_RADII * RadiusM))
+            if (End.LengthM >= (CurrentRules.EndFragmentSpanRadii * RadiusM))
             {
                 return false;
             }
@@ -6310,7 +6333,7 @@ namespace HaulBuilder
             Double Gap = EndIsHigh
                 ? PoseGap(Neighbor.End, End.Start)
                 : PoseGap(End.End, Neighbor.Start);
-            return Gap > (END_FRAGMENT_GAP_RADII * RadiusM);
+            return Gap > (CurrentRules.EndFragmentGapRadii * RadiusM);
         }
 
         /// <summary>
@@ -6395,8 +6418,8 @@ namespace HaulBuilder
                 return Lane;
             }
 
-            Double GapLimit = END_FRAGMENT_GAP_RADII * RadiusM;
-            Double SpanLimit = END_FRAGMENT_SPAN_RADII * RadiusM;
+            Double GapLimit = CurrentRules.EndFragmentGapRadii * RadiusM;
+            Double SpanLimit = CurrentRules.EndFragmentSpanRadii * RadiusM;
             List<(Double Station, Int32 Index)> Placed = new List<(Double Station, Int32 Index)>();
             List<Int32> Unplaced = new List<Int32>();
             for (Int32 Index = 0; Index < Lane.Cells.Count; Index += 1)
@@ -7000,7 +7023,7 @@ namespace HaulBuilder
             Double BowlBcy
             )
         {
-            Double Reach = MERGE_ROUTE_RADII * RadiusM;
+            Double Reach = CurrentRules.MergeRouteRadii * RadiusM;
             Int32 Best = -1;
             Double BestDist = 0.0;
             for (Int32 Index = Source + 1; Index < Passes.Count; Index += 1)
@@ -7435,9 +7458,9 @@ namespace HaulBuilder
                 return Seen.IndexOf(Left).CompareTo(Seen.IndexOf(Right));
             });
             Int32 Keep = Ranked.Count;
-            if (Keep > MAX_CORRECTING_LINES)
+            if (Keep > CurrentRules.MaxCorrectingLines)
             {
-                Keep = MAX_CORRECTING_LINES;
+                Keep = CurrentRules.MaxCorrectingLines;
             }
 
             for (Int32 Index = Keep; Index < Ranked.Count; Index += 1)
@@ -7525,7 +7548,7 @@ namespace HaulBuilder
                 WorkLane Left = All[Index];
                 WorkLane Right = All[Index + 1];
                 Double Gap = PoseGap(Left.End, Right.Start);
-                if (Gap >= (SHORT_JOINT_RADII * RadiusM))
+                if (Gap >= (CurrentRules.ShortJointRadii * RadiusM))
                 {
                     continue;
                 }
@@ -7619,13 +7642,13 @@ namespace HaulBuilder
             }
 
             Double Gap = PoseGap(From, To);
-            if (Gap >= (SHORT_JOINT_RADII * RadiusM))
+            if (Gap >= (CurrentRules.ShortJointRadii * RadiusM))
             {
                 return false;
             }
 
             Double Turn = Math.Abs(DubinsConnector.WrapPi(To.HeadingRad - From.HeadingRad));
-            if (Turn >= (STEER_HEADING_DEG * Math.PI / Constants.DEGREES_PER_HALF_TURN))
+            if (Turn >= (CurrentRules.SteerHeadingDeg * Math.PI / Constants.DEGREES_PER_HALF_TURN))
             {
                 return false;
             }

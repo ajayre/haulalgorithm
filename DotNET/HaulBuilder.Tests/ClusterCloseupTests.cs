@@ -40,18 +40,14 @@ namespace HaulBuilder.Tests
             FlowField Flow = FlowFieldSolver.Compute(Grid, "poisson");
             HaulWorkLedger Ledger = HaulWorkLedger.Build(Grid, Options.ToleranceMm);
             Double BowlBcy = Options.ScraperCapacityLcy / Options.SwellFactor;
-            Double HeadingDeg = HaulLaneBuilder.NormalizeAxisHeadingDeg(Options.LaneAxisHeadingDeg);
             HaulOptimizationResult Result = FlowRibbonSearch.Optimize(
                 Grid,
                 Flow,
                 Ledger,
                 HaulLaneBuilder.LaneAxis.UserHeading,
                 BowlBcy,
-                Options.Optimization.MaxLaneSlicesPerCycle,
                 true,
-                Options.Optimization.FlowPenaltyWeight,
                 null,
-                HeadingDeg,
                 false,
                 Options.BladeWidthMm / Constants.MILLIMETERS_PER_METER,
                 Options.MinimumTurningDiameterFt,

@@ -68,8 +68,8 @@ internal static class FastPondingProof
         ProductionOptions.Optimization.RouteReorderWindow = Window;
         AgdField Field = Agd.Parse(AgdPath);
 
-        Double HeadingDeg = HaulLaneBuilder.NormalizeAxisHeadingDeg(
-            ProductionOptions.LaneAxisHeadingDeg);
+        // The ribbon takes its heading from the flow. The check uses north-south.
+        Double HeadingDeg = 0.0;
         Double AuditDeterministicHours = 0.0;
         Double AuditScheduledHours = 0.0;
         Double AuditGuidanceDistanceM = 0.0;
@@ -284,8 +284,8 @@ internal static class FastPondingProof
         ObstacleField Obstacles
         )
     {
-        Double HeadingDeg = HaulLaneBuilder.NormalizeAxisHeadingDeg(
-            Options.LaneAxisHeadingDeg);
+        // The cycle optimizer still scores a heading. The retired option was north-south.
+        Double HeadingDeg = 0.0;
         Double ScraperBcy = Options.ScraperCapacityLcy / Options.SwellFactor;
         HaulWorkLedger Ledger = HaulWorkLedger.Build(
             Grid, Options.ToleranceMm);
@@ -295,9 +295,9 @@ internal static class FastPondingProof
             Ledger,
             HaulLaneBuilder.LaneAxis.UserHeading,
             ScraperBcy,
-            Options.Optimization.MaxLaneSlicesPerCycle,
+            10,
             DeferEdgeWork: true,
-            Options.Optimization.FlowPenaltyWeight,
+            1.0,
             Obstacles,
             HeadingDeg);
         List<Pass> OptimizedPasses = Optimized.PassResult.Passes;
@@ -322,14 +322,11 @@ internal static class FastPondingProof
                 Ledger,
                 HaulLaneBuilder.LaneAxis.UserHeading,
                 ScraperBcy,
-                Options.Optimization.EdgeMaxLaneSlicesPerCycle,
-                Options.Optimization.FlowPenaltyWeight,
                 Options.Optimization.PairRefinementRounds,
                 HaulPairDistanceRefiner.PairMetric.Centroid,
                 Options.BladeWidthMm / Constants.MILLIMETERS_PER_METER,
                 GradeReturn: true,
-                Obstacles,
-                HeadingDeg);
+                Obstacles);
         OptimizedPasses = OptimizedPasses
             .Concat(EdgeCompletion.Passes)
             .ToList();

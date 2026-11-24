@@ -166,11 +166,8 @@ namespace HaulBuilder
         /// <param name="Ledger">Work to allocate.</param>
         /// <param name="Axis">Recorded on the result. The ribbon does not use lane axes.</param>
         /// <param name="MaximumLoadBcy">Scraper capacity in bank cubic yards.</param>
-        /// <param name="MaximumRunsPerKind">Unused. Kept so existing callers compile.</param>
         /// <param name="DeferEdgeWork">When true, leftover edge soil may stay deferred.</param>
-        /// <param name="FlowPenaltyWeight">Unused. The ribbon follows the flow instead of penalizing it.</param>
         /// <param name="Obstacles">Optional exclusion obstacles.</param>
-        /// <param name="HeadingAxisDeg">Unused. Each ribbon takes its heading from the local flow.</param>
         /// <param name="AllowAnyDeferredRemainder">
         /// When true, unpaired leftovers are allowed beyond the material imbalance.
         /// </param>
@@ -206,11 +203,8 @@ namespace HaulBuilder
             HaulWorkLedger Ledger,
             HaulLaneBuilder.LaneAxis Axis,
             Double MaximumLoadBcy,
-            Int32 MaximumRunsPerKind = 2,
             Boolean DeferEdgeWork = false,
-            Double FlowPenaltyWeight = 0.20,
             ObstacleField? Obstacles = null,
-            Double? HeadingAxisDeg = null,
             Boolean AllowAnyDeferredRemainder = false,
             Double BladeWidthM = 0.0,
             Double TurningCircleFt = Constants.DEFAULT_TURNING_CIRCLE_FT,
@@ -225,10 +219,6 @@ namespace HaulBuilder
             if (Flow == null) throw new ArgumentNullException(nameof(Flow));
             if (Ledger == null) throw new ArgumentNullException(nameof(Ledger));
             if (MaximumLoadBcy <= 0.0) throw new ArgumentOutOfRangeException(nameof(MaximumLoadBcy));
-            // The retired lane search owned these. A ribbon does not slice lanes.
-            _ = MaximumRunsPerKind;
-            _ = FlowPenaltyWeight;
-            _ = HeadingAxisDeg;
             if (BladeWidthM <= 0.0)
             {
                 BladeWidthM = Constants.DEFAULT_BLADE_WIDTH_MM / Constants.MILLIMETERS_PER_METER;

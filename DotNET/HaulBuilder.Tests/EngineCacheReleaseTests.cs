@@ -31,9 +31,6 @@ namespace HaulBuilder.Tests
         /// <summary>Height of the existing ground above or below the design, in metres.</summary>
         private const Double OFFSET_M = 0.1;
 
-        /// <summary>Lane axis for east-west lanes, which keeps a run on this field to seconds.</summary>
-        private const Double LANE_AXIS_EAST_WEST_DEG = 90.0;
-
         /// <summary>
         /// Verifies two runs in a row each leave the connector caches empty and
         /// return the same plan.
@@ -72,7 +69,6 @@ namespace HaulBuilder.Tests
             HaulBuilderOptions Options = new HaulBuilderOptions
             {
                 AgdPath = AgdPath,
-                LaneAxisHeadingDeg = LANE_AXIS_EAST_WEST_DEG,
             };
             HaulBuilderResult Result = new HaulBuilderEngine().Run(Options);
             Assert.NotNull(Result.DetailedGuidanceTime);

@@ -126,8 +126,6 @@ namespace HaulBuilder.Tests
                     Ledger,
                     HaulLaneBuilder.LaneAxis.NorthSouth,
                     MaximumLoadBcy: 0.10,
-                    MaximumRunsPerKind: 12,
-                    FlowPenaltyWeight: 0.20,
                     PairRefinementRounds: 1,
                     PairMetric: HaulPairDistanceRefiner.PairMetric.Centroid,
                     BladeWidthM: 1.0,
