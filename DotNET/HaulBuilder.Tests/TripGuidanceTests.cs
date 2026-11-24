@@ -714,16 +714,18 @@ namespace HaulBuilder.Tests
         public void GradePass_CutsFiveMillimetres_AndConservesVolume()
         {
             const Double HighM = 0.005;
-            Double[,] Existing = new Double[1, 2];
-            Existing[0, 0] = HighM;
-            Existing[0, 1] = HighM;
-            Grid Field = MakeGrid(2, 1, 1.0, Existing);
+            // Longer than half a radius, so the near-empty rule still drives the grade.
+            const Int32 Cells = 10;
+            Double[,] Existing = new Double[1, Cells];
             List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Fills =
-                new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>
-                {
-                    ((0, 0), 0.0),
-                    ((1, 0), 0.0),
-                };
+                new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>();
+            for (Int32 Column = 0; Column < Cells; Column += 1)
+            {
+                Existing[0, Column] = HighM;
+                Fills.Add(((Column, 0), 0.0));
+            }
+
+            Grid Field = MakeGrid(Cells, 1, 1.0, Existing);
             Pass Trip = new Pass(
                 new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>(),
                 Fills,
@@ -742,8 +744,10 @@ namespace HaulBuilder.Tests
                 1.0,
                 DubinsConnector.DefaultRadiusM,
                 -1);
-            Assert.InRange(Job.Surface[0, 0], -1e-9, 1e-9);
-            Assert.InRange(Job.Surface[0, 1], -1e-9, 1e-9);
+            for (Int32 Column = 0; Column < Cells; Column += 1)
+            {
+                Assert.InRange(Job.Surface[0, Column], -1e-9, 1e-9);
+            }
             TripGuidance.GradeLedger Ledger = Job.Trips[0].Grade;
             Assert.InRange(Math.Abs(Ledger.CutM3 - (Ledger.PlacedM3 + Ledger.BowlM3)), 0.0, 1e-9);
             Assert.True(Ledger.CutM3 > 0.0);
@@ -842,10 +846,11 @@ namespace HaulBuilder.Tests
         public void CorrectingFragments_DriveStraightAlongTheLine()
         {
             Grid Field = MakeGrid(100, 80, 1.0, new Double[80, 100]);
-            TripGuidance.WorkLane East = Lane((20.0, 40.0), (35.0, 40.0), 0.02);
-            TripGuidance.WorkLane WestFacing = Lane((55.0, 40.0), (40.0, 40.0), 0.02);
-            TripGuidance.WorkLane SpreadFar = Lane((30.0, 60.0), (45.0, 60.0), 0.02);
-            TripGuidance.WorkLane SpreadNear = Lane((55.0, 60.0), (70.0, 60.0), 0.02);
+            // Cells span the fragment. A single token cell would clip the line down to a point.
+            TripGuidance.WorkLane East = CellsAlong((20, 40), (35, 40), 0.02);
+            TripGuidance.WorkLane WestFacing = CellsAlong((55, 40), (40, 40), 0.02);
+            TripGuidance.WorkLane SpreadFar = CellsAlong((30, 60), (45, 60), 0.02);
+            TripGuidance.WorkLane SpreadNear = CellsAlong((55, 60), (70, 60), 0.02);
             TripGuidance.DirectionChoice Choice = TripGuidance.ChooseDirections(
                 new List<TripGuidance.WorkLane> { WestFacing, East },
                 new List<TripGuidance.WorkLane> { SpreadNear, SpreadFar },
@@ -1241,6 +1246,65 @@ namespace HaulBuilder.Tests
         }
 
         /// <summary>
+        /// A cut heading west along the field edge and a spread heading east on
+        /// that same edge meet with a connector that stays in the field. The
+        /// turn away from the field is the shorter word. The opposite turn is
+        /// close enough that it wins.
+        /// </summary>
+        [Fact]
+        public void EdgeCutWest_SpreadEast_ConnectorStaysInside()
+        {
+            const Int32 Width = 80;
+            const Int32 Height = 40;
+            const Double EdgeY = 0.5;
+            Grid Field = MakeGrid(Width, Height, 1.0, new Double[Height, Width]);
+            TripGuidance.WorkLane Cut = TripGuidance.WorkLane.FromCenterline(
+                new List<(Double X, Double Y)>
+                {
+                    (50.0, EdgeY),
+                    (20.0, EdgeY),
+                },
+                new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>(),
+                Math.PI);
+            TripGuidance.WorkLane Spread = TripGuidance.WorkLane.FromCenterline(
+                new List<(Double X, Double Y)>
+                {
+                    (40.0, EdgeY),
+                    (70.0, EdgeY),
+                },
+                new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>(),
+                0.0);
+            TripGuidance.TripCourse Course = TripGuidance.BuildCourse(
+                new List<TripGuidance.WorkLane> { Cut },
+                new List<TripGuidance.WorkLane> { Spread },
+                null,
+                Field.ContainsWorldXy,
+                Clock(),
+                DubinsConnector.DefaultRadiusM,
+                1.0,
+                1,
+                HaulStage.Flow,
+                null,
+                null,
+                2.5,
+                true);
+            List<TripGuidance.CourseSegment> Cuts = LanesOf(Course, TripGuidance.GuidanceAction.Cut);
+            TripGuidance.CourseSegment Join = SegmentAfter(Course, Cuts[0]);
+            Assert.False(Join.IsLane);
+            Assert.False(Join.Outside, Join.Word + " " + Join.LengthM.ToString("0.0", CultureInfo.InvariantCulture));
+            foreach (TripGuidance.DrawnPiece Piece in Join.Pieces)
+            {
+                foreach (DubinsConnector.Pose Sample in Piece.Samples)
+                {
+                    Assert.True(
+                        Field.ContainsWorldXy(Sample.X, Sample.Y),
+                        Join.Word + " " + Sample.X.ToString("0.0", CultureInfo.InvariantCulture)
+                            + "," + Sample.Y.ToString("0.0", CultureInfo.InvariantCulture));
+                }
+            }
+        }
+
+        /// <summary>
         /// A line change takes the open path when it is faster. The straight join
         /// crosses a post. The in-field path goes around it.
         /// </summary>
@@ -1333,6 +1397,179 @@ namespace HaulBuilder.Tests
             Assert.True(Math.Abs(Began.Y - 10.0) < 0.05);
             Assert.True(Math.Abs(Ended.X - 10.0) < 0.05);
             Assert.True(Math.Abs(Ended.Y - 40.0) < 0.05);
+        }
+
+        /// <summary>
+        /// A cell more than four radii past the rest of the line, and shorter
+        /// than one radius, is deferred. The line stops on the body.
+        /// </summary>
+        [Fact]
+        public void EndFragment_FartherThanFourRadii_IsDeferred()
+        {
+            Grid Field = MakeGrid(90, 20, 1.0, new Double[20, 90]);
+            List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Cells =
+                new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>();
+            for (Int32 Column = 10; Column <= 24; Column += 1)
+            {
+                Cells.Add(((Column, 10), 0.05));
+            }
+
+            Cells.Add(((70, 10), 0.05));
+            List<(Double X, Double Y)> Line = new List<(Double X, Double Y)>
+            {
+                (10.5, 10.5),
+                (70.5, 10.5),
+            };
+            TripGuidance.WorkLane Cut = TripGuidance.WorkLane.FromCenterline(Line, Cells, 0.0);
+            TripGuidance.DirectionChoice Choice = TripGuidance.ChooseDirections(
+                new List<TripGuidance.WorkLane> { Cut },
+                new List<TripGuidance.WorkLane>(),
+                null,
+                Field,
+                Field.ContainsWorldXy,
+                Clock(),
+                DubinsConnector.DefaultRadiusM,
+                2.5,
+                1.0,
+                1,
+                HaulStage.Correcting);
+            Assert.Single(Choice.EndCutFragments);
+            Assert.Single(Choice.EndCutFragments[0].Cells);
+            Assert.Equal(70, Choice.EndCutFragments[0].Cells[0].Cell.Bx);
+            Assert.Single(Choice.Cuts);
+            Assert.True(Choice.Cuts[0].End.X < 40.0);
+        }
+
+        /// <summary>
+        /// Deferred end fragments become a sweep-up trip after the correcting pass.
+        /// The source trip does not apply them. The sweep-up trip does.
+        /// </summary>
+        [Fact]
+        public void EndFragment_BecomesASweepUpTrip()
+        {
+            const Int32 Width = 90;
+            const Int32 Height = 30;
+            Grid Field = MakeGrid(Width, Height, 1.0, new Double[Height, Width]);
+            List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Cuts =
+                new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>();
+            for (Int32 Column = 10; Column <= 24; Column += 1)
+            {
+                Cuts.Add(((Column, 10), 0.05));
+            }
+
+            Cuts.Add(((70, 10), 0.05));
+            Cuts.Add(((72, 10), 0.05));
+            List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Fills =
+                new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>
+                {
+                    ((10, 20), 0.05),
+                    ((16, 20), 0.05),
+                };
+            Pass Trip = new Pass(Cuts, Fills, 1.0, 0.0, (10.0, 10.0), (24.0, 10.0), (10.0, 20.0), (16.0, 20.0));
+            Trip.Stage = HaulStage.Correcting;
+            Trip.RibbonOrder = true;
+            TripGuidance.JobGuidance Job = TripGuidance.Build(
+                Field,
+                new List<Pass> { Trip },
+                Clock(),
+                50.0,
+                2.5,
+                DubinsConnector.DefaultRadiusM,
+                -1);
+            Assert.True(Job.DeferredFragmentCount >= 1);
+            Assert.Contains("Fragments deferred", Job.FormatReport(0.0));
+            Assert.Contains("Sweep-up trips", Job.FormatReport(0.0));
+            Boolean SawSweep = false;
+            foreach (TripGuidance.TripCourse Course in Job.Trips)
+            {
+                if (Course.SweepUp)
+                {
+                    SawSweep = true;
+                }
+            }
+
+            Assert.True(SawSweep);
+            // The isolated end is cut on the sweep-up trip. The body stays on the source trip.
+            Assert.InRange(Job.Surface[10, 70], -0.06, -0.04);
+            Assert.InRange(Job.Surface[10, 72], -0.06, -0.04);
+            Assert.InRange(Job.Surface[10, 24], -0.06, -0.04);
+        }
+
+        /// <summary>
+        /// A spread shorter than half a radius is not a lane between connectors.
+        /// The grade follows the long spread. The short spread's cells stay on the pass.
+        /// </summary>
+        [Fact]
+        public void NearEmptyLane_DoesNotSeparateConnectors()
+        {
+            Double Radius = DubinsConnector.DefaultRadiusM;
+            TripGuidance.WorkLane Cut = Lane((10.0, 30.0), (40.0, 30.0), 0.2);
+            TripGuidance.WorkLane LongFill = Lane((10.0, 10.0), (40.0, 10.0), 0.2);
+            TripGuidance.WorkLane TinyFill = Lane((41.0, 10.0), (42.0, 10.0), 0.2);
+            Assert.True(TinyFill.LengthM < (0.5 * Radius));
+            Assert.True(LongFill.LengthM > (0.5 * Radius));
+            DubinsConnector.Pose Next = new DubinsConnector.Pose(10.0, 50.0, Math.PI / 2.0);
+            TripGuidance.TripCourse Course = TripGuidance.BuildCourse(
+                new List<TripGuidance.WorkLane> { Cut },
+                new List<TripGuidance.WorkLane> { LongFill, TinyFill },
+                Next,
+                null,
+                Clock(),
+                Radius,
+                1.0,
+                1,
+                HaulStage.Flow);
+            Assert.Single(LanesOf(Course, TripGuidance.GuidanceAction.Fill));
+            Assert.Single(LanesOf(Course, TripGuidance.GuidanceAction.Grade));
+            foreach (TripGuidance.CourseSegment Segment in Course.Segments)
+            {
+                if (Segment.IsLane && (Segment.Action != TripGuidance.GuidanceAction.Grade))
+                {
+                    Assert.True(Segment.LengthM >= (0.5 * Radius));
+                }
+            }
+        }
+
+        /// <summary>
+        /// A lane longer than half a radius is still skipped when its volume is
+        /// under one percent of the bowl. A heavier lane of the same length stays.
+        /// </summary>
+        [Fact]
+        public void LightLane_DoesNotSeparateConnectors()
+        {
+            Double Radius = DubinsConnector.DefaultRadiusM;
+            TripGuidance.WorkLane Cut = TripGuidance.WorkLane.FromCenterline(
+                new List<(Double X, Double Y)> { (0.0, 20.0), (20.0, 20.0) },
+                new List<((Int32 Bx, Int32 By) Cell, Double DepthM)> { ((0, 20), 2.0) },
+                0.0);
+            TripGuidance.WorkLane Light = TripGuidance.WorkLane.FromCenterline(
+                new List<(Double X, Double Y)> { (0.0, 10.0), (10.0, 10.0) },
+                new List<((Int32 Bx, Int32 By) Cell, Double DepthM)> { ((0, 10), 0.001) },
+                0.0);
+            TripGuidance.WorkLane Heavy = TripGuidance.WorkLane.FromCenterline(
+                new List<(Double X, Double Y)> { (0.0, 0.0), (10.0, 0.0) },
+                new List<((Int32 Bx, Int32 By) Cell, Double DepthM)> { ((0, 0), 5.0) },
+                0.0);
+            Assert.True(Light.LengthM > (0.5 * Radius));
+            TripGuidance.TripCourse Course = TripGuidance.BuildCourse(
+                new List<TripGuidance.WorkLane> { Cut },
+                new List<TripGuidance.WorkLane> { Light, Heavy },
+                null,
+                null,
+                Clock(),
+                Radius,
+                1.0,
+                1,
+                HaulStage.Flow,
+                null,
+                null,
+                0.0,
+                false,
+                1.0,
+                100.0);
+            List<TripGuidance.CourseSegment> Fills = LanesOf(Course, TripGuidance.GuidanceAction.Fill);
+            Assert.Single(Fills);
+            Assert.InRange(Fills[0].LengthM, 9.0, 11.0);
         }
 
         /// <summary>
@@ -1868,6 +2105,39 @@ namespace HaulBuilder.Tests
                 Constants.DEFAULT_ACCELERATION_TIME_S,
                 Constants.DEFAULT_DECELERATION_TIME_S,
                 Constants.DEFAULT_FIELD_EFFICIENCY);
+        }
+
+        /// <summary>
+        /// A straight lane whose cells cover the centreline, one per metre.
+        /// </summary>
+        /// <param name="Start">First end, metres.</param>
+        /// <param name="End">Other end, metres.</param>
+        /// <param name="DepthM">Depth on every cell.</param>
+        /// <returns>The lane.</returns>
+        private static TripGuidance.WorkLane CellsAlong
+            (
+            (Double X, Double Y) Start,
+            (Double X, Double Y) End,
+            Double DepthM
+            )
+        {
+            List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Cells =
+                new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>();
+            Double Dx = End.X - Start.X;
+            Double Dy = End.Y - Start.Y;
+            Double Length = Math.Sqrt((Dx * Dx) + (Dy * Dy));
+            Int32 Steps = Math.Max(1, (Int32)Math.Round(Length));
+            for (Int32 Step = 0; Step <= Steps; Step += 1)
+            {
+                Double X = Start.X + (Dx * Step / Steps);
+                Double Y = Start.Y + (Dy * Step / Steps);
+                Cells.Add((((Int32)Math.Round(X), (Int32)Math.Round(Y)), DepthM));
+            }
+
+            return TripGuidance.WorkLane.FromCenterline(
+                new List<(Double X, Double Y)> { Start, End },
+                Cells,
+                0.0);
         }
 
         /// <summary>

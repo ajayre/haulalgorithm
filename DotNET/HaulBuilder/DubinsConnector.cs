@@ -283,6 +283,45 @@ namespace HaulBuilder
         }
 
         /// <summary>
+        /// Every defined Dubins word from <paramref name="Start"/> to <paramref name="End"/>,
+        /// in the order a length tie keeps. An empty join is one empty path.
+        /// </summary>
+        /// <param name="Start">Pose the machine is in.</param>
+        /// <param name="End">Pose the machine must reach.</param>
+        /// <param name="RadiusM">Turning radius, metres.</param>
+        /// <returns>The defined words. Empty when none of the six formulas apply.</returns>
+        static public List<Path> AllWords
+            (
+            Pose Start,
+            Pose End,
+            Double RadiusM
+            )
+        {
+            if (RadiusM <= 0.0)
+            {
+                throw new ArgumentOutOfRangeException(nameof(RadiusM));
+            }
+
+            List<Path> Words = new List<Path>();
+            if (IsEmptyJoin(Start, End))
+            {
+                Words.Add(new Path("S", new List<Piece>(), Start, End, false, 0.0, 0.0));
+                return Words;
+            }
+
+            for (Int32 Index = 0; Index < WordOrder.Length; Index += 1)
+            {
+                Path? Candidate = TryWord(WordOrder[Index], Start, End, RadiusM);
+                if (Candidate != null)
+                {
+                    Words.Add(Candidate);
+                }
+            }
+
+            return Words;
+        }
+
+        /// <summary>
         /// Length of the shortest word, with no field test and no piece list.
         /// Trip ordering uses this so it does not build a path for every candidate.
         /// </summary>
