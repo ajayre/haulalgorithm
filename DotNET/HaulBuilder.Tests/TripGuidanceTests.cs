@@ -1186,6 +1186,181 @@ namespace HaulBuilder.Tests
         }
 
         /// <summary>
+        /// A correcting line stops on its first and last fragment. The centreline
+        /// that ran out to the field edge is not driven, and the line does not bend.
+        /// The connector leaves from that trimmed end.
+        /// </summary>
+        [Fact]
+        public void CorrectingLine_EndsAtTheLastFragment()
+        {
+            Grid Field = MakeGrid(80, 80, 1.0, new Double[80, 80]);
+            TripGuidance.WorkLane Low = TripGuidance.WorkLane.FromCenterline(
+                new List<(Double X, Double Y)> { (0.5, 10.5), (70.5, 10.5) },
+                new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>
+                {
+                    ((20, 10), 0.05),
+                    ((40, 10), 0.05),
+                },
+                0.0);
+            TripGuidance.WorkLane High = TripGuidance.WorkLane.FromCenterline(
+                new List<(Double X, Double Y)> { (0.5, 50.5), (70.5, 50.5) },
+                new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>
+                {
+                    ((20, 50), 0.05),
+                    ((40, 50), 0.05),
+                },
+                0.0);
+            TripGuidance.DirectionChoice Choice = TripGuidance.ChooseDirections(
+                new List<TripGuidance.WorkLane> { Low, High },
+                new List<TripGuidance.WorkLane>(),
+                null,
+                Field,
+                Field.ContainsWorldXy,
+                Clock(),
+                DubinsConnector.DefaultRadiusM,
+                2.5,
+                1.0,
+                1,
+                HaulStage.Correcting);
+            Assert.Equal(2, Choice.Cuts.Count);
+            foreach (TripGuidance.WorkLane Chosen in Choice.Cuts)
+            {
+                Assert.Equal(0.0, Chosen.ArcLengthM);
+                Assert.InRange(Chosen.Start.X, 19.0, 42.0);
+                Assert.InRange(Chosen.End.X, 19.0, 42.0);
+            }
+
+            List<TripGuidance.CourseSegment> Cuts = LanesOf(Choice.Course, TripGuidance.GuidanceAction.Cut);
+            Assert.Equal(2, Cuts.Count);
+            TripGuidance.CourseSegment Join = SegmentAfter(Choice.Course, Cuts[0]);
+            DubinsConnector.Pose LaneEnd = LastSample(Cuts[0]);
+            DubinsConnector.Pose JoinStart = Join.Pieces[0].Samples[0];
+            Double Dx = JoinStart.X - LaneEnd.X;
+            Double Dy = JoinStart.Y - LaneEnd.Y;
+            Assert.True(((Dx * Dx) + (Dy * Dy)) < 0.01);
+        }
+
+        /// <summary>
+        /// A line change takes the open path when it is faster. The straight join
+        /// crosses a post. The in-field path goes around it.
+        /// </summary>
+        [Fact]
+        public void LineChange_TakesTheFasterOutsidePath()
+        {
+            Double Radius = DubinsConnector.DefaultRadiusM;
+            Func<Double, Double, Boolean> Inside = delegate (Double X, Double Y)
+            {
+                if ((X < 0.0) || (X > 100.0) || (Y < 0.0) || (Y > 100.0))
+                {
+                    return false;
+                }
+
+                // A post on the straight join. A loop clears it and stays in the field.
+                if ((X > 29.0) && (X < 31.0) && (Y > 9.7) && (Y < 10.3))
+                {
+                    return false;
+                }
+
+                return true;
+            };
+            TripGuidance.WorkLane Cut = Lane((10.0, 10.0), (22.0, 10.0), 0.05);
+            TripGuidance.WorkLane Fill = Lane((40.0, 10.0), (55.0, 10.0), 0.05);
+            DubinsConnector.Path Open = DubinsConnector.Connect(Cut.End, Fill.Start, Radius, null);
+            DubinsConnector.Path Closed = DubinsConnector.Connect(Cut.End, Fill.Start, Radius, Inside);
+            Assert.True(
+                Open.LengthM + 1.0 < Closed.LengthM,
+                String.Format(
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    "open {0:F2} {1} inside {2:F2} {3}",
+                    Open.LengthM,
+                    Open.Word,
+                    Closed.LengthM,
+                    Closed.Word));
+            TripGuidance.TripCourse Course = TripGuidance.BuildCourse(
+                new List<TripGuidance.WorkLane> { Cut },
+                new List<TripGuidance.WorkLane> { Fill },
+                null,
+                Inside,
+                Clock(),
+                Radius,
+                1.0,
+                1,
+                HaulStage.Correcting,
+                null,
+                null,
+                0.0,
+                false);
+            List<TripGuidance.CourseSegment> Cuts = LanesOf(Course, TripGuidance.GuidanceAction.Cut);
+            TripGuidance.CourseSegment Join = SegmentAfter(Course, Cuts[0]);
+            Assert.True(Join.Outside);
+            Assert.InRange(Join.LengthM, Open.LengthM - 0.05, Open.LengthM + 0.05);
+        }
+
+        /// <summary>
+        /// The turnaround and the empty return have no lane between them, so they
+        /// become one Dubins path from the spread end to the next cut.
+        /// </summary>
+        [Fact]
+        public void StackedConnectors_BecomeOneDubins()
+        {
+            TripGuidance.WorkLane Fill = Lane((10.0, 10.0), (40.0, 10.0), 0.05);
+            DubinsConnector.Pose Next = new DubinsConnector.Pose(10.0, 40.0, Math.PI / 2.0);
+            TripGuidance.TripCourse Course = TripGuidance.BuildCourse(
+                new List<TripGuidance.WorkLane>(),
+                new List<TripGuidance.WorkLane> { Fill },
+                Next,
+                null,
+                Clock(),
+                DubinsConnector.DefaultRadiusM,
+                1.0,
+                1,
+                HaulStage.Correcting,
+                null,
+                null,
+                0.0,
+                false);
+            Assert.Equal(0, CountLanes(Course, TripGuidance.GuidanceAction.Grade));
+            Assert.Equal(0, CountAction(Course, TripGuidance.GuidanceAction.Turn));
+            Assert.Equal(1, CountAction(Course, TripGuidance.GuidanceAction.Return));
+            List<TripGuidance.CourseSegment> Fills = LanesOf(Course, TripGuidance.GuidanceAction.Fill);
+            Assert.Single(Fills);
+            TripGuidance.CourseSegment Departure = SegmentAfter(Course, Fills[0]);
+            Assert.Equal(TripGuidance.GuidanceAction.Return, Departure.Action);
+            Assert.Same(Course.Segments[Course.Segments.Count - 1], Departure);
+            DubinsConnector.Pose Began = Departure.Pieces[0].Samples[0];
+            DubinsConnector.Pose Ended = LastSample(Departure);
+            Assert.True(Math.Abs(Began.X - 40.0) < 0.05);
+            Assert.True(Math.Abs(Began.Y - 10.0) < 0.05);
+            Assert.True(Math.Abs(Ended.X - 10.0) < 0.05);
+            Assert.True(Math.Abs(Ended.Y - 40.0) < 0.05);
+        }
+
+        /// <summary>
+        /// A short correcting trip merges into a later trip whose route passes
+        /// within two radii, even when the two lines are not parallel.
+        /// </summary>
+        [Fact]
+        public void Leftover_MergesIntoALaterRouteWithinTwoRadii()
+        {
+            Grid Field = MakeGrid(40, 40, 1.0, new Double[40, 40]);
+            Pass Fragment = MakePass((8, 10), (10, 10), (8, 12), (10, 12));
+            Pass Later = MakePass((18, 4), (18, 28), (22, 4), (22, 28));
+            Fragment.Stage = HaulStage.Correcting;
+            Later.Stage = HaulStage.Correcting;
+            TripGuidance.JobGuidance Job = TripGuidance.Build(
+                Field,
+                new List<Pass> { Fragment, Later },
+                Clock(),
+                50.0,
+                2.5,
+                DubinsConnector.DefaultRadiusM,
+                -1);
+            Assert.Equal(1, Job.MergedCount);
+            Assert.Equal(0, Job.DroppedCount);
+            Assert.Single(Job.Trips);
+        }
+
+        /// <summary>
         /// The same lanes produce the same points and the same times.
         /// </summary>
         [Fact]
@@ -1466,7 +1641,19 @@ namespace HaulBuilder.Tests
                 Assert.True(After == 1, Text);
             }
             Assert.True(LastFill >= 0);
-            Assert.Equal(TripGuidance.GuidanceAction.Turn, Route.Segments[LastFill + 1].Action);
+            // The turnaround and the empty return meet, so they are one connector.
+            Int32 Departure = 0;
+            for (Int32 Index = LastFill + 1; Index < Route.Segments.Count; Index += 1)
+            {
+                if (Route.Segments[Index].IsLane)
+                {
+                    break;
+                }
+
+                Departure += 1;
+            }
+
+            Assert.Equal(1, Departure);
             Assert.Equal(0, CountLanes(Route, TripGuidance.GuidanceAction.Grade));
         }
 

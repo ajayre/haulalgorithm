@@ -16,9 +16,14 @@ namespace HaulBuilder
     /// across, or a trimmed lane, instead of a loop.
     /// A grade pass then runs back over the fill. A correcting trip does not
     /// grade: the land plane follows. Its lines are one sweep, at most three
-    /// cut lines and three spread lines, and the spreads snake. After every
-    /// trip is fixed, trips are reordered inside their own stage to shorten
-    /// the empty returns. Two trips that share a cell keep their order.
+    /// cut lines and three spread lines, and the spreads snake. A correcting
+    /// line starts at its first fragment and ends at its last, so the connector
+    /// owns the turn. A line-change connector takes the faster of the in-field
+    /// path and the open path. Two connectors with no lane between them become
+    /// one Dubins path. A short correcting trip may merge into a later
+    /// correcting trip whose route passes within two radii. After every trip
+    /// is fixed, trips are reordered inside their own stage to shorten the
+    /// empty returns. Two trips that share a cell keep their order.
     /// </summary>
     static public class TripGuidance
     {
@@ -112,11 +117,16 @@ namespace HaulBuilder
         /// <summary>Reordered and unreordered plans must agree to this, metres.</summary>
         private const Double SURFACE_MATCH_M = 0.001;
 
-        /// <summary>A neighbouring line sits inside this many blade widths.</summary>
-        private const Double ADJACENT_LINE_BLADES = 3.0;
+        /// <summary>
+        /// A later correcting route within this many radii can take a leftover fragment.
+        /// </summary>
+        private const Double MERGE_ROUTE_RADII = 2.0;
 
-        /// <summary>Headings closer than this, or this close to opposite, are parallel.</summary>
-        private const Double PARALLEL_HEADING_DEG = 20.0;
+        /// <summary>
+        /// Half a cell past the first and last fragment. The blade still covers
+        /// the cell. Anything further is empty travel and belongs to the connector.
+        /// </summary>
+        private const Double FRAGMENT_PAD_CELLS = 0.5;
 
         /// <summary>
         /// Fragments whose centre lines sit inside this band are the same line.
@@ -1307,7 +1317,6 @@ namespace HaulBuilder
                 ChosenFills,
                 BowlCapacityM3,
                 RadiusM,
-                BladeWidthM,
                 out MergedPasses,
                 out MergedOrigin,
                 out MergedNow,
@@ -1483,7 +1492,8 @@ namespace HaulBuilder
         /// counted in the report and do not decide the direction. A correcting
         /// trip gathers fragments that share a line, visits each line once in
         /// offset order, and keeps at most three cut lines and three spread
-        /// lines. Spread lines snake. Those lines are not reversed one at a time.
+        /// lines. Spread lines snake. Those lines are clipped to their fragments
+        /// and are not bent out to the field edge. A flat solo cut may still reverse.
         /// </summary>
         /// <param name="CutLanes">Cut lanes in the planner's drive order.</param>
         /// <param name="FillLanes">Spread lanes in the planner's drive order.</param>
@@ -1545,6 +1555,9 @@ namespace HaulBuilder
                 GroupedCuts = SweepLines(GroupedCuts, CutLines, false, out CutLines, out HeldCuts);
                 FillSource = ArrangeOnLines(FillLanes, out FillLines);
                 FillSource = SweepLines(FillSource, FillLines, true, out FillLines, out HeldFills);
+                // The centreline stops on the fragments. The field edge is not part of the line.
+                GroupedCuts = ClipToFragments(GroupedCuts, Grid);
+                FillSource = ClipToFragments(FillSource, Grid);
                 CutVariable = SoloIndexes(CutLines);
                 // The serpentine sets every spread direction. The search must not flip it back.
                 FillVariable = new List<Int32>();
@@ -1582,11 +1595,12 @@ namespace HaulBuilder
             }
 
             // Straight is variant 0, so a tie keeps the planned direction.
-            // On a correcting trip only a line of its own may reverse or bend.
+            // A correcting line is not bent out to the field edge. A flat solo cut may still reverse.
+            Boolean AllowBend = Stage != HaulStage.Correcting;
             List<LaneVariants> CutVariants = VariantsFor(
-                PreparedCuts, CutVariable, FlatCuts, Grid, Inside, RadiusM, BladeWidthM);
+                PreparedCuts, CutVariable, FlatCuts, Grid, Inside, RadiusM, BladeWidthM, AllowBend);
             List<LaneVariants> FillVariants = VariantsFor(
-                FillSource, FillVariable, FillVariable, Grid, Inside, RadiusM, BladeWidthM);
+                FillSource, FillVariable, FillVariable, Grid, Inside, RadiusM, BladeWidthM, AllowBend);
             List<LaneVariants> Sides = new List<LaneVariants>(CutVariants.Count + FillVariants.Count);
             Sides.AddRange(CutVariants);
             Sides.AddRange(FillVariants);
@@ -1824,6 +1838,7 @@ namespace HaulBuilder
         /// <param name="Inside">Field test.</param>
         /// <param name="RadiusM">Turning radius.</param>
         /// <param name="BladeWidthM">Blade width.</param>
+        /// <param name="AllowBend">False on a correcting line, which ends on its last fragment.</param>
         /// <returns>Lanes that have more than one shape.</returns>
         private static List<LaneVariants> VariantsFor
             (
@@ -1833,7 +1848,8 @@ namespace HaulBuilder
             Grid Grid,
             Func<Double, Double, Boolean>? Inside,
             Double RadiusM,
-            Double BladeWidthM
+            Double BladeWidthM,
+            Boolean AllowBend
             )
         {
             HashSet<Int32> MayReverse = new HashSet<Int32>(Reversible);
@@ -1842,7 +1858,8 @@ namespace HaulBuilder
             foreach (Int32 Index in Picked)
             {
                 Boolean Reverse = MayReverse.Contains(Index);
-                List<WorkLane> Options = ShapesFor(Lanes[Index], Reverse, Grid, Inside, RadiusM, BladeWidthM);
+                List<WorkLane> Options = ShapesFor(
+                    Lanes[Index], Reverse, Grid, Inside, RadiusM, BladeWidthM, AllowBend);
                 if (Options.Count < 2)
                 {
                     continue;
@@ -1873,6 +1890,7 @@ namespace HaulBuilder
         /// <param name="Inside">Field test.</param>
         /// <param name="RadiusM">Turning radius.</param>
         /// <param name="BladeWidthM">Blade width.</param>
+        /// <param name="AllowBend">False on a correcting line, which ends on its last fragment.</param>
         /// <returns>At least the planned lane.</returns>
         private static List<WorkLane> ShapesFor
             (
@@ -1881,13 +1899,20 @@ namespace HaulBuilder
             Grid Grid,
             Func<Double, Double, Boolean>? Inside,
             Double RadiusM,
-            Double BladeWidthM
+            Double BladeWidthM,
+            Boolean AllowBend
             )
         {
             List<WorkLane> Options = new List<WorkLane> { Lane };
             if (AllowReverse)
             {
                 Options.Add(Lane.Reversed());
+            }
+
+            // A bend would carry the lane out to the field edge. Correcting lines stay on the fragments.
+            if (!AllowBend)
+            {
+                return Options;
             }
 
             // Bends follow the directions so trimming can drop them first.
@@ -2891,14 +2916,16 @@ namespace HaulBuilder
             Int32 Sequence = 1;
             // Correcting fragments on one line get a straight blade-up gap, not a Dubins bulb.
             Boolean StraightOnLine = Stage == HaulStage.Correcting;
+            // A correcting line change may leave the field when that path is faster.
+            Boolean ShorterOutside = StraightOnLine;
             DubinsConnector.Pose? Cursor = DriveSide(
                 Segments, Points, Notes, ref Sequence, ref CutSeconds, ref LoadedSeconds, ref SpreadSeconds,
                 ref TurnSeconds, ref GradeSeconds, ref EmptySeconds, null, CutWork, CutLineIds,
-                GuidanceAction.Cut, GuidanceAction.Carry, StraightOnLine, Inside, Clock, RadiusM, LaneSampleM, TripNumber, BladeWidthM);
+                GuidanceAction.Cut, GuidanceAction.Carry, StraightOnLine, Inside, Clock, RadiusM, LaneSampleM, TripNumber, BladeWidthM, ShorterOutside);
             Cursor = DriveSide(
                 Segments, Points, Notes, ref Sequence, ref CutSeconds, ref LoadedSeconds, ref SpreadSeconds,
                 ref TurnSeconds, ref GradeSeconds, ref EmptySeconds, Cursor, FillWork, FillLineIds,
-                GuidanceAction.Fill, GuidanceAction.Carry, StraightOnLine, Inside, Clock, RadiusM, LaneSampleM, TripNumber, BladeWidthM);
+                GuidanceAction.Fill, GuidanceAction.Carry, StraightOnLine, Inside, Clock, RadiusM, LaneSampleM, TripNumber, BladeWidthM, ShorterOutside);
 
             if (FillWork.Count > 0)
             {
@@ -2919,7 +2946,7 @@ namespace HaulBuilder
                     AddConnector(
                         Segments, Points, Notes, ref Sequence, ref LoadedSeconds, ref TurnSeconds,
                         ref GradeSeconds, ref EmptySeconds, Cursor.Value, GradeLanes[0].Start,
-                        GuidanceAction.Turn, Inside, Clock, RadiusM, TripNumber);
+                        GuidanceAction.Turn, Inside, Clock, RadiusM, TripNumber, ShorterOutside);
                 }
 
                 // Correcting leaves the grade to the land plane, whatever the depth.
@@ -2930,7 +2957,7 @@ namespace HaulBuilder
                     Cursor = DriveSide(
                         Segments, Points, Notes, ref Sequence, ref CutSeconds, ref LoadedSeconds, ref SpreadSeconds,
                         ref TurnSeconds, ref GradeSeconds, ref EmptySeconds, null, GradeLanes, GradeIds,
-                        GuidanceAction.Grade, GuidanceAction.Grade, StraightOnLine, Inside, Clock, RadiusM, LaneSampleM, TripNumber, BladeWidthM);
+                        GuidanceAction.Grade, GuidanceAction.Grade, StraightOnLine, Inside, Clock, RadiusM, LaneSampleM, TripNumber, BladeWidthM, ShorterOutside);
                 }
                 else
                 {
@@ -2943,7 +2970,28 @@ namespace HaulBuilder
                 AddConnector(
                     Segments, Points, Notes, ref Sequence, ref LoadedSeconds, ref TurnSeconds,
                     ref GradeSeconds, ref EmptySeconds, Cursor.Value, NextCutStart.Value,
-                    GuidanceAction.Return, Inside, Clock, RadiusM, TripNumber);
+                    GuidanceAction.Return, Inside, Clock, RadiusM, TripNumber, ShorterOutside);
+            }
+
+            // A turnaround and the empty return meet with no grade between them.
+            // One Dubins path replaces that stack. Short joints have already been fitted.
+            List<CourseSegment> Collapsed = CollapseStacked(
+                Segments, Inside, Clock, RadiusM, ShorterOutside);
+            if (!Object.ReferenceEquals(Collapsed, Segments))
+            {
+                Segments = Collapsed;
+                RetotalCourse(
+                    Segments,
+                    Points,
+                    Notes,
+                    TripNumber,
+                    ref Sequence,
+                    ref CutSeconds,
+                    ref LoadedSeconds,
+                    ref SpreadSeconds,
+                    ref TurnSeconds,
+                    ref GradeSeconds,
+                    ref EmptySeconds);
             }
 
             return new TripCourse(
@@ -3421,7 +3469,24 @@ namespace HaulBuilder
         /// <summary>
         /// Adds a Dubins connector. Arcs use the turn speed. Straights use the
         /// loaded speed on a carry and the return speed everywhere else.
+        /// A correcting line change keeps the faster of the in-field path and the open path.
         /// </summary>
+        /// <param name="Segments">Segments being built.</param>
+        /// <param name="Points">Guidance samples.</param>
+        /// <param name="Notes">Connector notes.</param>
+        /// <param name="Sequence">Next sample number.</param>
+        /// <param name="LoadedSeconds">Loaded-connector seconds so far.</param>
+        /// <param name="TurnSeconds">Turnaround seconds so far.</param>
+        /// <param name="GradeSeconds">Grade seconds so far.</param>
+        /// <param name="EmptySeconds">Empty-connector seconds so far.</param>
+        /// <param name="Start">Pose the connector leaves.</param>
+        /// <param name="End">Pose the connector arrives at.</param>
+        /// <param name="Action">What the connector is.</param>
+        /// <param name="Inside">Field test. Null does not test the field.</param>
+        /// <param name="Clock">Speeds and acceleration.</param>
+        /// <param name="RadiusM">Turning radius.</param>
+        /// <param name="TripNumber">1-based trip number.</param>
+        /// <param name="ShorterOutside">True when the open path may replace a slower in-field path.</param>
         private static void AddConnector
             (
             List<CourseSegment> Segments,
@@ -3438,26 +3503,95 @@ namespace HaulBuilder
             Func<Double, Double, Boolean>? Inside,
             TimeParams Clock,
             Double RadiusM,
-            Int32 TripNumber
+            Int32 TripNumber,
+            Boolean ShorterOutside
             )
         {
-            // A wrapped full turn at the same point is an empty join, not a 2πR loop.
-            if (DubinsConnector.IsEmptyJoin(Start, End))
+            CourseSegment? Built = MakeConnector(Start, End, Action, Inside, Clock, RadiusM, ShorterOutside);
+            if (Built == null)
             {
                 return;
             }
 
+            if (Action == GuidanceAction.Carry)
+            {
+                LoadedSeconds += Built.Seconds;
+            }
+            else if (Action == GuidanceAction.Turn)
+            {
+                TurnSeconds += Built.Seconds;
+            }
+            else if (Action == GuidanceAction.Grade)
+            {
+                GradeSeconds += Built.Seconds;
+            }
+            else
+            {
+                EmptySeconds += Built.Seconds;
+            }
+
+            Segments.Add(Built);
+            Notes.Add(new ConnectorNote(
+                TripNumber,
+                Action,
+                Built.Word,
+                Built.LengthM,
+                Built.LeadOutM,
+                Built.LeadInM,
+                Built.Outside));
+            AppendPoints(Points, ref Sequence, Built);
+        }
+
+        /// <summary>
+        /// Builds one connector and does not add it to a course. A wrapped full
+        /// turn at the same point is an empty join, not a 2πR loop.
+        /// </summary>
+        /// <param name="Start">Pose the connector leaves.</param>
+        /// <param name="End">Pose the connector arrives at.</param>
+        /// <param name="Action">What the connector is.</param>
+        /// <param name="Inside">Field test. Null does not test the field.</param>
+        /// <param name="Clock">Speeds and acceleration.</param>
+        /// <param name="RadiusM">Turning radius.</param>
+        /// <param name="ShorterOutside">True when the open path may replace a slower in-field path.</param>
+        /// <returns>The connector, or null when the poses already meet.</returns>
+        private static CourseSegment? MakeConnector
+            (
+            DubinsConnector.Pose Start,
+            DubinsConnector.Pose End,
+            GuidanceAction Action,
+            Func<Double, Double, Boolean>? Inside,
+            TimeParams Clock,
+            Double RadiusM,
+            Boolean ShorterOutside
+            )
+        {
+            if (DubinsConnector.IsEmptyJoin(Start, End))
+            {
+                return null;
+            }
+
             DubinsConnector.Path Path = DubinsConnector.Connect(Start, End, RadiusM, Inside);
+            if (ShorterOutside)
+            {
+                // The in-field path can walk the boundary on a lead. The open path
+                // leaves from the fragment end, and it wins when that is faster.
+                DubinsConnector.Path Open = DubinsConnector.Connect(Start, End, RadiusM, null);
+                Double OpenSeconds = ConnectorSeconds(Open, Action, Clock);
+                Double KeptSeconds = ConnectorSeconds(Path, Action, Clock);
+                if ((OpenSeconds + TIME_TIE_S) < KeptSeconds)
+                {
+                    Boolean Leaves = (Inside != null) && PathLeaves(Open, Inside, RadiusM);
+                    Path = Leaves ? Open.AsOutside() : Open;
+                }
+            }
+
             if (Path.LengthM <= 0.0)
             {
-                return;
+                return null;
             }
+
             List<DrawnPiece> Drawn = new List<DrawnPiece>();
-            Double Seconds = 0.0;
             DubinsConnector.Pose Cursor = Start;
-            Double StraightMph = (Action == GuidanceAction.Carry)
-                ? Clock.LoadedTravelSpeedMph
-                : Clock.UnloadedTravelSpeedMph;
             foreach (DubinsConnector.Piece Piece in Path.Pieces)
             {
                 List<DubinsConnector.Pose> Samples = new List<DubinsConnector.Pose> { Cursor };
@@ -3468,21 +3602,9 @@ namespace HaulBuilder
                     Samples.Add(DubinsConnector.Advance(Cursor, Piece.Kind, Distance, RadiusM));
                 }
 
-                DubinsConnector.Pose Arrow = DubinsConnector.Advance(Cursor, Piece.Kind, Piece.LengthM * Constants.HALF_SCALE, RadiusM);
+                DubinsConnector.Pose Arrow = DubinsConnector.Advance(
+                    Cursor, Piece.Kind, Piece.LengthM * Constants.HALF_SCALE, RadiusM);
                 Drawn.Add(new DrawnPiece(Piece.Kind, Piece.LengthM, Piece.CurvaturePerM, Samples, Arrow));
-                if (Piece.Kind == DubinsConnector.PieceKind.Straight)
-                {
-                    Seconds += TimeModel.MoveTime(
-                        Piece.LengthM,
-                        StraightMph * Constants.MPH_TO_MPS,
-                        Clock.AccelerationTimeS,
-                        Clock.DecelerationTimeS);
-                }
-                else
-                {
-                    Seconds += Piece.LengthM / (TURN_SPEED_MPH * Constants.MPH_TO_MPS);
-                }
-
                 Cursor = DubinsConnector.Advance(Cursor, Piece.Kind, Piece.LengthM, RadiusM);
             }
 
@@ -3496,24 +3618,7 @@ namespace HaulBuilder
                 }
             }
 
-            if (Action == GuidanceAction.Carry)
-            {
-                LoadedSeconds += Seconds;
-            }
-            else if (Action == GuidanceAction.Turn)
-            {
-                TurnSeconds += Seconds;
-            }
-            else if (Action == GuidanceAction.Grade)
-            {
-                GradeSeconds += Seconds;
-            }
-            else
-            {
-                EmptySeconds += Seconds;
-            }
-
-            CourseSegment Segment = new CourseSegment(
+            return new CourseSegment(
                 Action,
                 false,
                 Path.Outside,
@@ -3521,18 +3626,336 @@ namespace HaulBuilder
                 Path.LeadOutM,
                 Path.LeadInM,
                 Path.LengthM,
-                Seconds,
+                ConnectorSeconds(Path, Action, Clock),
                 Drawn);
-            Segments.Add(Segment);
-            Notes.Add(new ConnectorNote(
-                TripNumber,
-                Action,
-                Path.Word,
-                Path.LengthM,
-                Path.LeadOutM,
-                Path.LeadInM,
-                Path.Outside));
-            AppendPoints(Points, ref Sequence, Segment);
+        }
+
+        /// <summary>
+        /// Seconds for a connector. Arcs use the turn speed. Straights use the
+        /// loaded speed on a carry and the return speed everywhere else.
+        /// </summary>
+        /// <param name="Path">Connector to time.</param>
+        /// <param name="Action">What the connector is.</param>
+        /// <param name="Clock">Speeds and acceleration.</param>
+        /// <returns>Productive seconds, before field efficiency.</returns>
+        private static Double ConnectorSeconds
+            (
+            DubinsConnector.Path Path,
+            GuidanceAction Action,
+            TimeParams Clock
+            )
+        {
+            Double StraightMph = (Action == GuidanceAction.Carry)
+                ? Clock.LoadedTravelSpeedMph
+                : Clock.UnloadedTravelSpeedMph;
+            Double Seconds = 0.0;
+            foreach (DubinsConnector.Piece Piece in Path.Pieces)
+            {
+                if (Piece.Kind == DubinsConnector.PieceKind.Straight)
+                {
+                    Seconds += TimeModel.MoveTime(
+                        Piece.LengthM,
+                        StraightMph * Constants.MPH_TO_MPS,
+                        Clock.AccelerationTimeS,
+                        Clock.DecelerationTimeS);
+                }
+                else
+                {
+                    Seconds += Piece.LengthM / (TURN_SPEED_MPH * Constants.MPH_TO_MPS);
+                }
+            }
+
+            return Seconds;
+        }
+
+        /// <summary>
+        /// True when a centreline sample lies outside the field.
+        /// </summary>
+        /// <param name="Path">Connector to test.</param>
+        /// <param name="Inside">Field test.</param>
+        /// <param name="RadiusM">Turning radius.</param>
+        /// <returns>True when any sample is outside.</returns>
+        private static Boolean PathLeaves
+            (
+            DubinsConnector.Path Path,
+            Func<Double, Double, Boolean> Inside,
+            Double RadiusM
+            )
+        {
+            if (!Inside(Path.Start.X, Path.Start.Y))
+            {
+                return true;
+            }
+
+            DubinsConnector.Pose Cursor = Path.Start;
+            foreach (DubinsConnector.Piece Piece in Path.Pieces)
+            {
+                Int32 Count = Math.Max(1, (Int32)Math.Ceiling((Piece.LengthM / DubinsConnector.SAMPLE_M) - 1e-9));
+                for (Int32 Step = 1; Step <= Count; Step += 1)
+                {
+                    Double Distance = Piece.LengthM * Step / Count;
+                    DubinsConnector.Pose At = DubinsConnector.Advance(Cursor, Piece.Kind, Distance, RadiusM);
+                    if (!Inside(At.X, At.Y))
+                    {
+                        return true;
+                    }
+                }
+
+                Cursor = DubinsConnector.Advance(Cursor, Piece.Kind, Piece.LengthM, RadiusM);
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// Replaces a run of connectors that have no lane between them with one
+        /// Dubins path from the first start pose to the last end pose.
+        /// </summary>
+        /// <param name="Segments">Segments in drive order.</param>
+        /// <param name="Inside">Field test. Null does not test the field.</param>
+        /// <param name="Clock">Speeds and acceleration.</param>
+        /// <param name="RadiusM">Turning radius.</param>
+        /// <param name="ShorterOutside">True when the open path may replace a slower in-field path.</param>
+        /// <returns>The same list when nothing was stacked. Otherwise the collapsed list.</returns>
+        private static List<CourseSegment> CollapseStacked
+            (
+            List<CourseSegment> Segments,
+            Func<Double, Double, Boolean>? Inside,
+            TimeParams Clock,
+            Double RadiusM,
+            Boolean ShorterOutside
+            )
+        {
+            Boolean Stacked = false;
+            for (Int32 Index = 0; Index < (Segments.Count - 1); Index += 1)
+            {
+                if (!Segments[Index].IsLane && !Segments[Index + 1].IsLane)
+                {
+                    Stacked = true;
+                    break;
+                }
+            }
+
+            if (!Stacked)
+            {
+                return Segments;
+            }
+
+            List<CourseSegment> Result = new List<CourseSegment>(Segments.Count);
+            Int32 Cursor = 0;
+            while (Cursor < Segments.Count)
+            {
+                if (Segments[Cursor].IsLane)
+                {
+                    Result.Add(Segments[Cursor]);
+                    Cursor += 1;
+                    continue;
+                }
+
+                Int32 End = Cursor;
+                while ((End < Segments.Count) && !Segments[End].IsLane)
+                {
+                    End += 1;
+                }
+
+                if ((End - Cursor) < 2)
+                {
+                    Result.Add(Segments[Cursor]);
+                    Cursor = End;
+                    continue;
+                }
+
+                // The whole run is one departure. Pairwise joins would keep the waypoint the stack is removing.
+                if (!TrySegmentPose(Segments[Cursor], true, out DubinsConnector.Pose Start)
+                    || !TrySegmentPose(Segments[End - 1], false, out DubinsConnector.Pose Finish))
+                {
+                    for (Int32 Keep = Cursor; Keep < End; Keep += 1)
+                    {
+                        Result.Add(Segments[Keep]);
+                    }
+
+                    Cursor = End;
+                    continue;
+                }
+
+                CourseSegment? Built = MakeConnector(
+                    Start,
+                    Finish,
+                    StackAction(Segments, Cursor, End),
+                    Inside,
+                    Clock,
+                    RadiusM,
+                    ShorterOutside);
+                if (Built != null)
+                {
+                    Result.Add(Built);
+                }
+
+                Cursor = End;
+            }
+
+            return Result;
+        }
+
+        /// <summary>
+        /// Action charged for a collapsed stack. A return makes the whole path empty.
+        /// A turnaround with no return stays a turnaround.
+        /// </summary>
+        /// <param name="Segments">Segments in drive order.</param>
+        /// <param name="Start">First connector in the stack.</param>
+        /// <param name="End">Index just past the stack.</param>
+        /// <returns>The action to charge.</returns>
+        private static GuidanceAction StackAction
+            (
+            List<CourseSegment> Segments,
+            Int32 Start,
+            Int32 End
+            )
+        {
+            Boolean SawReturn = false;
+            Boolean SawTurn = false;
+            for (Int32 Index = Start; Index < End; Index += 1)
+            {
+                if (Segments[Index].Action == GuidanceAction.Return)
+                {
+                    SawReturn = true;
+                }
+                else if (Segments[Index].Action == GuidanceAction.Turn)
+                {
+                    SawTurn = true;
+                }
+            }
+
+            if (SawReturn)
+            {
+                return GuidanceAction.Return;
+            }
+
+            if (SawTurn)
+            {
+                return GuidanceAction.Turn;
+            }
+
+            return Segments[Start].Action;
+        }
+
+        /// <summary>
+        /// Start or end pose of a segment, taken from its samples.
+        /// </summary>
+        /// <param name="Segment">Segment to read.</param>
+        /// <param name="AtStart">True for the first sample. False for the last.</param>
+        /// <param name="Pose">The sample when one exists.</param>
+        /// <returns>False when the segment has no samples.</returns>
+        private static Boolean TrySegmentPose
+            (
+            CourseSegment Segment,
+            Boolean AtStart,
+            out DubinsConnector.Pose Pose
+            )
+        {
+            Pose = new DubinsConnector.Pose(0.0, 0.0, 0.0);
+            if (Segment.Pieces.Count == 0)
+            {
+                return false;
+            }
+
+            DrawnPiece Piece = AtStart ? Segment.Pieces[0] : Segment.Pieces[Segment.Pieces.Count - 1];
+            if (Piece.Samples.Count == 0)
+            {
+                return false;
+            }
+
+            Pose = AtStart ? Piece.Samples[0] : Piece.Samples[Piece.Samples.Count - 1];
+            return true;
+        }
+
+        /// <summary>
+        /// Rebuilds sample numbers, notes, and the six clocks from the segments.
+        /// Used after stacked connectors are replaced.
+        /// </summary>
+        /// <param name="Segments">Segments in drive order.</param>
+        /// <param name="Points">Guidance samples. Cleared and rebuilt.</param>
+        /// <param name="Notes">Connector notes. Cleared and rebuilt.</param>
+        /// <param name="TripNumber">1-based trip number.</param>
+        /// <param name="Sequence">Next sample number. Reset to 1.</param>
+        /// <param name="CutSeconds">Cut seconds. Replaced.</param>
+        /// <param name="LoadedSeconds">Loaded-connector seconds. Replaced.</param>
+        /// <param name="SpreadSeconds">Spread seconds. Replaced.</param>
+        /// <param name="TurnSeconds">Turnaround seconds. Replaced.</param>
+        /// <param name="GradeSeconds">Grade seconds. Replaced.</param>
+        /// <param name="EmptySeconds">Empty-connector seconds. Replaced.</param>
+        private static void RetotalCourse
+            (
+            List<CourseSegment> Segments,
+            List<GuidancePoint> Points,
+            List<ConnectorNote> Notes,
+            Int32 TripNumber,
+            ref Int32 Sequence,
+            ref Double CutSeconds,
+            ref Double LoadedSeconds,
+            ref Double SpreadSeconds,
+            ref Double TurnSeconds,
+            ref Double GradeSeconds,
+            ref Double EmptySeconds
+            )
+        {
+            Points.Clear();
+            Notes.Clear();
+            Sequence = 1;
+            CutSeconds = 0.0;
+            LoadedSeconds = 0.0;
+            SpreadSeconds = 0.0;
+            TurnSeconds = 0.0;
+            GradeSeconds = 0.0;
+            EmptySeconds = 0.0;
+            foreach (CourseSegment Segment in Segments)
+            {
+                if (Segment.IsLane)
+                {
+                    if (Segment.Action == GuidanceAction.Cut)
+                    {
+                        CutSeconds += Segment.Seconds;
+                    }
+                    else if (Segment.Action == GuidanceAction.Fill)
+                    {
+                        SpreadSeconds += Segment.Seconds;
+                    }
+                    else
+                    {
+                        GradeSeconds += Segment.Seconds;
+                    }
+                }
+                else
+                {
+                    if (Segment.Action == GuidanceAction.Carry)
+                    {
+                        LoadedSeconds += Segment.Seconds;
+                    }
+                    else if (Segment.Action == GuidanceAction.Turn)
+                    {
+                        TurnSeconds += Segment.Seconds;
+                    }
+                    else if (Segment.Action == GuidanceAction.Grade)
+                    {
+                        GradeSeconds += Segment.Seconds;
+                    }
+                    else
+                    {
+                        EmptySeconds += Segment.Seconds;
+                    }
+
+                    Notes.Add(new ConnectorNote(
+                        TripNumber,
+                        Segment.Action,
+                        Segment.Word,
+                        Segment.LengthM,
+                        Segment.LeadOutM,
+                        Segment.LeadInM,
+                        Segment.Outside));
+                }
+
+                AppendPoints(Points, ref Sequence, Segment);
+            }
         }
 
         /// <summary>
@@ -3633,6 +4056,7 @@ namespace HaulBuilder
         /// <summary>
         /// Drives a side of the trip. A correcting gap on the same line is a
         /// straight with the blade up. Every other gap is a Dubins connector.
+        /// A correcting line change takes the faster of the in-field path and the open path.
         /// </summary>
         /// <param name="Segments">Segments being built.</param>
         /// <param name="Points">Guidance samples.</param>
@@ -3656,6 +4080,7 @@ namespace HaulBuilder
         /// <param name="LaneSampleM">Lane sample spacing.</param>
         /// <param name="TripNumber">1-based trip number.</param>
         /// <param name="BladeWidthM">Blade width. Zero does not steer a short joint straight.</param>
+        /// <param name="ShorterOutside">True when a line change may take the open path if it is faster.</param>
         /// <returns>The pose at the end of the last lane, or <paramref name="Cursor"/> when there are none.</returns>
         private static DubinsConnector.Pose? DriveSide
             (
@@ -3680,7 +4105,8 @@ namespace HaulBuilder
             Double RadiusM,
             Double LaneSampleM,
             Int32 TripNumber,
-            Double BladeWidthM
+            Double BladeWidthM,
+            Boolean ShorterOutside
             )
         {
             for (Int32 Index = 0; Index < Lanes.Count; Index += 1)
@@ -3706,7 +4132,7 @@ namespace HaulBuilder
                         AddConnector(
                             Segments, Points, Notes, ref Sequence, ref LoadedSeconds, ref TurnSeconds,
                             ref GradeSeconds, ref EmptySeconds, Cursor.Value, Lane.Start,
-                            JoinAction, Inside, Clock, RadiusM, TripNumber);
+                            JoinAction, Inside, Clock, RadiusM, TripNumber, ShorterOutside);
                     }
                 }
 
@@ -4807,18 +5233,18 @@ namespace HaulBuilder
         }
 
         /// <summary>
-        /// Folds a short or connector-heavy correcting trip into an adjacent
-        /// line when the bowl can take the load. Otherwise drops it when every
-        /// cell is already within the land-plane tolerance.
+        /// Folds a short or connector-heavy correcting trip into a later
+        /// correcting trip whose route passes within two radii, when the bowl
+        /// can take the load. Otherwise drops it when every cell is already
+        /// within the land-plane tolerance.
         /// </summary>
         /// <param name="Passes">Trips in planner order. Not mutated.</param>
         /// <param name="Origin">Original index of each trip.</param>
         /// <param name="Courses">Courses used for the leftover test.</param>
-        /// <param name="Cuts">Chosen cut lanes, for the line axis.</param>
-        /// <param name="Fills">Chosen spread lanes, for the line axis.</param>
+        /// <param name="Cuts">Chosen cut lanes. The fragment the route must pass.</param>
+        /// <param name="Fills">Chosen spread lanes. The fragment the route must pass.</param>
         /// <param name="BowlCapacityM3">Scraper bowl, cubic metres.</param>
         /// <param name="RadiusM">Turning radius.</param>
-        /// <param name="BladeWidthM">Blade width.</param>
         /// <param name="NextPasses">Trips after the merge and the drops.</param>
         /// <param name="NextOrigin">Original index of each remaining trip.</param>
         /// <param name="Merged">How many trips were merged.</param>
@@ -4833,7 +5259,6 @@ namespace HaulBuilder
             List<WorkLane>[] Fills,
             Double BowlCapacityM3,
             Double RadiusM,
-            Double BladeWidthM,
             out List<Pass> NextPasses,
             out Int32[] NextOrigin,
             out Int32 Merged,
@@ -4892,8 +5317,8 @@ namespace HaulBuilder
                     continue;
                 }
 
-                Int32 Target = AdjacentTrip(
-                    Source, Working, Removed, Cuts, Fills, BladeWidthM, BowlBcy);
+                Int32 Target = LaterRoute(
+                    Source, Working, Removed, Courses, Cuts, Fills, RadiusM, BowlBcy);
                 if (Target >= 0)
                 {
                     Working[Target] = CombinePasses(Working[Target], Working[Source]);
@@ -4928,40 +5353,193 @@ namespace HaulBuilder
         }
 
         /// <summary>
-        /// Nearest correcting trip on a parallel line, close enough to be the
-        /// next pass, whose bowl still has room for this load.
+        /// Clips every correcting lane to the station span of its cells.
+        /// </summary>
+        /// <param name="Lanes">Lanes in drive order.</param>
+        /// <param name="Grid">Field grid. Cell centres are the fragment positions.</param>
+        /// <returns>Lanes that start and end on their fragments.</returns>
+        private static List<WorkLane> ClipToFragments
+            (
+            List<WorkLane> Lanes,
+            Grid Grid
+            )
+        {
+            List<WorkLane> Clipped = new List<WorkLane>(Lanes.Count);
+            foreach (WorkLane Lane in Lanes)
+            {
+                Clipped.Add(ClipLaneToCells(Lane, Grid));
+            }
+
+            return Clipped;
+        }
+
+        /// <summary>
+        /// Drops centreline that runs past the first and last cell. The cells stay.
+        /// A bend is not involved: this runs before a direction is chosen.
+        /// </summary>
+        /// <param name="Lane">Lane whose centreline may run out to the field edge.</param>
+        /// <param name="Grid">Field grid.</param>
+        /// <returns>The same lane when it already sits on its cells.</returns>
+        private static WorkLane ClipLaneToCells
+            (
+            WorkLane Lane,
+            Grid Grid
+            )
+        {
+            if ((Lane.Cells.Count == 0) || (Lane.Centerline.Count < 2))
+            {
+                return Lane;
+            }
+
+            Double Poly = PolylineLength(Lane.Centerline);
+            if (Poly <= LINE_POINT_M)
+            {
+                return Lane;
+            }
+
+            Double MinS = Poly;
+            Double MaxS = 0.0;
+            Boolean Any = false;
+            foreach (((Int32 Bx, Int32 By) Cell, Double DepthM) Entry in Lane.Cells)
+            {
+                (Double X, Double Y) Center = Grid.CellCenterXy(Entry.Cell.Bx, Entry.Cell.By);
+                if (TryNearestStation(Lane.Centerline, Center.X, Center.Y, out Double Station))
+                {
+                    Any = true;
+                    if (Station < MinS)
+                    {
+                        MinS = Station;
+                    }
+
+                    if (Station > MaxS)
+                    {
+                        MaxS = Station;
+                    }
+                }
+            }
+
+            if (!Any)
+            {
+                return Lane;
+            }
+
+            Double Pad = Grid.GridSizeM * FRAGMENT_PAD_CELLS;
+            Double KeepStart = Math.Max(0.0, MinS - Pad);
+            Double KeepEnd = Math.Min(Poly, MaxS + Pad);
+            if ((KeepStart <= LINE_POINT_M) && (KeepEnd >= (Poly - LINE_POINT_M)))
+            {
+                return Lane;
+            }
+
+            List<(Double X, Double Y)> Kept = SlicePolyline(Lane.Centerline, KeepStart, KeepEnd);
+            if (Kept.Count < 2)
+            {
+                return Lane;
+            }
+
+            WorkLane Fresh = WorkLane.FromCenterline(Kept, Lane.Cells, Lane.Start.HeadingRad);
+            if (Lane.Deferred.Count == 0)
+            {
+                return Fresh;
+            }
+
+            return new WorkLane(
+                Fresh.Centerline,
+                Fresh.Start,
+                Fresh.End,
+                Lane.Cells,
+                Fresh.LengthM,
+                Fresh.StraightLengthM,
+                0.0,
+                new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>(Lane.Deferred));
+        }
+
+        /// <summary>
+        /// Station of the closest point on a polyline.
+        /// </summary>
+        /// <param name="Line">Polyline in drive order.</param>
+        /// <param name="X">Easting, metres.</param>
+        /// <param name="Y">Northing, metres.</param>
+        /// <param name="Station">Distance from the start of the polyline.</param>
+        /// <returns>False when the polyline has no segment.</returns>
+        private static Boolean TryNearestStation
+            (
+            IReadOnlyList<(Double X, Double Y)> Line,
+            Double X,
+            Double Y,
+            out Double Station
+            )
+        {
+            Station = 0.0;
+            Double Best = Double.MaxValue;
+            Double Cursor = 0.0;
+            Boolean Found = false;
+            for (Int32 Index = 1; Index < Line.Count; Index += 1)
+            {
+                Double Dx = Line[Index].X - Line[Index - 1].X;
+                Double Dy = Line[Index].Y - Line[Index - 1].Y;
+                Double Segment = Math.Sqrt((Dx * Dx) + (Dy * Dy));
+                if (Segment > 1e-9)
+                {
+                    Double T = (((X - Line[Index - 1].X) * Dx) + ((Y - Line[Index - 1].Y) * Dy)) / (Segment * Segment);
+                    if (T < 0.0)
+                    {
+                        T = 0.0;
+                    }
+
+                    if (T > 1.0)
+                    {
+                        T = 1.0;
+                    }
+
+                    Double Px = Line[Index - 1].X + (T * Dx);
+                    Double Py = Line[Index - 1].Y + (T * Dy);
+                    Double Dist = ((X - Px) * (X - Px)) + ((Y - Py) * (Y - Py));
+                    if (Dist < Best)
+                    {
+                        Best = Dist;
+                        Station = Cursor + (T * Segment);
+                        Found = true;
+                    }
+                }
+
+                Cursor += Segment;
+            }
+
+            return Found;
+        }
+
+        /// <summary>
+        /// Closest later correcting trip whose route passes within two radii of
+        /// this fragment and whose bowl still has room.
         /// </summary>
         /// <param name="Source">Leftover trip index.</param>
         /// <param name="Passes">Current passes, including earlier merges.</param>
         /// <param name="Removed">Trips already merged or dropped.</param>
-        /// <param name="Cuts">Cut lanes from the first plan.</param>
-        /// <param name="Fills">Spread lanes from the first plan.</param>
-        /// <param name="BladeWidthM">Blade width.</param>
+        /// <param name="Courses">Routes from the first plan.</param>
+        /// <param name="Cuts">Cut lanes of each trip.</param>
+        /// <param name="Fills">Spread lanes of each trip.</param>
+        /// <param name="RadiusM">Turning radius.</param>
         /// <param name="BowlBcy">Bowl capacity in bank cubic yards.</param>
-        /// <returns>The neighbour index, or -1 when none can take the load.</returns>
-        private static Int32 AdjacentTrip
+        /// <returns>The trip index, or -1 when none can take the load.</returns>
+        private static Int32 LaterRoute
             (
             Int32 Source,
             List<Pass> Passes,
             Boolean[] Removed,
+            TripCourse[] Courses,
             List<WorkLane>[] Cuts,
             List<WorkLane>[] Fills,
-            Double BladeWidthM,
+            Double RadiusM,
             Double BowlBcy
             )
         {
-            if (!TryAxis(Cuts[Source], Fills[Source], out DubinsConnector.Pose From, out Double FromHeading))
-            {
-                return -1;
-            }
-
-            Double Band = ADJACENT_LINE_BLADES * BladeWidthM;
-            Double Parallel = PARALLEL_HEADING_DEG * Math.PI / Constants.DEGREES_PER_HALF_TURN;
+            Double Reach = MERGE_ROUTE_RADII * RadiusM;
             Int32 Best = -1;
-            Double BestLateral = 0.0;
-            for (Int32 Index = 0; Index < Passes.Count; Index += 1)
+            Double BestDist = 0.0;
+            for (Int32 Index = Source + 1; Index < Passes.Count; Index += 1)
             {
-                if ((Index == Source) || Removed[Index] || (Passes[Index].Stage != HaulStage.Correcting))
+                if (Removed[Index] || (Passes[Index].Stage != HaulStage.Correcting))
                 {
                     continue;
                 }
@@ -4971,33 +5549,16 @@ namespace HaulBuilder
                     continue;
                 }
 
-                if (!TryAxis(Cuts[Index], Fills[Index], out DubinsConnector.Pose To, out Double ToHeading))
+                if (!RoutePassesNear(Cuts[Source], Fills[Source], Courses[Index].Points, Reach, out Double Dist))
                 {
                     continue;
                 }
 
-                Double Turn = Math.Abs(DubinsConnector.WrapPi(ToHeading - FromHeading));
-                Boolean SameWay = Turn <= Parallel;
-                Boolean Opposite = Turn >= (Math.PI - Parallel);
-                if (!SameWay && !Opposite)
-                {
-                    continue;
-                }
-
-                Double Dx = To.X - From.X;
-                Double Dy = To.Y - From.Y;
-                Double Lateral = Math.Abs((Dx * -Math.Sin(FromHeading)) + (Dy * Math.Cos(FromHeading)));
-                Double Along = Math.Abs((Dx * Math.Cos(FromHeading)) + (Dy * Math.Sin(FromHeading)));
-                Double Reach = Math.Max(AxisLength(Cuts[Source], Fills[Source]), AxisLength(Cuts[Index], Fills[Index]));
-                if ((Lateral > Band) || (Lateral < (0.25 * BladeWidthM)) || (Along > (Reach + Band)))
-                {
-                    continue;
-                }
-
-                if ((Best < 0) || (Lateral < BestLateral))
+                // The closest route takes the fragment. An equal distance keeps the earlier trip.
+                if ((Best < 0) || (Dist < BestDist))
                 {
                     Best = Index;
-                    BestLateral = Lateral;
+                    BestDist = Dist;
                 }
             }
 
@@ -5005,69 +5566,167 @@ namespace HaulBuilder
         }
 
         /// <summary>
-        /// Midpoint and heading of the first cut lane, or the first spread lane.
+        /// True when any sample of a route comes within <paramref name="Reach"/> of a fragment lane.
         /// </summary>
-        /// <param name="Cuts">Cut lanes.</param>
-        /// <param name="Fills">Spread lanes.</param>
-        /// <param name="Mid">Midpoint pose.</param>
-        /// <param name="Heading">Travel heading, radians.</param>
-        /// <returns>False when the trip has no lane.</returns>
-        private static Boolean TryAxis
+        /// <param name="Cuts">Fragment cut lanes.</param>
+        /// <param name="Fills">Fragment spread lanes.</param>
+        /// <param name="Route">Later trip's guidance samples.</param>
+        /// <param name="Reach">Metres.</param>
+        /// <param name="Best">Closest approach, when one is inside the reach.</param>
+        /// <returns>False when every sample is farther than the reach.</returns>
+        private static Boolean RoutePassesNear
             (
             List<WorkLane> Cuts,
             List<WorkLane> Fills,
-            out DubinsConnector.Pose Mid,
-            out Double Heading
+            IReadOnlyList<GuidancePoint> Route,
+            Double Reach,
+            out Double Best
             )
         {
-            WorkLane? Lane = null;
-            if ((Cuts != null) && (Cuts.Count > 0))
+            Best = Double.MaxValue;
+            if ((Route == null) || (Route.Count == 0))
             {
-                Lane = Cuts[0];
-            }
-            else if ((Fills != null) && (Fills.Count > 0))
-            {
-                Lane = Fills[0];
-            }
-
-            if (Lane == null)
-            {
-                Mid = new DubinsConnector.Pose(0.0, 0.0, 0.0);
-                Heading = 0.0;
                 return false;
             }
 
-            Mid = new DubinsConnector.Pose(
-                (Lane.Start.X + Lane.End.X) * 0.5,
-                (Lane.Start.Y + Lane.End.Y) * 0.5,
-                Lane.Start.HeadingRad);
-            Heading = Lane.Start.HeadingRad;
+            Double Reach2 = Reach * Reach;
+            Boolean Hit = false;
+            foreach (GuidancePoint Point in Route)
+            {
+                Double Dist2 = DistanceToLanesSquared(Cuts, Fills, Point.X, Point.Y);
+                if (Dist2 < Best)
+                {
+                    Best = Dist2;
+                }
+
+                if (Dist2 <= Reach2)
+                {
+                    Hit = true;
+                }
+            }
+
+            if (!Hit)
+            {
+                return false;
+            }
+
+            Best = Math.Sqrt(Best);
             return true;
         }
 
         /// <summary>
-        /// Length of the first cut lane, or the first spread lane.
+        /// Squared distance from a point to the nearest fragment centreline.
+        /// Lanes are not joined, so the gap between a cut and a spread is not a shortcut.
         /// </summary>
         /// <param name="Cuts">Cut lanes.</param>
         /// <param name="Fills">Spread lanes.</param>
-        /// <returns>Metres. Zero when there is no lane.</returns>
-        private static Double AxisLength
+        /// <param name="X">Easting, metres.</param>
+        /// <param name="Y">Northing, metres.</param>
+        /// <returns>Squared metres. A huge value when the fragment has no centreline.</returns>
+        private static Double DistanceToLanesSquared
             (
             List<WorkLane> Cuts,
-            List<WorkLane> Fills
+            List<WorkLane> Fills,
+            Double X,
+            Double Y
             )
         {
-            if ((Cuts != null) && (Cuts.Count > 0))
+            Double Best = Double.MaxValue;
+            Best = CloserLane(Cuts, X, Y, Best);
+            Best = CloserLane(Fills, X, Y, Best);
+            return Best;
+        }
+
+        /// <summary>
+        /// Keeps the closer of <paramref name="Best"/> and these lanes.
+        /// </summary>
+        /// <param name="Lanes">Lanes to measure.</param>
+        /// <param name="X">Easting, metres.</param>
+        /// <param name="Y">Northing, metres.</param>
+        /// <param name="Best">Squared distance so far.</param>
+        /// <returns>The smaller squared distance.</returns>
+        private static Double CloserLane
+            (
+            List<WorkLane> Lanes,
+            Double X,
+            Double Y,
+            Double Best
+            )
+        {
+            if (Lanes == null)
             {
-                return Cuts[0].LengthM;
+                return Best;
             }
 
-            if ((Fills != null) && (Fills.Count > 0))
+            foreach (WorkLane Lane in Lanes)
             {
-                return Fills[0].LengthM;
+                Double Dist2 = PointToPolylineSquared(Lane.Centerline, X, Y);
+                if (Dist2 < Best)
+                {
+                    Best = Dist2;
+                }
             }
 
-            return 0.0;
+            return Best;
+        }
+
+        /// <summary>
+        /// Squared distance from a point to a polyline.
+        /// </summary>
+        /// <param name="Line">Polyline. A single point is that point.</param>
+        /// <param name="X">Easting, metres.</param>
+        /// <param name="Y">Northing, metres.</param>
+        /// <returns>Squared metres.</returns>
+        private static Double PointToPolylineSquared
+            (
+            IReadOnlyList<(Double X, Double Y)> Line,
+            Double X,
+            Double Y
+            )
+        {
+            if ((Line == null) || (Line.Count == 0))
+            {
+                return Double.MaxValue;
+            }
+
+            if (Line.Count == 1)
+            {
+                Double Dx = X - Line[0].X;
+                Double Dy = Y - Line[0].Y;
+                return (Dx * Dx) + (Dy * Dy);
+            }
+
+            Double Best = Double.MaxValue;
+            for (Int32 Index = 1; Index < Line.Count; Index += 1)
+            {
+                Double Sx = Line[Index].X - Line[Index - 1].X;
+                Double Sy = Line[Index].Y - Line[Index - 1].Y;
+                Double Segment = (Sx * Sx) + (Sy * Sy);
+                Double T = 0.0;
+                if (Segment > 1e-18)
+                {
+                    T = (((X - Line[Index - 1].X) * Sx) + ((Y - Line[Index - 1].Y) * Sy)) / Segment;
+                    if (T < 0.0)
+                    {
+                        T = 0.0;
+                    }
+
+                    if (T > 1.0)
+                    {
+                        T = 1.0;
+                    }
+                }
+
+                Double Px = Line[Index - 1].X + (T * Sx);
+                Double Py = Line[Index - 1].Y + (T * Sy);
+                Double Dist = ((X - Px) * (X - Px)) + ((Y - Py) * (Y - Py));
+                if (Dist < Best)
+                {
+                    Best = Dist;
+                }
+            }
+
+            return Best;
         }
 
         /// <summary>
