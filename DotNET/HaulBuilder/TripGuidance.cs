@@ -845,6 +845,33 @@ namespace HaulBuilder
             public Boolean SweepUp { get; set; }
 
             /// <summary>
+            /// Gets or sets whether this trip is finishing work.
+            /// Finishing follows sweep-up.
+            /// </summary>
+            public Boolean Finishing { get; set; }
+
+            /// <summary>
+            /// Gets or sets whether the cells were already a flow ribbon.
+            /// A flow trip that is not a ribbon is a band.
+            /// </summary>
+            public Boolean RibbonOrder { get; set; }
+
+            /// <summary>Gets or sets the cut load in bank cubic yards.</summary>
+            public Double CutBcy { get; set; }
+
+            /// <summary>
+            /// Gets or sets whether the loaded connector crosses a fill cell
+            /// other than the cell where the spread starts.
+            /// </summary>
+            public Boolean LoadedCrossesFill { get; set; }
+
+            /// <summary>
+            /// Gets or sets the stamp of the plan this trip was saved with.
+            /// The viewer compares it with the stamp in the plan header.
+            /// </summary>
+            public String PlanStamp { get; set; } = "";
+
+            /// <summary>
             /// Productive seconds of the six components, before field efficiency.
             /// </summary>
             public Double ProductiveSeconds
@@ -1087,13 +1114,41 @@ namespace HaulBuilder
 
                 Double Productive = Cut + Loaded + Spread + Turn + Grade + Empty;
                 Double Charged = Productive / Factor;
+                // Hours, trip count, and the stamp all come from this trip list.
+                PlanOrder.Require(this.Trips, this.DriveOrder);
+                Double PlanHours = PlanOrder.ChargedHours(this.Trips, Factor);
+                if (Math.Abs(PlanHours - (Charged / Constants.SECONDS_PER_HOUR)) > 1e-6)
+                {
+                    throw new InvalidOperationException("Plan hours do not match the trips.");
+                }
+
+                String Stamp = PlanOrder.Stamp(this.Trips, this.DriveOrder, PlanHours);
+                String Warning = PlanOrder.ViewerWarning(Stamp, this.Trips, this.DriveOrder, PlanHours);
                 StringBuilder Text = new StringBuilder();
                 Text.AppendLine("Guidance with Dubins connectors and a grade pass");
                 Text.AppendLine(String.Format(
                     CultureInfo.InvariantCulture,
+                    "Trips {0}",
+                    this.Trips.Count));
+                Text.AppendLine(String.Format(
+                    CultureInfo.InvariantCulture,
+                    "Hours {0:F3}",
+                    PlanHours));
+                Text.AppendLine(String.Format(
+                    CultureInfo.InvariantCulture,
+                    "Stamp {0}",
+                    Stamp));
+                if (Warning.Length > 0)
+                {
+                    Text.AppendLine(Warning);
+                }
+
+                Text.AppendLine(String.Format(
+                    CultureInfo.InvariantCulture,
                     "Previous build {0:F3} h    this build {1:F3} h",
                     PreviousHours,
-                    Charged / Constants.SECONDS_PER_HOUR));
+                    PlanHours));
+                PlanOrder.AppendDriveSample(Text, this.Trips, this.DriveOrder);
                 Text.AppendLine(String.Format(
                     CultureInfo.InvariantCulture,
                     "Field efficiency {0:F2}. Hours below include it.",
@@ -1556,6 +1611,14 @@ namespace HaulBuilder
                     Grid.AreaM2,
                     BowlCapacityM3);
                 Rebuilt[Index].SweepUp = Courses[Index].SweepUp;
+                Rebuilt[Index].Finishing = Courses[Index].Finishing;
+                Rebuilt[Index].RibbonOrder = Courses[Index].RibbonOrder;
+                Rebuilt[Index].CutBcy = Courses[Index].CutBcy;
+                // The loaded path is the one that is driven, after the empty return is rebuilt.
+                Rebuilt[Index].LoadedCrossesFill = PlanOrder.LoadedCrossesFill(
+                    Rebuilt[Index],
+                    Grid,
+                    Active[Index].FillCells);
                 Rebuilt[Index].ExecutionIndex = Step + 1;
             }
 
@@ -1652,7 +1715,7 @@ namespace HaulBuilder
                 : 1.0;
             Double BeforeHours = (EmptyBeforeS / Factor) / Constants.SECONDS_PER_HOUR;
             Double AfterHours = (EmptyAfterS / Factor) / Constants.SECONDS_PER_HOUR;
-            return new JobGuidance(
+            JobGuidance Job = new JobGuidance(
                 Trips,
                 Surface,
                 Snapshot,
@@ -1664,6 +1727,18 @@ namespace HaulBuilder
                 Merged,
                 Dropped,
                 DeferredFragments);
+            // A stage that goes backwards fails the run before the plan is returned.
+            PlanOrder.Require(Job.Trips, Job.DriveOrder);
+            String Stamp = PlanOrder.Stamp(
+                Job.Trips,
+                Job.DriveOrder,
+                PlanOrder.ChargedHours(Job.Trips, Factor));
+            foreach (TripCourse Trip in Job.Trips)
+            {
+                Trip.PlanStamp = Stamp;
+            }
+
+            return Job;
             }
             finally
             {
@@ -4899,11 +4974,12 @@ namespace HaulBuilder
         }
 
         /// <summary>
-        /// Orders trips to shorten empty returns, inside each stage. Flow stays
-        /// before clusters, thin-cut, and correcting. Two trips that share a
-        /// cut or fill cell keep the planner's relative order. The length is
-        /// the Dubins length with no field mask. The driven return still uses
-        /// the mask.
+        /// Orders trips to shorten empty returns, inside each phase. Flow,
+        /// clusters, and thin-cut stay before correcting, sweep-up stays after
+        /// correcting, and finishing stays last. Two trips that share a cut or
+        /// fill cell keep the planner's relative order. The length is the
+        /// Dubins length with no field mask. The driven return still uses the
+        /// mask.
         /// </summary>
         /// <param name="Courses">Courses in planner order, used for the departure pose.</param>
         /// <param name="Cuts">Chosen cut lanes, for each trip's cut start.</param>
@@ -4938,7 +5014,8 @@ namespace HaulBuilder
                 Cells[Index] = CellsOf(Passes[Index]);
             }
 
-            // Stage blocks stay in enum order. Finishing is not a separate stage.
+            // Flow, clusters, and thin-cut share one phase and may interleave.
+            // Correcting follows them, then sweep-up, then finishing.
             HaulStage[] Stages = new HaulStage[]
             {
                 HaulStage.Flow,
@@ -4949,8 +5026,8 @@ namespace HaulBuilder
             Boolean[] Used = new Boolean[Count];
             Int32 Slot = 0;
             DubinsConnector.Pose? Incoming = null;
-            // Band 0 is the planned stages. Band 1 is the sweep-up block after correcting.
-            for (Int32 Band = 0; Band < 2; Band += 1)
+            // Band 0 is the planned stages. Band 1 is sweep-up. Band 2 is finishing.
+            for (Int32 Band = 0; Band < 3; Band += 1)
             {
             foreach (HaulStage Stage in Stages)
             {
@@ -4967,9 +5044,17 @@ namespace HaulBuilder
                         continue;
                     }
 
-                    // Sweep-up trips stay after the correcting pass that deferred them.
-                    if (Courses[Index].SweepUp != (Band == 1))
+                    if (Band == 2)
                     {
+                        if (!Courses[Index].Finishing)
+                        {
+                            continue;
+                        }
+                    }
+                    else if (Courses[Index].Finishing || (Courses[Index].SweepUp != (Band == 1)))
+                    {
+                        // Finishing waits until sweep-up is done.
+                        // Sweep-up stays after the correcting pass that deferred it.
                         continue;
                     }
 
@@ -5091,6 +5176,12 @@ namespace HaulBuilder
                     if (Courses[Left].SweepUp != Courses[Right].SweepUp)
                     {
                         // A sweep-up trip stays after the correcting pass.
+                        continue;
+                    }
+
+                    if (Courses[Left].Finishing != Courses[Right].Finishing)
+                    {
+                        // Finishing stays after sweep-up.
                         continue;
                     }
 
@@ -5595,6 +5686,9 @@ namespace HaulBuilder
                     BowlCapacityM3,
                     DeferEnds);
                 Courses[Index] = Choice.Course;
+                Courses[Index].Finishing = Passes[Index].Finishing;
+                Courses[Index].RibbonOrder = Passes[Index].RibbonOrder;
+                Courses[Index].CutBcy = Passes[Index].LoadBcy;
                 ChosenCuts[Index] = Choice.Cuts;
                 ChosenFills[Index] = Choice.Fills;
                 CutLines[Index] = Choice.CutLines;

@@ -155,6 +155,12 @@ namespace HaulBuilder
         public HaulStage Stage { get; set; } = HaulStage.Flow;
 
         /// <summary>
+        /// Gets or sets whether this trip is the finishing pass.
+        /// Finishing trips are driven after sweep-up.
+        /// </summary>
+        public Boolean Finishing { get; set; }
+
+        /// <summary>
         /// Gets or sets whether one cell may appear once per lift.
         /// A cluster haul records each lift, and a cell deeper than one pass has several.
         /// </summary>

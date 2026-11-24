@@ -32,6 +32,7 @@ namespace HaulBuilder
         /// <param name="Path">PNG path.</param>
         /// <param name="BladeM">Blade width, metres.</param>
         /// <param name="PixelsPerCell">Pixels across one cell.</param>
+        /// <param name="ShownStamp">Stamp from the plan header. Empty draws the trip's own stamp.</param>
         static public void Save
             (
             Grid Grid,
@@ -39,7 +40,8 @@ namespace HaulBuilder
             TripGuidance.TripCourse Trip,
             String Path,
             Double BladeM,
-            Int32 PixelsPerCell
+            Int32 PixelsPerCell,
+            String ShownStamp = ""
             )
         {
             Image<Rgba32> Field = Render.DiffToImageDigitize(Surface, Grid.Valid, PixelsPerCell);
@@ -100,7 +102,10 @@ namespace HaulBuilder
                 }
 
                 CropToPath(Image, Grid, PixelsPerCell, OriginX, OriginY, Trip);
-                DrawLabel(Image, Trip.TripNumber, Trip.ExecutionIndex);
+                Boolean Mismatch = (ShownStamp != null)
+                    && (ShownStamp.Length > 0)
+                    && !String.Equals(ShownStamp, Trip.PlanStamp, StringComparison.Ordinal);
+                DrawLabel(Image, Trip.TripNumber, Trip.ExecutionIndex, Trip.PlanStamp, Mismatch);
                 Image.SaveAsPng(Path);
             }
         }
@@ -618,22 +623,35 @@ namespace HaulBuilder
         }
 
         /// <summary>
-        /// Paints the original trip number and the 1-based execution index in
-        /// the corner of the sheet, after the path has been cropped.
+        /// Paints the trip number, the drive position, and the plan stamp.
+        /// A red label means the header stamp does not match this trip.
         /// </summary>
         /// <param name="Image">The sheet.</param>
         /// <param name="TripNumber">Original 1-based trip number.</param>
-        /// <param name="ExecutionIndex">1-based position in drive order. Zero prints a dash.</param>
+        /// <param name="ExecutionIndex">1-based position in drive order. Zero prints the trip number only.</param>
+        /// <param name="PlanStamp">Stamp copied from the saved plan. Empty draws none.</param>
+        /// <param name="Mismatch">True when the header stamp is not <paramref name="PlanStamp"/>.</param>
         private static void DrawLabel
             (
             Image<Rgba32> Image,
             Int32 TripNumber,
-            Int32 ExecutionIndex
+            Int32 ExecutionIndex,
+            String PlanStamp,
+            Boolean Mismatch
             )
         {
             String Text = (ExecutionIndex > 0)
                 ? String.Format(System.Globalization.CultureInfo.InvariantCulture, "{0}/{1}", TripNumber, ExecutionIndex)
                 : TripNumber.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            if ((PlanStamp != null) && (PlanStamp.Length > 0))
+            {
+                Text = String.Format(
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    "{0}/{1}",
+                    Text,
+                    PlanStamp);
+            }
+
             const Int32 Scale = 2;
             const Int32 Pad = 3;
             Int32 Width = (Text.Length * 6 * Scale) + (Pad * 2);
@@ -648,11 +666,13 @@ namespace HaulBuilder
                 Height = Image.Height;
             }
 
+            // A red label is the warning that the header stamp is not this trip's plan.
+            Rgba32 Paper = Mismatch ? new Rgba32(255, 80, 80) : new Rgba32(255, 255, 255);
             for (Int32 Y = 0; Y < Height; Y += 1)
             {
                 for (Int32 X = 0; X < Width; X += 1)
                 {
-                    Image[X, Y] = new Rgba32(255, 255, 255);
+                    Image[X, Y] = Paper;
                 }
             }
 
