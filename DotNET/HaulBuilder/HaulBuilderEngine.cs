@@ -107,6 +107,9 @@ namespace HaulBuilder
             Grid Grid = GridMath.BuildGrid(Field, Opt.GridSizeFt, Opt.SwellFactor, Opt.CutFillRatio, Opt.MaxDepthMm);
             Result.Field = Field;
             Result.Grid = Grid;
+            // The relative road surface does not depend on the field fit, so the
+            // extra fill is reserved before flow and the early target leaves it unbuilt.
+            RoadPadSurface? Roads = BeginRoads(Result, Grid, Field, Opt);
 
             ObstacleField Obstacles = ResolveExclusions(Result, Field, Grid, Opt);
             Double BalanceThreshold = Obstacles.Active ? Double.PositiveInfinity : Balance.DEFAULT_IMBALANCE_THRESHOLD;
@@ -132,6 +135,11 @@ namespace HaulBuilder
 
             if (Opt.SkipHaulPlan)
             {
+                if (Roads != null)
+                {
+                    PublishRoadDesign(Result, Grid, Flow, Roads, Opt);
+                }
+
                 Result.Messages.Add("Planning stages skipped because SkipHaulPlan was set.");
                 return Result;
             }
@@ -149,6 +157,12 @@ namespace HaulBuilder
             {
                 HaulWorkLedger Ledger = HaulWorkLedger.Build(
                     Grid, Opt.ToleranceMm);
+                if (Roads != null)
+                {
+                    // Field stages do not fill the pan or cut the trim the road stage keeps.
+                    Ledger = Ledger.ReleaseRoadStage(Roads.PanM, Roads.StageCutM);
+                }
+
                 HaulOptimizationResult Optimized =
                     FlowRibbonSearch.Optimize(
                         Grid,
@@ -647,6 +661,13 @@ namespace HaulBuilder
                     PrecomputedGuidancePlan,
                     GuidanceProgress,
                     CancellationToken);
+            }
+
+            if (Roads != null)
+            {
+                // Field guidance has already run. Road passes are guided inside the road
+                // stage, through TripGuidance, and stay after that field sequence.
+                FinishRoads(Result, Grid, Flow, Roads, Opt, PassResult, Route);
             }
 
             BuildTimingAndMetrics(Result, Grid, PassResult, Route, HeadingDeg, Opt);
@@ -2291,6 +2312,189 @@ namespace HaulBuilder
         }
 
         /// <summary>
+        /// Fits roads and pads above the field design and reserves their cut.
+        /// The grid target becomes the early surface: field design, plus reserved
+        /// depth where that cut is held back.
+        /// </summary>
+        /// <param name="Result">Run that receives the surface and warnings.</param>
+        /// <param name="Grid">Field grid. Its target is replaced.</param>
+        /// <param name="Field">Field whose boundary clips the works.</param>
+        /// <param name="Opt">Road and pad options.</param>
+        /// <returns>The surface, or null when the run has no roads or pads.</returns>
+        private static RoadPadSurface? BeginRoads
+            (
+            HaulBuilderResult Result,
+            Grid Grid,
+            AgdField Field,
+            HaulBuilderOptions Opt
+            )
+        {
+            if ((Opt.Roads.Count == 0) && (Opt.WellPads.Count == 0))
+            {
+                return null;
+            }
+
+            List<(Double X, Double Y)>? Boundary = null;
+            if (Field.Boundary.Count >= 3)
+            {
+                Boundary = GridMath.OrderBoundaryRing(Field.Boundary);
+            }
+
+            RoadPadSurface Surface = RoadPadBuild.Prepare(Grid, Opt, Boundary);
+            Result.RoadPads = Surface;
+            foreach (String Warning in Surface.Warnings)
+            {
+                Result.Messages.Add(Warning.StartsWith("WARNING:", StringComparison.Ordinal)
+                    ? Warning
+                    : "WARNING: " + Warning);
+            }
+
+            if (!Surface.RoadTopOk)
+            {
+                throw new InvalidOperationException(
+                    Surface.RoadTopFailure.Length > 0
+                        ? Surface.RoadTopFailure
+                        : "Road top does not sit on the final field design.");
+            }
+
+            return Surface;
+        }
+
+        /// <summary>
+        /// Appends the road stage, publishes the final design, and writes the road report.
+        /// </summary>
+        /// <param name="Result">Run that receives the passes and the report.</param>
+        /// <param name="Grid">Grid whose target becomes the final design.</param>
+        /// <param name="Flow">Flow field used to redraw the map.</param>
+        /// <param name="Surface">Prepared road and pad surface.</param>
+        /// <param name="Opt">Speeds, bowl, and blade-shaping rates.</param>
+        /// <param name="PlannedPasses">Pass list the timing report reads.</param>
+        /// <param name="PlannedRoute">Route the timing report reads.</param>
+        private static void FinishRoads
+            (
+            HaulBuilderResult Result,
+            Grid Grid,
+            FlowField Flow,
+            RoadPadSurface Surface,
+            HaulBuilderOptions Opt,
+            PassResult PlannedPasses,
+            Route PlannedRoute
+            )
+        {
+            List<Pass> RoadPasses = RoadPadBuild.BuildPasses(Grid, Surface, Opt);
+            Surface.FieldHoursPerBcy = RoadPadBuild.FieldHoursPerBcy(Grid, PlannedPasses.Passes, Opt);
+            AppendRoadPasses(PlannedPasses, PlannedRoute, RoadPasses);
+            if (!ReferenceEquals(Result.PassResult, PlannedPasses)
+                || !ReferenceEquals(Result.Route, PlannedRoute))
+            {
+                // Guidance may have replaced the published route with a cleanup route.
+                AppendRoadPasses(Result.PassResult, Result.Route, RoadPasses);
+            }
+
+            Int32 Handled = RoadPadBuild.CountCutBelowAndFilled(Grid, Surface, PlannedPasses.Passes);
+            if ((Result.PassResult != null) && !ReferenceEquals(Result.PassResult, PlannedPasses))
+            {
+                Handled = Math.Max(
+                    Handled,
+                    RoadPadBuild.CountCutBelowAndFilled(Grid, Surface, Result.PassResult.Passes));
+            }
+
+            Result.Messages.Add(String.Format(
+                CultureInfo.InvariantCulture,
+                "Double-handled cells: {0}.",
+                Handled));
+            if (Handled > 0)
+            {
+                throw new InvalidOperationException(
+                    "A cell was cut below the surface it aims at and also filled. Double-handled cells: " + Handled.ToString(CultureInfo.InvariantCulture) + ".");
+            }
+
+            PublishRoadDesign(Result, Grid, Flow, Surface, Opt);
+        }
+
+        /// <summary>
+        /// Copies the final design onto the grid and stores the road report.
+        /// </summary>
+        /// <param name="Result">Run that receives the map and the report.</param>
+        /// <param name="Grid">Grid whose target is replaced.</param>
+        /// <param name="Flow">Flow field used to redraw the map.</param>
+        /// <param name="Surface">Prepared road and pad surface.</param>
+        /// <param name="Opt">Map pixel settings.</param>
+        private static void PublishRoadDesign
+            (
+            HaulBuilderResult Result,
+            Grid Grid,
+            FlowField Flow,
+            RoadPadSurface Surface,
+            HaulBuilderOptions Opt
+            )
+        {
+            RoadPadBuild.PublishFinal(Grid, Surface);
+            Result.PngBytesByName["main"] = Render.RenderPng(
+                Grid,
+                Flow,
+                Opt.PixelsPerCell,
+                Opt.FlowArrowStrideCells);
+            Result.CsvTextByName["roads"] = Surface.FormatReport();
+            Result.Messages.Add(String.Format(
+                CultureInfo.InvariantCulture,
+                "Roads and pads: fill {0:F1} BCY, field shift {1:F3} ft, road stage {2:F2} h, pan {3:F1} BCY, blade {4:F1} BCY, blade shaping {5:F2} h.",
+                Surface.RoadFillBcy,
+                Surface.FieldShiftFt,
+                Surface.RoadStageHours,
+                Surface.PanHaulBcy,
+                Surface.BladeMoveBcy,
+                Surface.BladeShapingHours));
+            String Stage = Surface.FormatStage();
+            if (Stage.Length > 0)
+            {
+                Result.Messages.Add(Stage);
+            }
+        }
+
+        /// <summary>
+        /// Adds road passes at the end of a pass list and its route.
+        /// A pass already on the list is left where it is.
+        /// </summary>
+        /// <param name="Passes">Pass list to extend. Null skips the call.</param>
+        /// <param name="Route">Route to extend. Null extends only the pass list.</param>
+        /// <param name="RoadPasses">Road-stage passes, in lane order.</param>
+        private static void AppendRoadPasses
+            (
+            PassResult? Passes,
+            Route? Route,
+            List<Pass> RoadPasses
+            )
+        {
+            if ((Passes == null) || (RoadPasses.Count == 0))
+            {
+                return;
+            }
+
+            Boolean Shared = (Route != null) && ReferenceEquals(Route.OrderedPasses, Passes.Passes);
+            foreach (Pass RoadPass in RoadPasses)
+            {
+                if (Passes.Passes.Contains(RoadPass))
+                {
+                    continue;
+                }
+
+                Int32 Index = Passes.Passes.Count;
+                Passes.Passes.Add(RoadPass);
+                if (Route == null)
+                {
+                    continue;
+                }
+
+                Route.Order.Add(Index);
+                if (!Shared)
+                {
+                    Route.OrderedPasses.Add(RoadPass);
+                }
+            }
+        }
+
+        /// <summary>
         /// Executes the clone options operation.
         /// </summary>
         /// <param name="Options">Configuration controlling the operation.</param>
@@ -2355,11 +2559,36 @@ namespace HaulBuilder
                 RouteGuidanceImageCount = Options.RouteGuidanceImageCount,
                 RandomRouteTripletCount = Options.RandomRouteTripletCount,
                 RandomSeed = Options.RandomSeed,
+                RoadNrcsMinRoadbedFt = Options.RoadNrcsMinRoadbedFt,
+                RoadMinLanes = Options.RoadMinLanes,
+                RoadHeightFt = Options.RoadHeightFt,
+                RoadSideSlope = Options.RoadSideSlope,
+                RoadCrossSlopePct = Options.RoadCrossSlopePct,
+                RoadMaxGradePct = Options.RoadMaxGradePct,
+                PadDesignTurnRadiusFt = Options.PadDesignTurnRadiusFt,
+                PadClearanceFt = Options.PadClearanceFt,
+                PadExclusionRadiusFt = Options.PadExclusionRadiusFt,
+                PadSlopeAwayPct = Options.PadSlopeAwayPct,
+                PadSideSlope = Options.PadSideSlope,
+                BladeShapingHoursPerFt = Options.BladeShapingHoursPerFt,
+                BladeShapingHoursPerPad = Options.BladeShapingHoursPerPad,
+                RoadMinTripLoadPct = Options.RoadMinTripLoadPct,
+                RoadBladeMoveMaxFt = Options.RoadBladeMoveMaxFt,
             };
             CopyOptimization(Options.Optimization, Copy.Optimization);
             CopyGuidance(Options.Guidance, Copy.Guidance);
             CopyPonding(Options.Ponding, Copy.Ponding);
             Copy.ExcludePolygonSpecs.AddRange(Options.ExcludePolygonSpecs);
+            foreach (RoadCentreline Road in Options.Roads)
+            {
+                Copy.Roads.Add(Road.Clone());
+            }
+
+            foreach (WellPad Pad in Options.WellPads)
+            {
+                Copy.WellPads.Add(Pad.Clone());
+            }
+
             return Copy;
         }
 
@@ -2604,6 +2833,7 @@ namespace HaulBuilder
             ValidateOptimizationOptions(Options);
             ValidateGuidanceOptions(Options.Guidance);
             ValidatePondingOptions(Options.Ponding);
+            RoadPadBuild.Validate(Options);
         }
 
         /// <summary>

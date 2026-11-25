@@ -93,6 +93,49 @@ namespace HaulBuilder
         }
 
         /// <summary>
+        /// Removes pan fill, and the pan trim the road stage will cut, from a field ledger.
+        /// Field stages then cannot build the pan or take the same trim.
+        /// </summary>
+        /// <param name="PanM">Pan height. Cells at or below zero are left unchanged.</param>
+        /// <param name="KeptCutM">Trim depth the road stage keeps, in metres.</param>
+        /// <returns>A ledger without that road-stage work.</returns>
+        public HaulWorkLedger ReleaseRoadStage
+            (
+            Double[,] PanM,
+            Double[,] KeptCutM
+            )
+        {
+            if (PanM == null)
+            {
+                throw new ArgumentNullException(nameof(PanM));
+            }
+
+            if (KeptCutM == null)
+            {
+                throw new ArgumentNullException(nameof(KeptCutM));
+            }
+
+            Double[,] Cut = (Double[,])RequiredCutDepthM.Clone();
+            Double[,] Fill = (Double[,])RequiredFillDepthM.Clone();
+            for (Int32 By = 0; By < Grid.Height; By += 1)
+            {
+                for (Int32 Bx = 0; Bx < Grid.Width; Bx += 1)
+                {
+                    if (PanM[By, Bx] <= 1e-5)
+                    {
+                        continue;
+                    }
+
+                    // The road stage places the pan. Leftover trim above the kept depth stays here.
+                    Fill[By, Bx] = 0.0;
+                    Cut[By, Bx] = Math.Max(0.0, Cut[By, Bx] - KeptCutM[By, Bx]);
+                }
+            }
+
+            return new HaulWorkLedger(Grid, ToleranceM, Cut, Fill);
+        }
+
+        /// <summary>
         /// Builds a synthetic ledger from explicit cut/fill cell depths, used for
         /// end-of-job cleanup of guidance-deferred scraps.
         /// </summary>

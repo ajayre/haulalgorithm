@@ -50,6 +50,23 @@ namespace HaulBuilder
             Guidance = new GuidanceOptions();
             Ponding = new PondingOptions();
             ExcludePolygonSpecs = new List<String>();
+            RoadNrcsMinRoadbedFt = 14.0;
+            RoadMinLanes = 2;
+            RoadHeightFt = 1.0;
+            RoadSideSlope = 3.0;
+            RoadCrossSlopePct = 2.0;
+            RoadMaxGradePct = 8.0;
+            PadDesignTurnRadiusFt = 42.0;
+            PadClearanceFt = 3.0;
+            PadExclusionRadiusFt = 10.0;
+            PadSlopeAwayPct = 1.5;
+            PadSideSlope = 3.0;
+            BladeShapingHoursPerFt = 0.0;
+            BladeShapingHoursPerPad = 0.0;
+            RoadMinTripLoadPct = 0.15;
+            RoadBladeMoveMaxFt = 100.0;
+            Roads = new List<RoadCentreline>();
+            WellPads = new List<WellPad>();
             RandomSeed = Constants.DEFAULT_SEED;
             // Existing callers keep the guidance CSV and the minimum-length rule.
             IncludeGuidanceCsv = true;
@@ -273,6 +290,62 @@ namespace HaulBuilder
 
         /// <summary>Gets exclusion polygons as <c>lat,lon;lat,lon;...</c>.</summary>
         public List<String> ExcludePolygonSpecs { get; }
+
+        /// <summary>Gets or sets the NRCS 560 minimum roadbed in feet. State value; Arkansas is still to be confirmed.</summary>
+        public Double RoadNrcsMinRoadbedFt { get; set; }
+
+        /// <summary>Gets or sets the minimum number of blade-width lanes.</summary>
+        public Int32 RoadMinLanes { get; set; }
+
+        /// <summary>Gets or sets the shoulder height above the final field design, in feet. The crown adds the cross slope times half the top width at the centreline. A pad uses this as the height at the well.</summary>
+        public Double RoadHeightFt { get; set; }
+
+        /// <summary>Gets or sets the road side slope, horizontal over vertical.</summary>
+        public Double RoadSideSlope { get; set; }
+
+        /// <summary>Gets or sets the crown slope on each side of the centreline, in percent.</summary>
+        public Double RoadCrossSlopePct { get; set; }
+
+        /// <summary>Gets or sets the centreline grade that raises a warning, in percent.</summary>
+        public Double RoadMaxGradePct { get; set; }
+
+        /// <summary>Gets or sets the design-vehicle turn radius for a pad, in feet. Utility bucket truck, AASHTO SU-30 class.</summary>
+        public Double PadDesignTurnRadiusFt { get; set; }
+
+        /// <summary>Gets or sets the clearance added to the design-vehicle turn radius, in feet.</summary>
+        public Double PadClearanceFt { get; set; }
+
+        /// <summary>Gets or sets the radius around the well casing that pans do not enter, in feet.</summary>
+        public Double PadExclusionRadiusFt { get; set; }
+
+        /// <summary>Gets or sets the pad slope away from the well, in percent.</summary>
+        public Double PadSlopeAwayPct { get; set; }
+
+        /// <summary>Gets or sets the pad side slope, horizontal over vertical.</summary>
+        public Double PadSideSlope { get; set; }
+
+        /// <summary>Gets or sets blade-shaping hours per foot of road centreline. Zero until a measured rate is known.</summary>
+        public Double BladeShapingHoursPerFt { get; set; }
+
+        /// <summary>Gets or sets blade-shaping hours per well pad. Zero until a measured rate is known.</summary>
+        public Double BladeShapingHoursPerPad { get; set; }
+
+        /// <summary>
+        /// Gets or sets the smallest road-stage load, as a fraction of the bowl, that is still a pan trip.
+        /// A lighter trip is merged into a same-heading trip with room, or handed to the blade.
+        /// </summary>
+        public Double RoadMinTripLoadPct { get; set; }
+
+        /// <summary>
+        /// Gets or sets how far the blade may push soil along the bank, in feet, when a road trip is too light for the pan.
+        /// </summary>
+        public Double RoadBladeMoveMaxFt { get; set; }
+
+        /// <summary>Gets the access-road centrelines. Each road may override the road defaults.</summary>
+        public List<RoadCentreline> Roads { get; }
+
+        /// <summary>Gets the well-pad centres. Each pad may override the pad defaults.</summary>
+        public List<WellPad> WellPads { get; }
 
         /// <summary>Gets or sets whether only field parsing, balance, flow, and map rendering run.</summary>
         public Boolean SkipHaulPlan { get; set; }

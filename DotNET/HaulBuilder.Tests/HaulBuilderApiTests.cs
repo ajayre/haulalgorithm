@@ -27,6 +27,8 @@ namespace HaulBuilder.Tests
                 nameof(HaulBuilderOptions.AnimationMode),
                 nameof(HaulBuilderOptions.AnimationPixelsPerCell),
                 nameof(HaulBuilderOptions.AnimationStride),
+                nameof(HaulBuilderOptions.BladeShapingHoursPerFt),
+                nameof(HaulBuilderOptions.BladeShapingHoursPerPad),
                 nameof(HaulBuilderOptions.BladeWidthMm),
                 nameof(HaulBuilderOptions.CutFillRatio),
                 nameof(HaulBuilderOptions.CutSpeedMph),
@@ -55,6 +57,11 @@ namespace HaulBuilder.Tests
                 nameof(HaulBuilderOptions.MinimumTurningDiameterFt),
                 nameof(HaulBuilderOptions.MinimumWorkLengthFt),
                 nameof(HaulBuilderOptions.Optimization),
+                nameof(HaulBuilderOptions.PadClearanceFt),
+                nameof(HaulBuilderOptions.PadDesignTurnRadiusFt),
+                nameof(HaulBuilderOptions.PadExclusionRadiusFt),
+                nameof(HaulBuilderOptions.PadSideSlope),
+                nameof(HaulBuilderOptions.PadSlopeAwayPct),
                 nameof(HaulBuilderOptions.PixelsPerCell),
                 nameof(HaulBuilderOptions.Ponding),
                 nameof(HaulBuilderOptions.PivotAnimationStride),
@@ -68,6 +75,15 @@ namespace HaulBuilder.Tests
                 nameof(HaulBuilderOptions.RouteGuidanceImageCount),
                 nameof(HaulBuilderOptions.RandomRouteTripletCount),
                 nameof(HaulBuilderOptions.RandomSeed),
+                nameof(HaulBuilderOptions.RoadBladeMoveMaxFt),
+                nameof(HaulBuilderOptions.RoadCrossSlopePct),
+                nameof(HaulBuilderOptions.RoadHeightFt),
+                nameof(HaulBuilderOptions.RoadMaxGradePct),
+                nameof(HaulBuilderOptions.RoadMinLanes),
+                nameof(HaulBuilderOptions.RoadMinTripLoadPct),
+                nameof(HaulBuilderOptions.RoadNrcsMinRoadbedFt),
+                nameof(HaulBuilderOptions.RoadSideSlope),
+                nameof(HaulBuilderOptions.Roads),
                 nameof(HaulBuilderOptions.ScraperCapacityLcy),
                 nameof(HaulBuilderOptions.SkipHaulPlan),
                 nameof(HaulBuilderOptions.SkipGuidance),
@@ -76,6 +92,7 @@ namespace HaulBuilder.Tests
                 nameof(HaulBuilderOptions.TurnSpeedMph),
                 nameof(HaulBuilderOptions.UnloadedTravelSpeedMph),
                 nameof(HaulBuilderOptions.WaypointTurnThresholdDeg),
+                nameof(HaulBuilderOptions.WellPads),
                 nameof(HaulBuilderOptions.ZoneCount),
             };
 
@@ -334,6 +351,12 @@ namespace HaulBuilder.Tests
                 }
                 if (Property.GetSetMethod() == null)
                 {
+                    // Roads and pads are get-only lists. Their items are not scalar options.
+                    if ((Property.PropertyType != typeof(String))
+                        && typeof(System.Collections.IEnumerable).IsAssignableFrom(Property.PropertyType))
+                    {
+                        continue;
+                    }
                     Object? Nested = Property.GetValue(Target);
                     if ((Nested != null) && Property.PropertyType.IsClass)
                     {
@@ -404,6 +427,19 @@ namespace HaulBuilder.Tests
             foreach (PropertyInfo Property in Source.GetType().GetProperties(
                 BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly))
             {
+                if (Property.GetIndexParameters().Length > 0)
+                {
+                    continue;
+                }
+
+                // List properties are compared only for the string lists the test mutates.
+                if ((Property.PropertyType != typeof(String))
+                    && (Property.PropertyType != typeof(List<String>))
+                    && typeof(System.Collections.IEnumerable).IsAssignableFrom(Property.PropertyType))
+                {
+                    continue;
+                }
+
                 Object? Left = Property.GetValue(Source);
                 Object? Right = Property.GetValue(Copy);
                 if (Property.PropertyType == typeof(List<String>))

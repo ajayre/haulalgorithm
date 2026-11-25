@@ -12,7 +12,9 @@ namespace HaulBuilder
     /// blade-down quarter circle so the turnaround stays in the field.
     /// A forward Dubins connector joins the chosen shapes. The loaded connector
     /// from the cut end to the spread start is part of that score. Lane
-    /// direction is chosen by time alone. A short joint is a straight steer
+    /// direction is chosen by time alone. A road-stage trip is the exception:
+    /// every lane on the bank faces the same way, and a lane change is a
+    /// forward S-bend rather than a reversal. A short joint is a straight steer
     /// across, or a trimmed lane, instead of a loop.
     /// A grade pass then runs back over the fill. A correcting trip does not
     /// grade: the land plane follows. Its lines are one sweep, at most three
@@ -78,6 +80,15 @@ namespace HaulBuilder
 
         /// <summary>A bend must leave at least this much straight lane behind the arc.</summary>
         private const Double MIN_STRAIGHT_AFTER_BEND_M = 0.5;
+
+        /// <summary>
+        /// Headings closer than this are the same direction along the bank.
+        /// A larger change is a turn, not a lane change.
+        /// </summary>
+        private const Double LANE_CHANGE_HEADING_RAD = 20.0 * Math.PI / 180.0;
+
+        /// <summary>Forward progress, in metres, before a sideways shift counts as a lane change.</summary>
+        private const Double LANE_CHANGE_FORWARD_M = 0.5;
 
         /// <summary>One grade lift. A 5 mm residual is inside this, so it reaches target.</summary>
         private const Double GRADE_LIFT_M = Correcting.SPREAD_LIFT_M;
@@ -980,7 +991,7 @@ namespace HaulBuilder
             /// <param name="Snapshots">Ground at the start of each requested trip, keyed by 0-based index.</param>
             /// <param name="EmptyReturnHoursBefore">Charged empty-return hours in the planner's trip order.</param>
             /// <param name="EmptyReturnHoursAfter">Charged empty-return hours after the empty-travel reorder.</param>
-            /// <param name="DriveOrder">Original 0-based trip indexes in the order they are driven.</param>
+            /// <param name="DriveOrder">Indexes into <paramref name="Trips"/> in the order they are driven.</param>
             /// <param name="MergedCount">Correcting trips folded into an adjacent-line trip.</param>
             /// <param name="DroppedCount">Correcting trips dropped because their cells were already within tolerance.</param>
             /// <param name="DeferredFragmentCount">End fragments taken off correcting lines for a sweep-up trip.</param>
@@ -1033,7 +1044,7 @@ namespace HaulBuilder
             /// <summary>Gets charged empty-return hours after the trips were reordered.</summary>
             public Double EmptyReturnHoursAfter { get; }
 
-            /// <summary>Gets original trip indexes in drive order.</summary>
+            /// <summary>Gets indexes into <see cref="Trips"/> in the order they are driven.</summary>
             public List<Int32> DriveOrder { get; }
 
             /// <summary>Gets how many correcting trips were merged into a neighbour.</summary>
@@ -1044,6 +1055,12 @@ namespace HaulBuilder
 
             /// <summary>Gets how many end fragments were deferred onto sweep-up trips.</summary>
             public Int32 DeferredFragmentCount { get; }
+
+            /// <summary>
+            /// Gets or sets blade-shaping hours for road slopes, crown, and pad exclusion zones.
+            /// Zero when the plan has no roads. This allowance is not divided by field efficiency.
+            /// </summary>
+            public Double BladeShapingHours { get; set; }
 
             /// <summary>
             /// Hours by component and by stage, Dubins counts, leads, and outside connectors.
@@ -1202,6 +1219,31 @@ namespace HaulBuilder
                     CultureInfo.InvariantCulture,
                     "Sweep-up hours {0:F3} h",
                     (SweepSeconds / Factor) / Constants.SECONDS_PER_HOUR));
+                Int32 RoadTrips = 0;
+                Double RoadSeconds = 0.0;
+                foreach (TripCourse Trip in this.Trips)
+                {
+                    if (Trip.Stage != HaulStage.Road)
+                    {
+                        continue;
+                    }
+
+                    RoadTrips += 1;
+                    RoadSeconds += Trip.ProductiveSeconds;
+                }
+
+                if (RoadTrips > 0)
+                {
+                    Text.AppendLine(String.Format(
+                        CultureInfo.InvariantCulture,
+                        "Road stage hours {0:F3} h",
+                        (RoadSeconds / Factor) / Constants.SECONDS_PER_HOUR));
+                    Text.AppendLine(String.Format(
+                        CultureInfo.InvariantCulture,
+                        "Blade shaping {0:F3} h",
+                        this.BladeShapingHours));
+                }
+
                 Text.AppendLine();
                 Text.AppendLine("Reversals (connector turn over 150 deg)");
                 foreach (HaulStage Stage in new HaulStage[]
@@ -1236,6 +1278,7 @@ namespace HaulBuilder
                     HaulStage.Clusters,
                     HaulStage.ThinCut,
                     HaulStage.Correcting,
+                    HaulStage.Road,
                 })
                 {
                     if (!Stages.ContainsKey(Stage))
@@ -1352,6 +1395,37 @@ namespace HaulBuilder
                 AppendDiagnostics(Text, this.Trips);
                 return Text.ToString();
             }
+        }
+
+        /// <summary>
+        /// Along-track room a forward S-bend needs to shift sideways by
+        /// <paramref name="LateralM"/> at turning radius <paramref name="RadiusM"/>.
+        /// For a shift of at most two radii this is sqrt(d * (4R - d)):
+        /// about 26 ft when the shift is one 8.5 ft lane and the radius is 22.5 ft.
+        /// A wider shift uses two quarter turns, so the room is two radii.
+        /// </summary>
+        /// <param name="LateralM">Sideways shift, metres. The sign is ignored.</param>
+        /// <param name="RadiusM">Turning radius, metres.</param>
+        /// <returns>Metres along the departure heading. Zero when there is nothing to shift.</returns>
+        static public Double ForwardSBendM
+            (
+            Double LateralM,
+            Double RadiusM
+            )
+        {
+            Double Lateral = Math.Abs(LateralM);
+            if ((Lateral <= 1e-9) || (RadiusM <= 1e-9))
+            {
+                return 0.0;
+            }
+
+            // Past two radii the tight S would start turning back. Two quarter circles stay forward.
+            if (Lateral > (2.0 * RadiusM))
+            {
+                return 2.0 * RadiusM;
+            }
+
+            return Math.Sqrt(Lateral * ((4.0 * RadiusM) - Lateral));
         }
 
         /// <summary>
@@ -1704,10 +1778,12 @@ namespace HaulBuilder
                 Trips.Add(Rebuilt[Index]);
             }
 
+            // Indexes into this trip list. Origin still names the pass the trip
+            // came from, which is not a position in the list after a merge.
             List<Int32> DriveOrder = new List<Int32>(Count);
             for (Int32 Step = 0; Step < Count; Step += 1)
             {
-                DriveOrder.Add(Origin[DriveIndexes[Step]]);
+                DriveOrder.Add(DriveIndexes[Step]);
             }
 
             Double Factor = ((Clock.FieldEfficiency > 0.0) && (Clock.FieldEfficiency <= 1.0))
@@ -1815,6 +1891,24 @@ namespace HaulBuilder
             if (Grid == null)
             {
                 throw new ArgumentNullException(nameof(Grid));
+            }
+
+            if (Stage == HaulStage.Road)
+            {
+                // The bank is one direction. The tie-break only chooses which end turns around.
+                return ChooseRoadDirections(
+                    CutLanes,
+                    FillLanes,
+                    NextCutStart,
+                    Grid,
+                    Inside,
+                    Clock,
+                    RadiusM,
+                    BladeWidthM,
+                    LaneSampleM,
+                    TripNumber,
+                    CellAreaM2,
+                    BowlCapacityM3);
             }
 
             List<WorkLane> PreparedCuts;
@@ -1947,6 +2041,245 @@ namespace HaulBuilder
             {
                 ActiveRules.Value = PreviousRules;
             }
+        }
+
+        /// <summary>
+        /// Direction choice for a road-stage trip. Every lane faces one way along
+        /// the bank. The other way is the whole trip turned around, so the
+        /// turnaround can sit at either end. Time breaks the tie, and an equal
+        /// time keeps the planned direction. The turnaround word itself still
+        /// prefers the path that stays in the field.
+        /// </summary>
+        /// <param name="CutLanes">Cut lanes in the planner's order.</param>
+        /// <param name="FillLanes">Spread lanes in the planner's order.</param>
+        /// <param name="NextCutStart">Next trip's first cut. Null on the last trip.</param>
+        /// <param name="Grid">Field grid. Existing elevation locks a sloped cut.</param>
+        /// <param name="Inside">Field test. Null ignores the boundary.</param>
+        /// <param name="Clock">Speeds and field efficiency.</param>
+        /// <param name="RadiusM">Turning radius.</param>
+        /// <param name="BladeWidthM">Blade width.</param>
+        /// <param name="LaneSampleM">Lane sample spacing.</param>
+        /// <param name="TripNumber">1-based trip number.</param>
+        /// <param name="CellAreaM2">Cell area.</param>
+        /// <param name="BowlCapacityM3">Bowl capacity.</param>
+        /// <returns>The chosen lanes and the course they drive.</returns>
+        private static DirectionChoice ChooseRoadDirections
+            (
+            IReadOnlyList<WorkLane> CutLanes,
+            IReadOnlyList<WorkLane> FillLanes,
+            DubinsConnector.Pose? NextCutStart,
+            Grid Grid,
+            Func<Double, Double, Boolean>? Inside,
+            TimeParams Clock,
+            Double RadiusM,
+            Double BladeWidthM,
+            Double LaneSampleM,
+            Int32 TripNumber,
+            Double CellAreaM2,
+            Double BowlCapacityM3
+            )
+        {
+            List<WorkLane> Cuts = PrepareCuts(CutLanes, Grid, out List<Int32> _);
+            List<WorkLane> Fills = new List<WorkLane>(FillLanes);
+            // A lane that came in facing the other way is turned with the trip, not on its own.
+            AlignBank(Cuts, Fills);
+            DirectionChoice Forward = DriveRoad(
+                CopyWorkLanes(Cuts),
+                CopyWorkLanes(Fills),
+                NextCutStart,
+                Inside,
+                Clock,
+                RadiusM,
+                BladeWidthM,
+                LaneSampleM,
+                TripNumber,
+                CellAreaM2,
+                BowlCapacityM3);
+            DirectionChoice Backward = DriveRoad(
+                ReverseAll(Cuts),
+                ReverseAll(Fills),
+                NextCutStart,
+                Inside,
+                Clock,
+                RadiusM,
+                BladeWidthM,
+                LaneSampleM,
+                TripNumber,
+                CellAreaM2,
+                BowlCapacityM3);
+            if ((Backward.Course.ProductiveSeconds + TIME_TIE_S) < Forward.Course.ProductiveSeconds)
+            {
+                return Backward;
+            }
+
+            return Forward;
+        }
+
+        /// <summary>
+        /// Builds one road course. The lanes are already facing one way.
+        /// </summary>
+        /// <param name="Cuts">Cut lanes. Short joints may trim this list.</param>
+        /// <param name="Fills">Spread lanes. Short joints may trim this list.</param>
+        /// <param name="NextCutStart">Next trip's first cut. Null on the last trip.</param>
+        /// <param name="Inside">Field test.</param>
+        /// <param name="Clock">Speeds and field efficiency.</param>
+        /// <param name="RadiusM">Turning radius.</param>
+        /// <param name="BladeWidthM">Blade width.</param>
+        /// <param name="LaneSampleM">Lane sample spacing.</param>
+        /// <param name="TripNumber">1-based trip number.</param>
+        /// <param name="CellAreaM2">Cell area.</param>
+        /// <param name="BowlCapacityM3">Bowl capacity.</param>
+        /// <returns>The course and the lanes it drove.</returns>
+        private static DirectionChoice DriveRoad
+            (
+            List<WorkLane> Cuts,
+            List<WorkLane> Fills,
+            DubinsConnector.Pose? NextCutStart,
+            Func<Double, Double, Boolean>? Inside,
+            TimeParams Clock,
+            Double RadiusM,
+            Double BladeWidthM,
+            Double LaneSampleM,
+            Int32 TripNumber,
+            Double CellAreaM2,
+            Double BowlCapacityM3
+            )
+        {
+            List<Int32> CutLines = IdentityLines(Cuts.Count);
+            List<Int32> FillLines = IdentityLines(Fills.Count);
+            TripCourse Course = BuildCourse(
+                Cuts,
+                Fills,
+                NextCutStart,
+                Inside,
+                Clock,
+                RadiusM,
+                LaneSampleM,
+                TripNumber,
+                HaulStage.Road,
+                CutLines,
+                FillLines,
+                BladeWidthM,
+                true,
+                CellAreaM2,
+                BowlCapacityM3);
+            return new DirectionChoice(
+                Course,
+                Cuts,
+                Fills,
+                CutLines,
+                FillLines,
+                new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>(),
+                new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>(),
+                new List<WorkLane>(),
+                new List<WorkLane>());
+        }
+
+        /// <summary>
+        /// Turns every bank lane that faces backwards onto the fill heading.
+        /// A cut that is square to the road, such as a field borrow, is left alone.
+        /// </summary>
+        /// <param name="Cuts">Cut lanes. Replaced in place when one is reversed.</param>
+        /// <param name="Fills">Spread lanes. Replaced in place when one is reversed.</param>
+        private static void AlignBank
+            (
+            List<WorkLane> Cuts,
+            List<WorkLane> Fills
+            )
+        {
+            Double Axis = 0.0;
+            Boolean HaveAxis = false;
+            if (Fills.Count > 0)
+            {
+                Axis = Fills[0].Start.HeadingRad;
+                HaveAxis = true;
+            }
+            else if (Cuts.Count > 0)
+            {
+                Axis = Cuts[0].Start.HeadingRad;
+                HaveAxis = true;
+            }
+
+            if (!HaveAxis)
+            {
+                return;
+            }
+
+            for (Int32 Index = 0; Index < Fills.Count; Index += 1)
+            {
+                if (FacingBack(Fills[Index], Axis))
+                {
+                    Fills[Index] = Fills[Index].Reversed();
+                }
+            }
+
+            for (Int32 Index = 0; Index < Cuts.Count; Index += 1)
+            {
+                // Only an anti-parallel cut is a bank lane facing the wrong way.
+                // A borrow that comes in from the side keeps the heading PrepareCuts chose.
+                Double Turn = Math.Abs(DubinsConnector.WrapPi(Cuts[Index].Start.HeadingRad - Axis));
+                if (Turn >= (Math.PI - LANE_CHANGE_HEADING_RAD))
+                {
+                    Cuts[Index] = Cuts[Index].Reversed();
+                }
+            }
+        }
+
+        /// <summary>
+        /// True when a lane's heading is more than a right angle off the bank.
+        /// </summary>
+        /// <param name="Lane">Lane to test.</param>
+        /// <param name="Axis">Bank heading, radians anticlockwise from east.</param>
+        /// <returns>True when the lane should be reversed to match the bank.</returns>
+        private static Boolean FacingBack
+            (
+            WorkLane Lane,
+            Double Axis
+            )
+        {
+            return Math.Abs(DubinsConnector.WrapPi(Lane.Start.HeadingRad - Axis)) > (Math.PI * 0.5);
+        }
+
+        /// <summary>
+        /// Copies lanes so one direction search can trim them without moving the other.
+        /// </summary>
+        /// <param name="Lanes">Lanes to copy.</param>
+        /// <returns>New lanes on the same centreline.</returns>
+        private static List<WorkLane> CopyWorkLanes
+            (
+            IReadOnlyList<WorkLane> Lanes
+            )
+        {
+            List<WorkLane> Copy = new List<WorkLane>(Lanes.Count);
+            foreach (WorkLane Lane in Lanes)
+            {
+                Copy.Add(WorkLane.FromCenterline(
+                    Lane.Centerline,
+                    new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>(Lane.Cells),
+                    Lane.Start.HeadingRad));
+            }
+
+            return Copy;
+        }
+
+        /// <summary>
+        /// Turns the trip around. The last lane is driven first, and each lane
+        /// faces the other way, so a forward S-bend stays a forward S-bend.
+        /// </summary>
+        /// <param name="Lanes">Lanes in the planned direction.</param>
+        /// <returns>The same lanes, driven from the other end.</returns>
+        private static List<WorkLane> ReverseAll
+            (
+            IReadOnlyList<WorkLane> Lanes
+            )
+        {
+            List<WorkLane> Reversed = new List<WorkLane>(Lanes.Count);
+            for (Int32 Index = Lanes.Count - 1; Index >= 0; Index -= 1)
+            {
+                Reversed.Add(Lanes[Index].Reversed());
+            }
+
+            return Reversed;
         }
 
         /// <summary>
@@ -3212,7 +3545,7 @@ namespace HaulBuilder
             if (FitJoints && (BladeWidthM > 0.0) && (RadiusM > 0.0))
             {
                 // Short joints are trimmed on copies, then written back so the cells they skip stay deferred.
-                FitShortJoints(CutWork, FillWork, RadiusM, BladeWidthM, Inside);
+                FitShortJoints(CutWork, FillWork, RadiusM, BladeWidthM, Inside, Stage == HaulStage.Road);
                 CopyLanes(CutLanes, CutWork);
                 CopyLanes(FillLanes, FillWork);
             }
@@ -3237,11 +3570,11 @@ namespace HaulBuilder
             DubinsConnector.Pose? Cursor = DriveSide(
                 Segments, Points, Notes, ref Sequence, ref CutSeconds, ref LoadedSeconds, ref SpreadSeconds,
                 ref TurnSeconds, ref GradeSeconds, ref EmptySeconds, null, CutDrive, CutDriveIds,
-                GuidanceAction.Cut, GuidanceAction.Carry, StraightOnLine, Inside, Clock, RadiusM, LaneSampleM, TripNumber, BladeWidthM);
+                GuidanceAction.Cut, GuidanceAction.Carry, StraightOnLine, Inside, Clock, RadiusM, LaneSampleM, TripNumber, BladeWidthM, Stage == HaulStage.Road);
             Cursor = DriveSide(
                 Segments, Points, Notes, ref Sequence, ref CutSeconds, ref LoadedSeconds, ref SpreadSeconds,
                 ref TurnSeconds, ref GradeSeconds, ref EmptySeconds, Cursor, FillDrive, FillDriveIds,
-                GuidanceAction.Fill, GuidanceAction.Carry, StraightOnLine, Inside, Clock, RadiusM, LaneSampleM, TripNumber, BladeWidthM);
+                GuidanceAction.Fill, GuidanceAction.Carry, StraightOnLine, Inside, Clock, RadiusM, LaneSampleM, TripNumber, BladeWidthM, Stage == HaulStage.Road);
 
             if (FillDrive.Count > 0)
             {
@@ -3273,7 +3606,7 @@ namespace HaulBuilder
                     Cursor = DriveSide(
                         Segments, Points, Notes, ref Sequence, ref CutSeconds, ref LoadedSeconds, ref SpreadSeconds,
                         ref TurnSeconds, ref GradeSeconds, ref EmptySeconds, null, GradeLanes, GradeIds,
-                        GuidanceAction.Grade, GuidanceAction.Grade, StraightOnLine, Inside, Clock, RadiusM, LaneSampleM, TripNumber, BladeWidthM);
+                        GuidanceAction.Grade, GuidanceAction.Grade, StraightOnLine, Inside, Clock, RadiusM, LaneSampleM, TripNumber, BladeWidthM, Stage == HaulStage.Road);
                 }
                 else
                 {
@@ -3463,6 +3796,226 @@ namespace HaulBuilder
             }
 
             return Lanes;
+        }
+
+        /// <summary>
+        /// Splits road-stage cells into blade-width lanes that all face the trip's long direction.
+        /// The axis is the long axis of the cells, pointed from the first cell toward the
+        /// farthest, so a lane stays one strip and a later lane is ahead.
+        /// </summary>
+        /// <param name="Cells">Cells in the order the road planner will drive them.</param>
+        /// <param name="Grid">Cell centres.</param>
+        /// <param name="BladeWidthM">Lane width. One lane is one blade.</param>
+        /// <returns>One lane per blade strip, in the order the strips first appear.</returns>
+        private static List<WorkLane> RoadLanesOf
+            (
+            List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Cells,
+            Grid Grid,
+            Double BladeWidthM
+            )
+        {
+            List<WorkLane> Lanes = new List<WorkLane>();
+            if ((Cells == null) || (Cells.Count == 0) || (BladeWidthM <= 0.0))
+            {
+                return Lanes;
+            }
+
+            (Double X, Double Y) Origin = Grid.CellCenterXy(Cells[0].Cell.Bx, Cells[0].Cell.By);
+            (Double X, Double Y) Far = Origin;
+            Double Far2 = 0.0;
+            foreach (((Int32 Bx, Int32 By) Cell, Double DepthM) Entry in Cells)
+            {
+                (Double X, Double Y) Point = Grid.CellCenterXy(Entry.Cell.Bx, Entry.Cell.By);
+                Double Dx = Point.X - Origin.X;
+                Double Dy = Point.Y - Origin.Y;
+                Double Dist2 = (Dx * Dx) + (Dy * Dy);
+                if (Dist2 > Far2)
+                {
+                    Far2 = Dist2;
+                    Far = Point;
+                }
+            }
+
+            // Along-lane steps, not the diagonal from the first cell to the farthest.
+            // That diagonal leans across the bank and would split one lane into two.
+            Double AxisX = 1.0;
+            Double AxisY = 0.0;
+            LaneAxis(Cells, Grid, Origin, Far, out AxisX, out AxisY);
+
+            // Left of the axis, so a positive offset is one side of the bank.
+            Double SideX = -AxisY;
+            Double SideY = AxisX;
+            Dictionary<Int32, List<(Double Along, ((Int32 Bx, Int32 By) Cell, Double DepthM) Entry, Double X, Double Y)>> Bins =
+                new Dictionary<Int32, List<(Double Along, ((Int32 Bx, Int32 By) Cell, Double DepthM) Entry, Double X, Double Y)>>();
+            List<Int32> BinOrder = new List<Int32>();
+            foreach (((Int32 Bx, Int32 By) Cell, Double DepthM) Entry in Cells)
+            {
+                (Double X, Double Y) Point = Grid.CellCenterXy(Entry.Cell.Bx, Entry.Cell.By);
+                Double Dx = Point.X - Origin.X;
+                Double Dy = Point.Y - Origin.Y;
+                Double Along = (Dx * AxisX) + (Dy * AxisY);
+                Double Side = (Dx * SideX) + (Dy * SideY);
+                Int32 Bin = (Int32)Math.Round(Side / BladeWidthM, MidpointRounding.AwayFromZero);
+                if (!Bins.TryGetValue(Bin, out List<(Double Along, ((Int32 Bx, Int32 By) Cell, Double DepthM) Entry, Double X, Double Y)>? Group))
+                {
+                    Group = new List<(Double Along, ((Int32 Bx, Int32 By) Cell, Double DepthM) Entry, Double X, Double Y)>();
+                    Bins[Bin] = Group;
+                    BinOrder.Add(Bin);
+                }
+
+                Group.Add((Along, Entry, Point.X, Point.Y));
+            }
+
+            foreach (Int32 Bin in BinOrder)
+            {
+                List<(Double Along, ((Int32 Bx, Int32 By) Cell, Double DepthM) Entry, Double X, Double Y)> Group = Bins[Bin];
+                Group.Sort((Left, Right) => Left.Along.CompareTo(Right.Along));
+                List<(Double X, Double Y)> Line = new List<(Double X, Double Y)>();
+                List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Owned =
+                    new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>();
+                foreach ((Double Along, ((Int32 Bx, Int32 By) Cell, Double DepthM) Entry, Double X, Double Y) Item in Group)
+                {
+                    Line.Add((Item.X, Item.Y));
+                    Owned.Add(Item.Entry);
+                }
+
+                if (Line.Count == 1)
+                {
+                    // A single cell has no heading. One metre along the trip keeps the lane on the bank.
+                    Line.Add((Line[0].X + AxisX, Line[0].Y + AxisY));
+                }
+
+                Lanes.Add(WorkLane.FromCenterline(Line, Owned, Math.Atan2(AxisY, AxisX)));
+            }
+
+            return Lanes;
+        }
+
+        /// <summary>
+        /// Direction the trip travels along the bank. Along-lane steps decide it.
+        /// A step that is mostly sideways is a lane change and does not tilt the axis.
+        /// The result points from the first cell toward the farthest.
+        /// </summary>
+        /// <param name="Cells">Cells in drive order.</param>
+        /// <param name="Grid">Cell centres.</param>
+        /// <param name="Origin">First cell centre.</param>
+        /// <param name="Far">Cell centre farthest from the first.</param>
+        /// <param name="AxisX">Unit axis, east.</param>
+        /// <param name="AxisY">Unit axis, north.</param>
+        private static void LaneAxis
+            (
+            List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Cells,
+            Grid Grid,
+            (Double X, Double Y) Origin,
+            (Double X, Double Y) Far,
+            out Double AxisX,
+            out Double AxisY
+            )
+        {
+            BankAxis(Cells, Grid, out AxisX, out AxisY);
+            Double Face = ((Far.X - Origin.X) * AxisX) + ((Far.Y - Origin.Y) * AxisY);
+            if (Face < 0.0)
+            {
+                AxisX = -AxisX;
+                AxisY = -AxisY;
+            }
+
+            Double Reference = Math.Atan2(AxisY, AxisX);
+            List<Double> Offsets = new List<Double>();
+            (Double X, Double Y) Previous = Origin;
+            for (Int32 Index = 1; Index < Cells.Count; Index += 1)
+            {
+                (Double X, Double Y) Point = Grid.CellCenterXy(Cells[Index].Cell.Bx, Cells[Index].Cell.By);
+                Double Dx = Point.X - Previous.X;
+                Double Dy = Point.Y - Previous.Y;
+                Previous = Point;
+                Double Forward = (Dx * AxisX) + (Dy * AxisY);
+                Double Side = (Dx * -AxisY) + (Dy * AxisX);
+                // A lane change is mostly sideways. It must not pull the axis off the bank.
+                if ((Math.Abs(Forward) < 0.2) || (Math.Abs(Forward) < Math.Abs(Side)))
+                {
+                    continue;
+                }
+
+                Offsets.Add(DubinsConnector.WrapPi(Math.Atan2(Dy, Dx) - Reference));
+            }
+
+            if (Offsets.Count == 0)
+            {
+                return;
+            }
+
+            Offsets.Sort();
+            Double Heading = DubinsConnector.WrapPi(Reference + Offsets[Offsets.Count / 2]);
+            AxisX = Math.Cos(Heading);
+            AxisY = Math.Sin(Heading);
+        }
+
+        /// <summary>
+        /// Long axis of a set of cells, before it is pointed along the trip.
+        /// </summary>
+        /// <param name="Cells">Cells on the trip.</param>
+        /// <param name="Grid">Cell centres.</param>
+        /// <param name="AxisX">Unit axis, east. Not oriented to the trip.</param>
+        /// <param name="AxisY">Unit axis, north. Not oriented to the trip.</param>
+        private static void BankAxis
+            (
+            List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Cells,
+            Grid Grid,
+            out Double AxisX,
+            out Double AxisY
+            )
+        {
+            AxisX = 1.0;
+            AxisY = 0.0;
+            Double MeanX = 0.0;
+            Double MeanY = 0.0;
+            foreach (((Int32 Bx, Int32 By) Cell, Double DepthM) Entry in Cells)
+            {
+                (Double X, Double Y) Point = Grid.CellCenterXy(Entry.Cell.Bx, Entry.Cell.By);
+                MeanX += Point.X;
+                MeanY += Point.Y;
+            }
+
+            MeanX /= Cells.Count;
+            MeanY /= Cells.Count;
+            Double Sxx = 0.0;
+            Double Syy = 0.0;
+            Double Sxy = 0.0;
+            foreach (((Int32 Bx, Int32 By) Cell, Double DepthM) Entry in Cells)
+            {
+                (Double X, Double Y) Point = Grid.CellCenterXy(Entry.Cell.Bx, Entry.Cell.By);
+                Double Dx = Point.X - MeanX;
+                Double Dy = Point.Y - MeanY;
+                Sxx += Dx * Dx;
+                Syy += Dy * Dy;
+                Sxy += Dx * Dy;
+            }
+
+            Double Shift = Sxx - Syy;
+            Double Disc = Math.Sqrt((Shift * Shift) + (4.0 * Sxy * Sxy));
+            Double Eigen = ((Sxx + Syy) + Disc) * 0.5;
+            Double Vx = Sxy;
+            Double Vy = Eigen - Sxx;
+            Double Length = Math.Sqrt((Vx * Vx) + (Vy * Vy));
+            if (Length <= 1e-9)
+            {
+                // The other component of the same eigenvector. East-west roads land here.
+                Vx = Eigen - Syy;
+                Vy = Sxy;
+                Length = Math.Sqrt((Vx * Vx) + (Vy * Vy));
+            }
+
+            if (Length > 1e-9)
+            {
+                AxisX = Vx / Length;
+                AxisY = Vy / Length;
+            }
+            else if (Syy > Sxx)
+            {
+                AxisX = 0.0;
+                AxisY = 1.0;
+            }
         }
 
         /// <summary>
@@ -4011,6 +4564,115 @@ namespace HaulBuilder
         }
 
         /// <summary>
+        /// Adds the forward S-bend between two bank lanes. Only LSR and RSL are
+        /// offered, and only when the poses leave the Dubins room for that offset.
+        /// A pose pair that cannot do that still gets a connector, so the trip draws.
+        /// </summary>
+        /// <param name="Segments">Segments being built.</param>
+        /// <param name="Points">Guidance samples.</param>
+        /// <param name="Notes">Connector notes.</param>
+        /// <param name="Sequence">Next sample number.</param>
+        /// <param name="LoadedSeconds">Loaded-connector seconds so far.</param>
+        /// <param name="TurnSeconds">Turnaround seconds so far.</param>
+        /// <param name="GradeSeconds">Grade seconds so far.</param>
+        /// <param name="EmptySeconds">Empty-connector seconds so far.</param>
+        /// <param name="Start">Pose the previous lane ended on.</param>
+        /// <param name="End">Pose the next lane starts on.</param>
+        /// <param name="Action">Carry between cuts or spreads. Grade on the way back.</param>
+        /// <param name="Inside">Field test. Null does not test the field.</param>
+        /// <param name="Clock">Speeds and acceleration.</param>
+        /// <param name="RadiusM">Turning radius.</param>
+        /// <param name="TripNumber">1-based trip number.</param>
+        /// <param name="BladeWidthM">Blade width, used to recognise the lane change.</param>
+        private static void AddForwardBend
+            (
+            List<CourseSegment> Segments,
+            List<GuidancePoint> Points,
+            List<ConnectorNote> Notes,
+            ref Int32 Sequence,
+            ref Double LoadedSeconds,
+            ref Double TurnSeconds,
+            ref Double GradeSeconds,
+            ref Double EmptySeconds,
+            DubinsConnector.Pose Start,
+            DubinsConnector.Pose End,
+            GuidanceAction Action,
+            Func<Double, Double, Boolean>? Inside,
+            TimeParams Clock,
+            Double RadiusM,
+            Int32 TripNumber,
+            Double BladeWidthM
+            )
+        {
+            if (!IsForwardLaneChange(Start, End, BladeWidthM, out Double LateralM))
+            {
+                AddConnector(
+                    Segments, Points, Notes, ref Sequence, ref LoadedSeconds, ref TurnSeconds,
+                    ref GradeSeconds, ref EmptySeconds, Start, End, Action, Inside, Clock, RadiusM, TripNumber);
+                return;
+            }
+
+            Double Room = ForwardSBendM(LateralM, RadiusM);
+            Double Dx = End.X - Start.X;
+            Double Dy = End.Y - Start.Y;
+            Double Forward = (Dx * Math.Cos(Start.HeadingRad)) + (Dy * Math.Sin(Start.HeadingRad));
+            List<DubinsConnector.Path> Words = DubinsConnector.AllWords(Start, End, RadiusM);
+            List<DubinsConnector.Path> Bends = new List<DubinsConnector.Path>();
+            foreach (DubinsConnector.Path Word in Words)
+            {
+                // LSR and RSL are the forward S. A U-turn word is not a lane change.
+                if ((Word.Word != "LSR") && (Word.Word != "RSL"))
+                {
+                    continue;
+                }
+
+                if (Forward + 0.05 < Room)
+                {
+                    continue;
+                }
+
+                Bends.Add(Word);
+            }
+
+            DubinsConnector.Path Path = (Bends.Count == 0)
+                ? SelectConnector(Start, End, RadiusM, Inside)
+                : MarkOutside(Bends[PreferField(Bends, RadiusM, Inside)], RadiusM, Inside);
+            CourseSegment? Built = SegmentFromPath(Start, End, Action, Path, Clock, RadiusM);
+            if (Built == null)
+            {
+                return;
+            }
+
+            if (Action == GuidanceAction.Carry)
+            {
+                LoadedSeconds += Built.Seconds;
+            }
+            else if (Action == GuidanceAction.Turn)
+            {
+                TurnSeconds += Built.Seconds;
+            }
+            else if (Action == GuidanceAction.Grade)
+            {
+                GradeSeconds += Built.Seconds;
+            }
+            else
+            {
+                EmptySeconds += Built.Seconds;
+            }
+
+            Segments.Add(Built);
+            Notes.Add(new ConnectorNote(
+                TripNumber,
+                Action,
+                Built.Word,
+                Built.LengthM,
+                Built.LeadOutM,
+                Built.LeadInM,
+                Built.Outside));
+            AppendPoints(Points, ref Sequence, Built);
+        }
+
+        /// <summary>
         /// Builds one connector and does not add it to a course. A wrapped full
         /// turn at the same point is an empty join, not a 2πR loop. The word is
         /// the near-shortest path with the least length outside the field.
@@ -4039,7 +4701,29 @@ namespace HaulBuilder
 
             // Loaded, empty, turnaround, and line-change connectors share this choice.
             DubinsConnector.Path Path = SelectConnector(Start, End, RadiusM, Inside);
+            return SegmentFromPath(Start, End, Action, Path, Clock, RadiusM);
+        }
 
+        /// <summary>
+        /// Draws a connector that has already been chosen.
+        /// </summary>
+        /// <param name="Start">Pose the connector leaves.</param>
+        /// <param name="End">Pose the connector arrives at.</param>
+        /// <param name="Action">What the connector is.</param>
+        /// <param name="Path">The chosen Dubins path.</param>
+        /// <param name="Clock">Speeds and acceleration.</param>
+        /// <param name="RadiusM">Turning radius used to sample arcs.</param>
+        /// <returns>The connector, or null when the path has no length.</returns>
+        private static CourseSegment? SegmentFromPath
+            (
+            DubinsConnector.Pose Start,
+            DubinsConnector.Pose End,
+            GuidanceAction Action,
+            DubinsConnector.Path Path,
+            TimeParams Clock,
+            Double RadiusM
+            )
+        {
             if (Path.LengthM <= 0.0)
             {
                 return null;
@@ -4493,6 +5177,7 @@ namespace HaulBuilder
         /// <param name="LaneSampleM">Lane sample spacing.</param>
         /// <param name="TripNumber">1-based trip number.</param>
         /// <param name="BladeWidthM">Blade width. Zero does not steer a short joint straight.</param>
+        /// <param name="RoadBank">True on the road stage. A lane change is an S-bend, not a straight steer.</param>
         /// <returns>The pose at the end of the last lane, or <paramref name="Cursor"/> when there are none.</returns>
         private static DubinsConnector.Pose? DriveSide
             (
@@ -4517,7 +5202,8 @@ namespace HaulBuilder
             Double RadiusM,
             Double LaneSampleM,
             Int32 TripNumber,
-            Double BladeWidthM
+            Double BladeWidthM,
+            Boolean RoadBank
             )
         {
             for (Int32 Index = 0; Index < Lanes.Count; Index += 1)
@@ -4529,9 +5215,18 @@ namespace HaulBuilder
                         && (LineIds != null)
                         && (Index > 0)
                         && (LineIds[Index] == LineIds[Index - 1]);
-                    // A gentle short gap is steered across. A shared correcting line was already straight.
-                    Boolean Steer = (!SameLine) && SteerAcross(Cursor.Value, Lane.Start, RadiusM, BladeWidthM);
-                    if (SameLine || Steer)
+                    // A road lane change keeps the S-bend. A steer would cut the corner across the bank.
+                    Boolean LaneChange = RoadBank
+                        && IsForwardLaneChange(Cursor.Value, Lane.Start, BladeWidthM, out Double _);
+                    Boolean Steer = (!SameLine) && !LaneChange && SteerAcross(Cursor.Value, Lane.Start, RadiusM, BladeWidthM);
+                    if (LaneChange)
+                    {
+                        AddForwardBend(
+                            Segments, Points, Notes, ref Sequence, ref LoadedSeconds, ref TurnSeconds,
+                            ref GradeSeconds, ref EmptySeconds, Cursor.Value, Lane.Start,
+                            JoinAction, Inside, Clock, RadiusM, TripNumber, BladeWidthM);
+                    }
+                    else if (SameLine || Steer)
                     {
                         AddStraight(
                             Segments, Points, Notes, ref Sequence, ref LoadedSeconds, ref TurnSeconds,
@@ -5015,23 +5710,34 @@ namespace HaulBuilder
             }
 
             // Flow, clusters, and thin-cut share one phase and may interleave.
-            // Correcting follows them, then sweep-up, then finishing.
+            // Correcting follows them, then sweep-up, then the road stage, then finishing.
             HaulStage[] Stages = new HaulStage[]
             {
                 HaulStage.Flow,
                 HaulStage.Clusters,
                 HaulStage.ThinCut,
                 HaulStage.Correcting,
+                HaulStage.Road,
             };
             Boolean[] Used = new Boolean[Count];
             Int32 Slot = 0;
             DubinsConnector.Pose? Incoming = null;
-            // Band 0 is the planned stages. Band 1 is sweep-up. Band 2 is finishing.
-            for (Int32 Band = 0; Band < 3; Band += 1)
+            // Band 0 is the planned stages. Band 1 is sweep-up. Band 2 is the road stage. Band 3 is finishing.
+            for (Int32 Band = 0; Band < 4; Band += 1)
             {
             foreach (HaulStage Stage in Stages)
             {
+                if ((Band == 0) && (Stage == HaulStage.Road))
+                {
+                    continue;
+                }
+
                 if ((Band == 1) && (Stage != HaulStage.Correcting))
+                {
+                    continue;
+                }
+
+                if ((Band == 2) && (Stage != HaulStage.Road))
                 {
                     continue;
                 }
@@ -5044,7 +5750,7 @@ namespace HaulBuilder
                         continue;
                     }
 
-                    if (Band == 2)
+                    if (Band == 3)
                     {
                         if (!Courses[Index].Finishing)
                         {
@@ -5053,8 +5759,9 @@ namespace HaulBuilder
                     }
                     else if (Courses[Index].Finishing || (Courses[Index].SweepUp != (Band == 1)))
                     {
-                        // Finishing waits until sweep-up is done.
+                        // Finishing waits until the road stage is done.
                         // Sweep-up stays after the correcting pass that deferred it.
+                        // Road trips are neither sweep-up nor finishing.
                         continue;
                     }
 
@@ -5645,8 +6352,17 @@ namespace HaulBuilder
             for (Int32 Index = 0; Index < Count; Index += 1)
             {
                 Pass Current = Passes[Index];
-                PlannedCuts[Index] = LanesOf(Current.CutCells, Current.RibbonOrder, Grid, BladeWidthM, CircleFt);
-                PlannedFills[Index] = LanesOf(Current.FillCells, Current.RibbonOrder, Grid, BladeWidthM, CircleFt);
+                if (Current.Stage == HaulStage.Road)
+                {
+                    // Ribbon order would fold a lane change into one run. The bank needs one lane each.
+                    PlannedCuts[Index] = RoadLanesOf(Current.CutCells, Grid, BladeWidthM);
+                    PlannedFills[Index] = RoadLanesOf(Current.FillCells, Grid, BladeWidthM);
+                }
+                else
+                {
+                    PlannedCuts[Index] = LanesOf(Current.CutCells, Current.RibbonOrder, Grid, BladeWidthM, CircleFt);
+                    PlannedFills[Index] = LanesOf(Current.FillCells, Current.RibbonOrder, Grid, BladeWidthM, CircleFt);
+                }
             }
 
             Courses = new TripCourse[Count];
@@ -7624,13 +8340,15 @@ namespace HaulBuilder
         /// <param name="RadiusM">Turning radius.</param>
         /// <param name="BladeWidthM">Blade width.</param>
         /// <param name="Inside">Field test. Null ignores the boundary.</param>
+        /// <param name="RoadBank">True on the road stage. A forward lane change is not trimmed into a steer.</param>
         private static void FitShortJoints
             (
             List<WorkLane> Cuts,
             List<WorkLane> Fills,
             Double RadiusM,
             Double BladeWidthM,
-            Func<Double, Double, Boolean>? Inside
+            Func<Double, Double, Boolean>? Inside,
+            Boolean RoadBank
             )
         {
             List<WorkLane> All = new List<WorkLane>(Cuts.Count + Fills.Count);
@@ -7641,6 +8359,12 @@ namespace HaulBuilder
             {
                 WorkLane Left = All[Index];
                 WorkLane Right = All[Index + 1];
+                if (RoadBank && IsForwardLaneChange(Left.End, Right.Start, BladeWidthM, out Double _))
+                {
+                    // The cells already leave room for the S-bend. Sliding them would shorten it.
+                    continue;
+                }
+
                 Double Gap = PoseGap(Left.End, Right.Start);
                 if (Gap >= (CurrentRules.ShortJointRadii * RadiusM))
                 {
@@ -7711,6 +8435,43 @@ namespace HaulBuilder
             {
                 List[Index] = Source[Index];
             }
+        }
+
+        /// <summary>
+        /// True when the next pose is a forward lane change: same heading, ahead,
+        /// and more than half a blade to the side.
+        /// </summary>
+        /// <param name="From">Pose the previous lane ended on.</param>
+        /// <param name="To">Pose the next lane starts on.</param>
+        /// <param name="BladeWidthM">Blade width. Half of this is still one lane.</param>
+        /// <param name="LateralM">Sideways shift, metres. Zero when this is not a lane change.</param>
+        /// <returns>True when the join should be a forward S-bend.</returns>
+        private static Boolean IsForwardLaneChange
+            (
+            DubinsConnector.Pose From,
+            DubinsConnector.Pose To,
+            Double BladeWidthM,
+            out Double LateralM
+            )
+        {
+            LateralM = 0.0;
+            if (BladeWidthM <= 0.0)
+            {
+                return false;
+            }
+
+            Double Turn = Math.Abs(DubinsConnector.WrapPi(To.HeadingRad - From.HeadingRad));
+            if (Turn > LANE_CHANGE_HEADING_RAD)
+            {
+                return false;
+            }
+
+            Double Dx = To.X - From.X;
+            Double Dy = To.Y - From.Y;
+            Double Forward = (Dx * Math.Cos(From.HeadingRad)) + (Dy * Math.Sin(From.HeadingRad));
+            Double Side = (Dx * -Math.Sin(From.HeadingRad)) + (Dy * Math.Cos(From.HeadingRad));
+            LateralM = Math.Abs(Side);
+            return (Forward > LANE_CHANGE_FORWARD_M) && (LateralM > (BladeWidthM * 0.5));
         }
 
         /// <summary>

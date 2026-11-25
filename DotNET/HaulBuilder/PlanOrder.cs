@@ -24,7 +24,7 @@ namespace HaulBuilder
         /// <summary>
         /// Fails when drive order skips a trip or a phase goes backwards.
         /// Flow, clusters, and thin-cut are one phase. Correcting follows,
-        /// then sweep-up, then finishing.
+        /// then sweep-up, then the road stage, then finishing.
         /// </summary>
         /// <param name="Trips">Trips in planner order.</param>
         /// <param name="DriveOrder">Indexes into <paramref name="Trips"/> in the order they are driven.</param>
@@ -160,7 +160,7 @@ namespace HaulBuilder
         }
 
         /// <summary>
-        /// Phase name in drive order: flow, correcting, sweep-up, or finishing.
+        /// Phase name in drive order: flow, correcting, sweep-up, road, or finishing.
         /// </summary>
         /// <param name="Trip">Trip to name.</param>
         /// <returns>The phase.</returns>
@@ -173,7 +173,7 @@ namespace HaulBuilder
         }
 
         /// <summary>
-        /// Where the trip's cells came from: flow ribbon, band, correcting line, sweep-up, or finishing.
+        /// Where the trip's cells came from: flow ribbon, band, correcting line, sweep-up, road, or finishing.
         /// </summary>
         /// <param name="Trip">Trip to name.</param>
         /// <returns>The source.</returns>
@@ -190,6 +190,11 @@ namespace HaulBuilder
             if (Trip.SweepUp)
             {
                 return "sweep-up";
+            }
+
+            if (Trip.Stage == HaulStage.Road)
+            {
+                return "road";
             }
 
             if (Trip.Stage == HaulStage.Correcting)
@@ -301,7 +306,7 @@ namespace HaulBuilder
         /// Rank of a trip. A smaller rank is driven first.
         /// </summary>
         /// <param name="Trip">Trip to rank.</param>
-        /// <returns>0 flow, 1 correcting, 2 sweep-up, 3 finishing.</returns>
+        /// <returns>0 flow, 1 correcting, 2 sweep-up, 3 road, 4 finishing.</returns>
         private static Int32 PhaseRank
             (
             TripGuidance.TripCourse Trip
@@ -309,12 +314,17 @@ namespace HaulBuilder
         {
             if (Trip.Finishing)
             {
-                return 3;
+                return 4;
             }
 
             if (Trip.SweepUp)
             {
                 return 2;
+            }
+
+            if (Trip.Stage == HaulStage.Road)
+            {
+                return 3;
             }
 
             if (Trip.Stage == HaulStage.Correcting)
@@ -328,16 +338,21 @@ namespace HaulBuilder
         /// <summary>
         /// Phase name for a rank.
         /// </summary>
-        /// <param name="Rank">0 through 3.</param>
+        /// <param name="Rank">0 through 4.</param>
         /// <returns>The phase.</returns>
         private static String PhaseNameOfRank
             (
             Int32 Rank
             )
         {
-            if (Rank >= 3)
+            if (Rank >= 4)
             {
                 return "finishing";
+            }
+
+            if (Rank == 3)
+            {
+                return "road";
             }
 
             if (Rank == 2)

@@ -157,6 +157,9 @@ namespace HaulBuilder
         /// <summary>Gets or sets optional ponding audit and optimization results.</summary>
         public PondingRunResult? Ponding { get; set; }
 
+        /// <summary>Gets or sets the road and well-pad surface when the run built any.</summary>
+        public RoadPadSurface? RoadPads { get; set; }
+
         /// <summary>
         /// Gets zone sequencing summary rows.
         /// </summary>
