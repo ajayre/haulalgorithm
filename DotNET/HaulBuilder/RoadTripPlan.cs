@@ -397,7 +397,7 @@ namespace HaulBuilder
 
         /// <summary>
         /// Groups remaining cut into blade-width lanes along this feature.
-        /// Pan trim that belongs to another road or pad is left for that feature.
+        /// A road leaves another feature's pan trim. A pad may cut that trim, because the road is planned after the pad.
         /// </summary>
         /// <param name="Grid">Cell centres.</param>
         /// <param name="Surface">Pan mask and owners.</param>
@@ -427,7 +427,11 @@ namespace HaulBuilder
 
                 if ((Surface.PanM[Cell.By, Cell.Bx] > LIFT_EPSILON_M) && !OwnedBy(Surface, Item, Cell.Bx, Cell.By))
                 {
-                    continue;
+                    // A road leaves another feature's trim. A pad may cut it; the road is planned second.
+                    if (!Item.IsPad)
+                    {
+                        continue;
+                    }
                 }
 
                 LanePose(Grid, Item, Cell.Bx, Cell.By, out Double Order, out Double Signed);

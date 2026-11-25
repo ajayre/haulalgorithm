@@ -285,9 +285,10 @@ namespace HaulBuilder
         }
 
         /// <summary>
-        /// Flat height of a pad pan, equal in volume to the sloped finished pad.
+        /// Flat height of a pad pan, equal in volume to the finished pad.
+        /// The finished pad is the shoulder height at the top radius, a slope up to the well, and a 3:1 edge.
         /// </summary>
-        /// <param name="HeightM">Height at the well, in metres.</param>
+        /// <param name="ShoulderM">Shoulder height at the top radius, in metres.</param>
         /// <param name="Cross">Slope away, rise over run.</param>
         /// <param name="TopM">Finished top radius in metres.</param>
         /// <param name="ReachM">Side-slope run in metres.</param>
@@ -295,7 +296,7 @@ namespace HaulBuilder
         /// <returns>Height in metres.</returns>
         private static Double PadBuildHeightM
             (
-            Double HeightM,
+            Double ShoulderM,
             Double Cross,
             Double TopM,
             Double ReachM,
@@ -311,14 +312,14 @@ namespace HaulBuilder
             Int32 Steps = 2000;
             Double Dr = Toe / Steps;
             Double Volume = 0.0;
-            Double Edge = Math.Max(0.0, HeightM - (Cross * TopM));
             for (Int32 Index = 0; Index < Steps; Index += 1)
             {
                 Double Radius = (Index + Constants.HALF_SCALE) * Dr;
                 Double Profile;
                 if (Radius <= TopM)
                 {
-                    Profile = Math.Max(0.0, HeightM - (Cross * Radius));
+                    // The shoulder is ShoulderM. The top rises toward the well.
+                    Profile = ShoulderM + (Cross * (TopM - Radius));
                 }
                 else if (ReachM <= 1e-9)
                 {
@@ -326,10 +327,10 @@ namespace HaulBuilder
                 }
                 else
                 {
-                    Profile = Math.Max(0.0, Edge * (1.0 - ((Radius - TopM) / ReachM)));
+                    Profile = ShoulderM * (1.0 - ((Radius - TopM) / ReachM));
                 }
 
-                Volume += 2.0 * Math.PI * Radius * Profile * Dr;
+                Volume += 2.0 * Math.PI * Radius * Math.Max(0.0, Profile) * Dr;
             }
 
             return Volume / (Math.PI * PanRadiusM * PanRadiusM);
@@ -599,6 +600,7 @@ namespace HaulBuilder
                             Winner.Y);
                         if (CentreDistance <= Winner.ExclusionM)
                         {
+                            // The casing keeps the pad target. The pan does not enter it; the blade places that fill.
                             Surface.Excluded[By, Bx] = true;
                             PadExcluded[Winner.PadIndex] += Bank;
                         }
@@ -728,6 +730,7 @@ namespace HaulBuilder
             Boolean[,] Claimed = new Boolean[Grid.Height, Grid.Width];
             List<Stock> Stocks = BuildStocks(Grid, Surface, Features);
             List<Pass> Passes = new List<Pass>();
+            Int32 PadTrips = 0;
             List<((Int32 Bx, Int32 By) Cell, Double DepthM)> BladeCuts =
                 new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>();
             Double BladeBcy = 0.0;
@@ -737,7 +740,26 @@ namespace HaulBuilder
             Double MaxDepth = Options.MaxDepthMm / Constants.MILLIMETERS_PER_METER;
             Double FillPerM = Grid.AreaM2 * Constants.M3_TO_CY * Grid.Compaction;
             Double CutPerM = Grid.AreaM2 * Constants.M3_TO_CY;
+            // The pad is planned first. A road planned ahead of it takes the nearby trim,
+            // and the pad is then left with hauls that are too light and too long.
+            List<Feature> BuildOrder = new List<Feature>();
             foreach (Feature Item in Features)
+            {
+                if (Item.IsPad)
+                {
+                    BuildOrder.Add(Item);
+                }
+            }
+
+            foreach (Feature Item in Features)
+            {
+                if (!Item.IsPad)
+                {
+                    BuildOrder.Add(Item);
+                }
+            }
+
+            foreach (Feature Item in BuildOrder)
             {
                 Dictionary<Int32, List<LaneCell>> Lanes = new Dictionary<Int32, List<LaneCell>>();
                 for (Int32 By = 0; By < Grid.Height; By += 1)
@@ -803,6 +825,7 @@ namespace HaulBuilder
 
                 // One direction on the bank. A lane change waits until the next lane is an S-bend ahead.
                 Double RadiusM = Options.MinimumTurningDiameterFt * Constants.FEET_TO_METERS * Constants.HALF_SCALE;
+                Int32 Before = Passes.Count;
                 Passes.AddRange(EmitForward(
                     Grid,
                     Surface,
@@ -820,9 +843,15 @@ namespace HaulBuilder
                     BladeMaxM,
                     BladeCuts,
                     ref BladeBcy));
+                if (Item.IsPad)
+                {
+                    PadTrips += Passes.Count - Before;
+                }
             }
 
-            Surface.BladeMoveBcy = BladeBcy;
+            // Light drafts plus the casing the pan was told to leave.
+            Surface.BladeMoveBcy = BladeBcy + ExcludedFillBcy(Grid, Surface);
+            Surface.PadTripCount = PadTrips;
 
             // Hours, turnaround, and the return come from the same guidance every other stage uses.
             GuideRoadStage(Grid, Surface, Passes, Options, Bowl);
@@ -861,6 +890,43 @@ namespace HaulBuilder
             Surface.RoadCellCutBcy = RoadCut;
             Surface.FieldCutBcy = FieldCut;
             return Passes;
+        }
+
+        /// <summary>
+        /// Bank fill on excluded casing cells. The pan does not place it, so the blade does.
+        /// </summary>
+        /// <param name="Grid">Existing ground and cell area.</param>
+        /// <param name="Surface">Pad target and the exclusion mask.</param>
+        /// <returns>Bank cubic yards above the existing ground.</returns>
+        private static Double ExcludedFillBcy
+            (
+            Grid Grid,
+            RoadPadSurface Surface
+            )
+        {
+            Double FillPerM = Grid.AreaM2 * Constants.M3_TO_CY * Grid.Compaction;
+            Double Sum = 0.0;
+            for (Int32 By = 0; By < Grid.Height; By += 1)
+            {
+                for (Int32 Bx = 0; Bx < Grid.Width; Bx += 1)
+                {
+                    if (!Surface.Excluded[By, Bx])
+                    {
+                        continue;
+                    }
+
+                    Double Gap = (Surface.FieldDesignM[By, Bx] + Surface.RelM[By, Bx]) - Grid.Existing[By, Bx];
+                    if (Gap <= LIFT_EPSILON_M)
+                    {
+                        continue;
+                    }
+
+                    // Weight is the fraction of the cell that sits on the pad.
+                    Sum += Gap * Surface.Weight[By, Bx] * FillPerM;
+                }
+            }
+
+            return Sum;
         }
 
         /// <summary>
@@ -2978,10 +3044,10 @@ namespace HaulBuilder
             /// <summary>Gets the pad index, or -1 for a road.</summary>
             public Int32 PadIndex { get; init; }
 
-            /// <summary>Gets the shoulder height in metres for a road, or the height at the well for a pad.</summary>
+            /// <summary>Gets the shoulder height in metres. A pad rises from this height toward the well.</summary>
             public Double HeightM { get; init; }
 
-            /// <summary>Gets the shoulder height in feet for a road, or the height at the well for a pad.</summary>
+            /// <summary>Gets the shoulder height in feet. A pad rises from this height toward the well.</summary>
             public Double HeightFt { get; init; }
 
             /// <summary>Gets the road centreline height in feet. Zero for a pad.</summary>
@@ -3489,13 +3555,7 @@ namespace HaulBuilder
                     : Closest(X, Y).Distance;
                 if (Radial <= HalfTopM)
                 {
-                    if (IsPad)
-                    {
-                        // The pad is highest at the well and falls away across the top.
-                        return Math.Max(0.0, HeightM - (Cross * Radial));
-                    }
-
-                    // The shoulder is HeightM. The crown adds height toward the centreline.
+                    // The shoulder is HeightM. Both a road and a pad rise from there toward the middle.
                     return HeightM + (Cross * (HalfTopM - Radial));
                 }
 
@@ -3504,12 +3564,9 @@ namespace HaulBuilder
                     return 0.0;
                 }
 
-                // A road side slope leaves the shoulder. A pad side slope leaves the lower edge of the top.
-                Double Edge = IsPad
-                    ? Math.Max(0.0, HeightM - (Cross * HalfTopM))
-                    : HeightM;
+                // The 3:1 edge leaves the shoulder and reaches the toe.
                 Double Fraction = (Radial - HalfTopM) / SideReachM;
-                return Math.Max(0.0, Edge * (1.0 - Fraction));
+                return Math.Max(0.0, HeightM * (1.0 - Fraction));
             }
 
             /// <summary>

@@ -155,8 +155,11 @@ namespace HaulBuilder
         /// <summary>Gets bank cubic yards the pans haul on the road stage.</summary>
         public Double PanHaulBcy { get; internal set; }
 
-        /// <summary>Gets bank cubic yards handed to the blade because the pan load would have been too light.</summary>
+        /// <summary>Gets bank cubic yards the blade places: light pan drafts, and the well casing the pan does not enter.</summary>
         public Double BladeMoveBcy { get; internal set; }
+
+        /// <summary>Gets how many road-stage trips spread on a pad.</summary>
+        public Int32 PadTripCount { get; internal set; }
 
         /// <summary>Gets field-pass hours per bank cubic yard. Null until the field plan is measured.</summary>
         public Double? FieldHoursPerBcy { get; internal set; }
