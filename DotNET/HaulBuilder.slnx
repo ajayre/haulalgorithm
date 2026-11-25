@@ -1,10 +1,5 @@
 
 <Solution>
-  <Project Path="HaulBuilder/HaulBuilder.csproj" />
-  <Project Path="FieldSolver.Tests/FieldSolver.Tests.csproj" />
-  <Project Path="FieldSolver/FieldSolver.csproj" />
-  <Project Path="FieldSolverCli.Tests/FieldSolverCli.Tests.csproj" />
-  <Project Path="FieldSolverCli/FieldSolverCli.csproj" />
-  <Project Path="FieldSolverProof/FieldSolverProof.csproj" />
   <Project Path="HaulBuilder.Tests/HaulBuilder.Tests.csproj" />
+  <Project Path="HaulBuilder/HaulBuilder.csproj" />
 </Solution>

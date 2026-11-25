@@ -215,8 +215,9 @@ namespace HaulBuilder
 
         /// <summary>
         /// Gets total pass count.
+        /// The road and pad stage raises this after field guidance has already been stored.
         /// </summary>
-        public Int32 NPasses { get; }
+        public Int32 NPasses { get; internal set; }
 
         /// <summary>
         /// Gets total RETURN distance in metres.

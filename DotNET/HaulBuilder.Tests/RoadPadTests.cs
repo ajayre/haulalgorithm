@@ -1517,5 +1517,181 @@ namespace HaulBuilder.Tests
             Double Cone = Math.PI * R1 * R1 * Rise / 3.0;
             return ((Frustum + Cone) / 27.0) * 1.2;
         }
+
+        /// <summary>
+        /// Road and pad courses join the guidance the caller reads, and their hours join that clock.
+        /// An empty stage leaves a field-only clock alone. A run with no guidance clock still gets the routes.
+        /// </summary>
+        [Fact]
+        public void RoadAndPadGuidanceJoinsTheFieldClock()
+        {
+            (Grid Grid, _) = Rectangle(LANE_FT, LANE_FT, LANE_FT);
+            HaulBuilderOptions Options = new HaulBuilderOptions
+            {
+                FieldEfficiency = 0.5,
+                IncludeGuidanceCsv = true,
+            };
+            GuidancePoint FieldPoint = new GuidancePoint(
+                1, 1, "START", "UP", 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, "Begin guidance");
+            GuidanceTiming.Result FieldClock = FieldClockOf(3600.0);
+            HaulBuilderResult Empty = new HaulBuilderResult();
+            Empty.GuidancePoints.Add(FieldPoint);
+            Empty.DetailedGuidanceTime = FieldClock;
+            HaulBuilderEngine.PublishRoadGuidance(
+                Empty,
+                Grid,
+                new RoadPadSurface(1, 1),
+                Options,
+                new List<Pass>());
+            Assert.Same(FieldClock, Empty.DetailedGuidanceTime);
+            Assert.Single(Empty.GuidancePoints);
+
+            Pass Road = new Pass(
+                new List<((Int32 Bx, Int32 By) Cell, Double DepthM)> { ((0, 0), 0.03) },
+                new List<((Int32 Bx, Int32 By) Cell, Double DepthM)> { ((0, 0), 0.02) },
+                1.0,
+                10.0,
+                (0.0, 0.0),
+                (1.0, 0.0),
+                (2.0, 0.0),
+                (3.0, 0.0));
+            Pass Field = new Pass(
+                new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>(),
+                new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>(),
+                0.0,
+                0.0,
+                (0.0, 0.0),
+                (0.0, 0.0),
+                (0.0, 0.0),
+                (0.0, 0.0));
+            HaulBuilderResult Result = new HaulBuilderResult();
+            Result.GuidancePoints.Add(FieldPoint);
+            Result.Guidance = new GuidanceResult(
+                new List<GuidancePoint> { FieldPoint },
+                2.6,
+                2.6,
+                0.0,
+                1,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0,
+                0.0,
+                0);
+            Result.Route = new Route(
+                new List<Int32> { 0, 1 },
+                new List<Pass> { Field, Road },
+                0.0);
+            Result.DetailedGuidanceTime = FieldClockOf(3600.0);
+            RoadPadSurface Surface = new RoadPadSurface(1, 1);
+            Surface.RoadStageHours = 1.0;
+            Surface.BladeShapingHours = 0.5;
+            Surface.RoadCourses = new List<TripGuidance.TripCourse>
+            {
+                new TripGuidance.TripCourse(
+                    1,
+                    HaulStage.Road,
+                    new List<TripGuidance.CourseSegment>(),
+                    new List<TripGuidance.GuidancePoint>
+                    {
+                        new TripGuidance.GuidancePoint(
+                            1, 100.0, 200.0, 0.0, TripGuidance.GuidanceAction.Cut, true, false),
+                        new TripGuidance.GuidancePoint(
+                            2, 110.0, 200.0, 0.0, TripGuidance.GuidanceAction.Fill, true, false),
+                    },
+                    new List<TripGuidance.ConnectorNote>(),
+                    1800.0,
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0,
+                    new TripGuidance.GradeLedger(0.0, 0.0, 0.0)),
+            };
+            HaulBuilderEngine.PublishRoadGuidance(
+                Result,
+                Grid,
+                Surface,
+                Options,
+                new List<Pass> { Road });
+
+            Assert.Equal(3, Result.GuidancePoints.Count);
+            Assert.Equal(3, Result.Guidance.Points.Count);
+            Assert.Equal(2, Result.Guidance.NPasses);
+            GuidancePoint Cut = Result.GuidancePoints[1];
+            GuidancePoint Fill = Result.GuidancePoints[2];
+            Assert.Equal(2, Cut.PassNo);
+            Assert.Equal("CUT", Cut.Action);
+            Assert.Equal("DOWN", Cut.Blade);
+            Assert.Equal(100.0, Cut.X);
+            Assert.Equal(200.0, Cut.Y);
+            Assert.Equal(90.0, Cut.HeadingDeg, 3);
+            Assert.Equal(30.0, Cut.DepthMm, 3);
+            Assert.Equal(2, Fill.PassNo);
+            Assert.Equal("FILL", Fill.Action);
+            Assert.Equal(20.0, Fill.DepthMm, 3);
+            Assert.Equal(10.0, Fill.SegDistM, 3);
+            Assert.Contains("100.000", Result.CsvTextByName["guidance"], StringComparison.Ordinal);
+            Assert.Contains("CUT", Result.CsvTextByName["guidance"], StringComparison.Ordinal);
+
+            // Productive road time is 0.5 h at efficiency 0.5, so the scheduled stage is 1 h, plus 0.5 h of blade shaping.
+            GuidanceTiming.Result Clock = Result.DetailedGuidanceTime;
+            Assert.Equal(5400.0, Clock.MotionSeconds, 3);
+            Assert.Equal(1800.0, Clock.EventSeconds, 3);
+            Assert.Equal(1800.0, Clock.FieldEfficiencyAllowanceSeconds, 3);
+            Assert.Equal(9000.0, Clock.TotalSeconds, 3);
+            Assert.Equal(1800.0, Clock.PhaseSeconds[LifecyclePlanner.Phase.Cut], 3);
+            Assert.Equal(1800.0, Clock.RouteSeconds[2], 3);
+
+            HaulBuilderResult RoutesOnly = new HaulBuilderResult();
+            RoutesOnly.Route = Result.Route;
+            HaulBuilderEngine.PublishRoadGuidance(
+                RoutesOnly,
+                Grid,
+                Surface,
+                Options,
+                new List<Pass> { Road });
+            Assert.Null(RoutesOnly.DetailedGuidanceTime);
+            Assert.Equal(2, RoutesOnly.GuidancePoints.Count);
+            Assert.Equal(2, RoutesOnly.GuidancePoints[0].PassNo);
+        }
+
+        /// <summary>
+        /// A guidance clock with one block of motion and no events or allowance.
+        /// </summary>
+        /// <param name="MotionSeconds">Productive field seconds already on the clock.</param>
+        /// <returns>The clock.</returns>
+        private static GuidanceTiming.Result FieldClockOf
+            (
+            Double MotionSeconds
+            )
+        {
+            return new GuidanceTiming.Result(
+                new Dictionary<LifecyclePlanner.Phase, Double>(),
+                new Dictionary<LifecyclePlanner.Phase, Double>(),
+                new Dictionary<Int32, Double>(),
+                new Dictionary<Int32, Double>(),
+                MotionSeconds,
+                MotionSeconds,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0,
+                0,
+                0,
+                0.0,
+                new List<GuidanceTiming.CurveViolation>());
+        }
     }
 }

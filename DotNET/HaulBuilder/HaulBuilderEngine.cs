@@ -665,8 +665,8 @@ namespace HaulBuilder
 
             if (Roads != null)
             {
-                // Field guidance has already run. Road passes are guided inside the road
-                // stage, through TripGuidance, and stay after that field sequence.
+                // Field guidance has already run. FinishRoads appends the road and pad
+                // trips and copies their courses onto the guidance the caller reads.
                 FinishRoads(Result, Grid, Flow, Roads, Opt, PassResult, Route);
             }
 
@@ -2361,6 +2361,435 @@ namespace HaulBuilder
         }
 
         /// <summary>
+        /// Copies road and pad courses onto the guidance the caller already reads,
+        /// and adds that stage to the guidance clock.
+        /// Field guidance is built before these trips exist, so without this copy
+        /// the published hours and the route list stay at the field-only plan.
+        /// A run that skipped guidance has no guidance clock. Its route estimate
+        /// already walks the appended passes, so this method only adds the points.
+        /// </summary>
+        /// <param name="Result">Run whose guidance points and guidance clock are extended.</param>
+        /// <param name="Grid">Grid whose zone projects the new points to latitude and longitude.</param>
+        /// <param name="Surface">Surface that holds the guided courses and the stage hours.</param>
+        /// <param name="Opt">Field efficiency and guidance export flags.</param>
+        /// <param name="RoadPasses">Road and pad trips in the same order as <see cref="RoadPadSurface.RoadCourses"/>.</param>
+        internal static void PublishRoadGuidance
+            (
+            HaulBuilderResult Result,
+            Grid Grid,
+            RoadPadSurface Surface,
+            HaulBuilderOptions Opt,
+            IReadOnlyList<Pass> RoadPasses
+            )
+        {
+            if ((Surface.RoadCourses.Count == 0)
+                && (Surface.RoadStageHours <= 0.0)
+                && (Surface.BladeShapingHours <= 0.0))
+            {
+                return;
+            }
+
+            Int32 FirstIndex = FirstRoadPassIndex(Result, RoadPasses);
+            List<GuidancePoint> Added = BuildRoadGuidancePoints(
+                Result,
+                Grid,
+                Surface,
+                RoadPasses,
+                FirstIndex);
+            if (Added.Count > 0)
+            {
+                if (Result.Guidance != null)
+                {
+                    Result.Guidance.Points.AddRange(Added);
+                    Int32 PassCount = Result.Guidance.NPasses;
+                    for (Int32 Index = 0; Index < Added.Count; Index += 1)
+                    {
+                        if (Added[Index].PassNo > PassCount)
+                        {
+                            PassCount = Added[Index].PassNo;
+                        }
+                    }
+
+                    Result.Guidance.NPasses = PassCount;
+                }
+
+                // BuildGuidance copied the field points into a second list. Keep both.
+                if ((Result.Guidance == null)
+                    || !ReferenceEquals(Result.Guidance.Points, Result.GuidancePoints))
+                {
+                    Result.GuidancePoints.AddRange(Added);
+                }
+
+                if (Opt.IncludeGuidanceCsv)
+                {
+                    Result.CsvTextByName["guidance"] = BuildGuidanceCsv(Result.GuidancePoints);
+                }
+
+                if (Opt.IncludeGuidancePng)
+                {
+                    Result.PngBytesByName["guidance"] = Render.RenderGuidancePng(
+                        Grid,
+                        Result.GuidancePoints,
+                        Opt.PixelsPerCell,
+                        Opt.BladeWidthMm / Constants.MILLIMETERS_PER_METER);
+                }
+            }
+
+            AddRoadStageToGuidanceClock(Result, Surface, Opt, FirstIndex);
+        }
+
+        /// <summary>
+        /// Turns each road and pad course into the same waypoint records the field uses.
+        /// </summary>
+        /// <param name="Result">Run, read for the sequence and distance already published.</param>
+        /// <param name="Grid">Grid whose zone projects each sample.</param>
+        /// <param name="Surface">Surface that holds the courses.</param>
+        /// <param name="RoadPasses">Trips aligned with the courses, used for the cut and fill depth.</param>
+        /// <param name="FirstIndex">Zero-based index of the first road trip in the published route.</param>
+        /// <returns>Waypoints to append. Empty when the courses have no samples.</returns>
+        private static List<GuidancePoint> BuildRoadGuidancePoints
+            (
+            HaulBuilderResult Result,
+            Grid Grid,
+            RoadPadSurface Surface,
+            IReadOnlyList<Pass> RoadPasses,
+            Int32 FirstIndex
+            )
+        {
+            List<GuidancePoint> Added = new List<GuidancePoint>();
+            Int32 Sequence = Result.GuidancePoints.Count;
+            Double CumulativeM = 0.0;
+            if (Result.GuidancePoints.Count > 0)
+            {
+                CumulativeM = Result.GuidancePoints[Result.GuidancePoints.Count - 1].CumDistM;
+            }
+
+            if ((Result.Guidance != null) && (Result.Guidance.Points.Count > Sequence))
+            {
+                Sequence = Result.Guidance.Points.Count;
+                CumulativeM = Result.Guidance.Points[Result.Guidance.Points.Count - 1].CumDistM;
+            }
+
+            for (Int32 TripIndex = 0; TripIndex < Surface.RoadCourses.Count; TripIndex += 1)
+            {
+                TripGuidance.TripCourse Course = Surface.RoadCourses[TripIndex];
+                Pass? Trip = TripIndex < RoadPasses.Count ? RoadPasses[TripIndex] : null;
+                Int32 PassNo = FirstIndex + TripIndex + 1;
+                Double CutDepthMm = Trip == null ? 0.0 : MeanDepthMm(Trip.CutCells);
+                Double FillDepthMm = Trip == null ? 0.0 : MeanDepthMm(Trip.FillCells);
+                Boolean Started = false;
+                Double PreviousX = 0.0;
+                Double PreviousY = 0.0;
+                foreach (TripGuidance.GuidancePoint Sample in Course.Points)
+                {
+                    Double SegmentM = 0.0;
+                    if (Started)
+                    {
+                        Double Dx = Sample.X - PreviousX;
+                        Double Dy = Sample.Y - PreviousY;
+                        SegmentM = Math.Sqrt((Dx * Dx) + (Dy * Dy));
+                        CumulativeM += SegmentM;
+                    }
+
+                    Started = true;
+                    PreviousX = Sample.X;
+                    PreviousY = Sample.Y;
+                    Sequence += 1;
+                    String Action = RoadActionName(Sample.Action);
+                    Double DepthMm = 0.0;
+                    if (Sample.Action == TripGuidance.GuidanceAction.Cut)
+                    {
+                        DepthMm = CutDepthMm;
+                    }
+                    else if (Sample.Action == TripGuidance.GuidanceAction.Fill)
+                    {
+                        DepthMm = FillDepthMm;
+                    }
+
+                    (Double Lat, Double Lon) LatLon = Agd.LatLonFromUtm(
+                        Sample.X,
+                        Sample.Y,
+                        Grid.Zone,
+                        Grid.IsNorthern);
+                    Added.Add(new GuidancePoint(
+                        Sequence,
+                        PassNo,
+                        Action,
+                        Sample.BladeDown ? "DOWN" : "UP",
+                        Sample.X,
+                        Sample.Y,
+                        LatLon.Lat,
+                        LatLon.Lon,
+                        DepthMm,
+                        BearingFromEastRad(Sample.HeadingRad),
+                        SegmentM,
+                        CumulativeM,
+                        RoadGuidanceInstruction(Action, DepthMm)));
+                }
+            }
+
+            return Added;
+        }
+
+        /// <summary>
+        /// Adds the road and pad stage onto the guidance clock the published hours use.
+        /// </summary>
+        /// <param name="Result">Run whose <see cref="HaulBuilderResult.DetailedGuidanceTime"/> is replaced.</param>
+        /// <param name="Surface">Stage hours and courses. The hours already include field efficiency.</param>
+        /// <param name="Opt">Field efficiency, used to split productive time from the allowance.</param>
+        /// <param name="FirstIndex">Zero-based index of the first road trip in the published route.</param>
+        private static void AddRoadStageToGuidanceClock
+            (
+            HaulBuilderResult Result,
+            RoadPadSurface Surface,
+            HaulBuilderOptions Opt,
+            Int32 FirstIndex
+            )
+        {
+            GuidanceTiming.Result? Timing = Result.DetailedGuidanceTime;
+            if ((Timing == null)
+                || ((Surface.RoadStageHours <= 0.0) && (Surface.BladeShapingHours <= 0.0)))
+            {
+                return;
+            }
+
+            // The same split GuideRoadStage used when it stored RoadStageHours.
+            Double Factor = ((Opt.FieldEfficiency > 0.0) && (Opt.FieldEfficiency <= 1.0))
+                ? Opt.FieldEfficiency
+                : 1.0;
+            Double LoadedS = 0.0;
+            Double UnloadedS = 0.0;
+            Dictionary<LifecyclePlanner.Phase, Double> PhaseSeconds =
+                new Dictionary<LifecyclePlanner.Phase, Double>(Timing.PhaseSeconds);
+            Dictionary<Int32, Double> RouteSeconds =
+                new Dictionary<Int32, Double>(Timing.RouteSeconds);
+            for (Int32 TripIndex = 0; TripIndex < Surface.RoadCourses.Count; TripIndex += 1)
+            {
+                TripGuidance.TripCourse Course = Surface.RoadCourses[TripIndex];
+                LoadedS += Course.CutSeconds + Course.LoadedSeconds + Course.SpreadSeconds + Course.GradeSeconds;
+                UnloadedS += Course.TurnaroundSeconds + Course.EmptySeconds;
+                AddPhaseSeconds(PhaseSeconds, LifecyclePlanner.Phase.Cut, Course.CutSeconds);
+                AddPhaseSeconds(PhaseSeconds, LifecyclePlanner.Phase.Transit, Course.LoadedSeconds);
+                AddPhaseSeconds(PhaseSeconds, LifecyclePlanner.Phase.Fill, Course.SpreadSeconds);
+                AddPhaseSeconds(PhaseSeconds, LifecyclePlanner.Phase.TurnToGrade, Course.TurnaroundSeconds);
+                AddPhaseSeconds(PhaseSeconds, LifecyclePlanner.Phase.Grade, Course.GradeSeconds);
+                AddPhaseSeconds(PhaseSeconds, LifecyclePlanner.Phase.TransitToNextCut, Course.EmptySeconds);
+                Int32 PassNo = FirstIndex + TripIndex + 1;
+                Double Have = 0.0;
+                RouteSeconds.TryGetValue(PassNo, out Have);
+                RouteSeconds[PassNo] = Have + Course.ProductiveSeconds;
+            }
+
+            Double MotionS = LoadedS + UnloadedS;
+            if (MotionS <= 0.0)
+            {
+                // Hours were stored without a course breakdown. Keep them on the clock anyway.
+                MotionS = Surface.RoadStageHours * Factor * Constants.SECONDS_PER_HOUR;
+            }
+
+            Double ScheduledS = Surface.RoadStageHours * Constants.SECONDS_PER_HOUR;
+            Double AllowanceS = ScheduledS - MotionS;
+            if (AllowanceS < 0.0)
+            {
+                AllowanceS = 0.0;
+            }
+
+            Double BladeS = Surface.BladeShapingHours * Constants.SECONDS_PER_HOUR;
+            List<GuidanceTiming.CurveViolation> Violations =
+                new List<GuidanceTiming.CurveViolation>(Timing.CurveViolations);
+            Result.DetailedGuidanceTime = new GuidanceTiming.Result(
+                PhaseSeconds,
+                Timing.PhaseDistanceM,
+                RouteSeconds,
+                Timing.RouteDistanceM,
+                Timing.MotionSeconds + MotionS,
+                Timing.ConstantSpeedSeconds + MotionS,
+                Timing.EventSeconds + BladeS,
+                Timing.FieldEfficiencyAllowanceSeconds + AllowanceS,
+                Timing.DistanceM,
+                Timing.LoadedSeconds + LoadedS,
+                Timing.LoadedDistanceM,
+                Timing.UnloadedSeconds + UnloadedS,
+                Timing.UnloadedDistanceM,
+                Timing.CurvatureLimitedDistanceM,
+                Timing.MotionBlockCount,
+                Timing.CurvatureConstraintCount,
+                Timing.ForcedStopCount,
+                Timing.MinimumObservedCurveRadiusM,
+                Violations);
+        }
+
+        /// <summary>
+        /// Adds seconds to one lifecycle phase, creating the entry when the field plan had none.
+        /// </summary>
+        /// <param name="PhaseSeconds">Phase clock being extended.</param>
+        /// <param name="Phase">Phase that owns the seconds.</param>
+        /// <param name="Seconds">Productive seconds to add. Zero is left unchanged.</param>
+        private static void AddPhaseSeconds
+            (
+            Dictionary<LifecyclePlanner.Phase, Double> PhaseSeconds,
+            LifecyclePlanner.Phase Phase,
+            Double Seconds
+            )
+        {
+            if (Seconds == 0.0)
+            {
+                return;
+            }
+
+            Double Have = 0.0;
+            PhaseSeconds.TryGetValue(Phase, out Have);
+            PhaseSeconds[Phase] = Have + Seconds;
+        }
+
+        /// <summary>
+        /// Zero-based index of the first road trip in the published route.
+        /// When field guidance already used that pass number, the road routes start after it.
+        /// </summary>
+        /// <param name="Result">Run whose route and guidance points are already published.</param>
+        /// <param name="RoadPasses">Road and pad trips appended to that route.</param>
+        /// <returns>Zero-based index. The first road pass number is this value plus one.</returns>
+        private static Int32 FirstRoadPassIndex
+            (
+            HaulBuilderResult Result,
+            IReadOnlyList<Pass> RoadPasses
+            )
+        {
+            Int32 NextPass = 1;
+            for (Int32 Index = 0; Index < Result.GuidancePoints.Count; Index += 1)
+            {
+                Int32 After = Result.GuidancePoints[Index].PassNo + 1;
+                if (After > NextPass)
+                {
+                    NextPass = After;
+                }
+            }
+
+            if (Result.Guidance != null)
+            {
+                for (Int32 Index = 0; Index < Result.Guidance.Points.Count; Index += 1)
+                {
+                    Int32 After = Result.Guidance.Points[Index].PassNo + 1;
+                    if (After > NextPass)
+                    {
+                        NextPass = After;
+                    }
+                }
+            }
+
+            Int32 First = NextPass - 1;
+            if ((Result.Route == null) || (RoadPasses.Count == 0))
+            {
+                return First;
+            }
+
+            for (Int32 Index = 0; Index < Result.Route.OrderedPasses.Count; Index += 1)
+            {
+                if (ReferenceEquals(Result.Route.OrderedPasses[Index], RoadPasses[0])
+                    && ((Index + 1) >= NextPass))
+                {
+                    return Index;
+                }
+            }
+
+            return First;
+        }
+
+        /// <summary>
+        /// Maps a road-course action onto the action code field guidance already exports.
+        /// </summary>
+        /// <param name="Action">Action stored on the road course.</param>
+        /// <returns>The exported action code.</returns>
+        private static String RoadActionName
+            (
+            TripGuidance.GuidanceAction Action
+            )
+        {
+            return Action switch
+            {
+                TripGuidance.GuidanceAction.Cut => "CUT",
+                TripGuidance.GuidanceAction.Fill => "FILL",
+                TripGuidance.GuidanceAction.Grade => "GRADE",
+                TripGuidance.GuidanceAction.Carry => "HAUL",
+                TripGuidance.GuidanceAction.Return => "RETURN",
+                _ => "MOVE",
+            };
+        }
+
+        /// <summary>
+        /// Operator text for one exported road or pad action.
+        /// </summary>
+        /// <param name="Action">Exported action code.</param>
+        /// <param name="DepthMm">Mean cut or fill depth in millimetres. Zero on a travel action.</param>
+        /// <returns>The instruction stored on the waypoint.</returns>
+        private static String RoadGuidanceInstruction
+            (
+            String Action,
+            Double DepthMm
+            )
+        {
+            return Action switch
+            {
+                "CUT" => String.Format(
+                    CultureInfo.InvariantCulture,
+                    "Road or pad: cut approximately {0:F0} mm",
+                    DepthMm),
+                "FILL" => String.Format(
+                    CultureInfo.InvariantCulture,
+                    "Road or pad: fill approximately {0:F0} mm",
+                    DepthMm),
+                "GRADE" => "Road or pad: grade the completed fill",
+                "HAUL" => "Road or pad: travel loaded",
+                "RETURN" => "Road or pad: travel unloaded",
+                _ => "Road or pad: turn around",
+            };
+        }
+
+        /// <summary>
+        /// Bearing in degrees clockwise from north, from a heading in radians anticlockwise from east.
+        /// </summary>
+        /// <param name="HeadingRad">Heading on the road course.</param>
+        /// <returns>Bearing in the range 0 to 360.</returns>
+        private static Double BearingFromEastRad
+            (
+            Double HeadingRad
+            )
+        {
+            Double Degrees = 90.0 - ((HeadingRad * Constants.DEGREES_PER_HALF_TURN) / Math.PI);
+            Degrees %= 360.0;
+            if (Degrees < 0.0)
+            {
+                Degrees += 360.0;
+            }
+
+            return Degrees;
+        }
+
+        /// <summary>
+        /// Mean absolute depth of a cut or fill list, in millimetres.
+        /// </summary>
+        /// <param name="Cells">Cells and depths on one side of a trip. Empty returns zero.</param>
+        /// <returns>Mean depth in millimetres.</returns>
+        private static Double MeanDepthMm
+            (
+            List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Cells
+            )
+        {
+            if (Cells.Count == 0)
+            {
+                return 0.0;
+            }
+
+            Double Sum = 0.0;
+            for (Int32 Index = 0; Index < Cells.Count; Index += 1)
+            {
+                Sum += Math.Abs(Cells[Index].DepthM);
+            }
+
+            return (Sum / Cells.Count) * Constants.MILLIMETERS_PER_METER;
+        }
+
+        /// <summary>
         /// Appends the road stage, publishes the final design, and writes the road report.
         /// </summary>
         /// <param name="Result">Run that receives the passes and the report.</param>
@@ -2391,6 +2820,8 @@ namespace HaulBuilder
                 AppendRoadPasses(Result.PassResult, Result.Route, RoadPasses);
             }
 
+            // Field guidance and its clock were closed before these trips existed.
+            PublishRoadGuidance(Result, Grid, Surface, Opt, RoadPasses);
             Int32 Handled = RoadPadBuild.CountCutBelowAndFilled(Grid, Surface, PlannedPasses.Passes);
             if ((Result.PassResult != null) && !ReferenceEquals(Result.PassResult, PlannedPasses))
             {
