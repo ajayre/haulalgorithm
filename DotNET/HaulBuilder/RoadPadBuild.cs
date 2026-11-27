@@ -4,8 +4,9 @@ namespace HaulBuilder
 {
     /// <summary>
     /// Builds access roads and well pads to a fixed height above the fitted field
-    /// design, reserves the cut that supplies them, and plans the pan trips that
-    /// place them after sweep-up.
+    /// design. Surplus on the pan is ordinary cut for the main stages. The deficit
+    /// is reserved as blade-width lanes on the nearest field cut and placed by the
+    /// road stage, after flow and before correcting.
     /// </summary>
     static public partial class RoadPadBuild
     {
@@ -32,6 +33,26 @@ namespace HaulBuilder
 
         /// <summary>Depths below this are not a pan lift.</summary>
         private const Double LIFT_EPSILON_M = 1e-5;
+
+        /// <summary>
+        /// Cut left above a reserved layer so the cell still has a flow arrow.
+        /// The flow field draws an arrow only when existing and target differ by more than this.
+        /// </summary>
+        private const Double FLOW_SOURCE_KEEP_M = 0.001;
+
+        /// <summary>Bank cubic yards the road-stage balance may miss and still pass.</summary>
+        private const Double BALANCE_CUSHION_BCY = 0.05;
+
+        /// <summary>A reserve lane is this many turning radii long. A shorter run is not reserved.</summary>
+        private const Double RESERVE_LANE_RADII = 4.0;
+
+        /// <summary>A slope flatter than this, in metres per metre, has no downhill cut direction.</summary>
+        private const Double FLAT_SLOPE = 0.001;
+
+        /// <summary>
+        /// Extra metres allowed past the finish tolerance so a cell that landed on the tolerance is not a miss.
+        /// </summary>
+        private const Double FINISH_COMPARE_SLACK_M = 1e-9;
 
         /// <summary>Off-grid embankment below this is not reported as an open end.</summary>
         private const Double OPEN_END_BCY = 0.05;
@@ -73,6 +94,7 @@ namespace HaulBuilder
             }
 
             NonNegative(Options.RoadBladeMoveMaxFt, nameof(Options.RoadBladeMoveMaxFt));
+            NonNegative(Options.ReserveMaxDepthFt, nameof(Options.ReserveMaxDepthFt));
             if (Options.Roads == null)
             {
                 throw new ArgumentNullException(nameof(Options.Roads));
@@ -659,8 +681,8 @@ namespace HaulBuilder
             WarnBoundary(Surface, Features, Ring);
             WarnUnreachedPads(Surface, Features);
             WarnOpenEnds(Grid, Surface, Features, Ring);
-            AssignStageCut(Grid, Surface, Features);
-            ReserveCut(Grid, Surface, Features);
+            AssignStageCut(Grid, Surface);
+            ReserveCut(Grid, Surface, Options);
             for (Int32 By = 0; By < Grid.Height; By += 1)
             {
                 for (Int32 Bx = 0; Bx < Grid.Width; Bx += 1)
@@ -672,7 +694,7 @@ namespace HaulBuilder
 
                     if (Surface.PanM[By, Bx] > LIFT_EPSILON_M)
                     {
-                        // Every stage aims at the pan. Nothing may cut a pan cell below it.
+                        // The pan is the floor. Main stages may cut surplus down to it, and they do not fill it.
                         Grid.Target[By, Bx] = Surface.FieldDesignM[By, Bx] + Surface.PanM[By, Bx];
                     }
                     else
@@ -728,11 +750,13 @@ namespace HaulBuilder
 
             Double LaneM = LaneWidthFt(Options) * Constants.FEET_TO_METERS;
             Boolean[,] Claimed = new Boolean[Grid.Height, Grid.Width];
-            List<Stock> Stocks = BuildStocks(Grid, Surface, Features);
+            // The reserve fills the pan first. Surplus on the bank is used only after that reserve is gone.
+            RefreshReserveLeft(Surface);
+            List<Stock> SurplusStocks = BuildStocks(Grid, Surface, Features, false);
             List<Pass> Passes = new List<Pass>();
             Int32 PadTrips = 0;
-            List<((Int32 Bx, Int32 By) Cell, Double DepthM)> BladeCuts =
-                new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>();
+            Surface.BladeCuts.Clear();
+            Surface.BladeFills.Clear();
             Double BladeBcy = 0.0;
             Double MinLoad = Options.RoadMinTripLoadPct;
             Double BladeMaxM = Options.RoadBladeMoveMaxFt * Constants.FEET_TO_METERS;
@@ -826,13 +850,13 @@ namespace HaulBuilder
                 // One direction on the bank. A lane change waits until the next lane is an S-bend ahead.
                 Double RadiusM = Options.MinimumTurningDiameterFt * Constants.FEET_TO_METERS * Constants.HALF_SCALE;
                 Int32 Before = Passes.Count;
-                Passes.AddRange(EmitForward(
+                // The cut is a ribbon along the reserve lane, any heading. The spread stays on the bank lanes.
+                Passes.AddRange(EmitReserveRibbons(
                     Grid,
-                    Surface,
                     Item,
                     Ordered,
                     Keys,
-                    Stocks,
+                    Surface,
                     Bowl,
                     MaxDepth,
                     FillPerM,
@@ -840,9 +864,32 @@ namespace HaulBuilder
                     LaneM,
                     RadiusM,
                     MinLoad,
-                    BladeMaxM,
-                    BladeCuts,
+                    Surface.BladeCuts,
+                    Surface.BladeFills,
                     ref BladeBcy));
+                if (ReserveLeft(Surface) <= 1e-4)
+                {
+                    Passes.AddRange(EmitForward(
+                        Grid,
+                        Surface,
+                        Item,
+                        Ordered,
+                        Keys,
+                        SurplusStocks,
+                        Bowl,
+                        MaxDepth,
+                        FillPerM,
+                        CutPerM,
+                        LaneM,
+                        RadiusM,
+                        MinLoad,
+                        BladeMaxM,
+                        Surface.BladeCuts,
+                        Surface.BladeFills,
+                        ref BladeBcy,
+                        true));
+                }
+
                 if (Item.IsPad)
                 {
                     PadTrips += Passes.Count - Before;
@@ -874,7 +921,7 @@ namespace HaulBuilder
                 }
             }
 
-            foreach (((Int32 Bx, Int32 By) Cell, Double DepthM) Cut in BladeCuts)
+            foreach (((Int32 Bx, Int32 By) Cell, Double DepthM) Cut in Surface.BladeCuts)
             {
                 Double Bank = Cut.DepthM * CutPerM;
                 if (Surface.PanM[Cut.Cell.By, Cut.Cell.Bx] > LIFT_EPSILON_M)
@@ -1856,6 +1903,49 @@ namespace HaulBuilder
                         Off[Index]);
                     Surface.Warnings.Add(Text);
                     Surface.Roads[Road.RoadIndex].OpenEndLines.Add(Text);
+                    // The clipped end is not a finish failure. The in-grid cells beside it still are.
+                    MarkOpenEnd(Grid, Surface, Road, Ends[Index]);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Marks pan cells of one road that sit on an open end.
+        /// </summary>
+        /// <param name="Grid">Cell centres.</param>
+        /// <param name="Surface">Receives the open-end mask.</param>
+        /// <param name="Road">Road whose end is open.</param>
+        /// <param name="End">The open endpoint.</param>
+        private static void MarkOpenEnd
+            (
+            Grid Grid,
+            RoadPadSurface Surface,
+            Feature Road,
+            (Double X, Double Y) End
+            )
+        {
+            Double Reach = Road.ToeM + Grid.GridSizeM;
+            Double Reach2 = Reach * Reach;
+            for (Int32 By = 0; By < Grid.Height; By += 1)
+            {
+                for (Int32 Bx = 0; Bx < Grid.Width; Bx += 1)
+                {
+                    if (!Grid.Valid[By, Bx] || (Surface.PanM[By, Bx] <= LIFT_EPSILON_M))
+                    {
+                        continue;
+                    }
+
+                    if (Surface.OwnerIsPad[By, Bx] || (Surface.OwnerIndex[By, Bx] != Road.RoadIndex))
+                    {
+                        continue;
+                    }
+
+                    Double Dx = Grid.CenterX[By, Bx] - End.X;
+                    Double Dy = Grid.CenterY[By, Bx] - End.Y;
+                    if (((Dx * Dx) + (Dy * Dy)) <= Reach2)
+                    {
+                        Surface.OpenEnd[By, Bx] = true;
+                    }
                 }
             }
         }
@@ -2187,77 +2277,52 @@ namespace HaulBuilder
         }
 
         /// <summary>
-        /// Gives the road stage the trim it will place, and records the borrow still required.
-        /// Trim beyond the pan fill stays with the field stages.
+        /// Records pan surplus and pan deficit before haul planning.
+        /// Surplus stays with the main stages. The borrow is the pan deficit times fill-to-bank, not the crown volume.
         /// </summary>
         /// <param name="Grid">Existing ground.</param>
-        /// <param name="Surface">Pan and field design. Receives <see cref="RoadPadSurface.StageCutM"/>.</param>
-        /// <param name="Features">Used to keep the nearest trim.</param>
+        /// <param name="Surface">Pan and field design. Receives the surplus, the deficit, and the borrow.</param>
         private static void AssignStageCut
             (
             Grid Grid,
-            RoadPadSurface Surface,
-            List<Feature> Features
+            RoadPadSurface Surface
             )
         {
             Double CutPer = Grid.AreaM2 * Constants.M3_TO_CY;
             Double FillPer = CutPer * Grid.Compaction;
-            Double FillBank = 0.0;
-            List<Candidate> Trims = new List<Candidate>();
+            Double SurplusBank = 0.0;
+            Double DeficitBank = 0.0;
             for (Int32 By = 0; By < Grid.Height; By += 1)
             {
                 for (Int32 Bx = 0; Bx < Grid.Width; Bx += 1)
                 {
-                    if (Surface.PanM[By, Bx] <= LIFT_EPSILON_M)
+                    if (!Grid.Valid[By, Bx] || (Surface.PanM[By, Bx] <= LIFT_EPSILON_M))
                     {
                         continue;
                     }
 
-                    Double Gap = (Surface.FieldDesignM[By, Bx] + Surface.PanM[By, Bx]) - Grid.Existing[By, Bx];
-                    if (Gap > LIFT_EPSILON_M)
+                    Double Target = Surface.FieldDesignM[By, Bx] + Surface.PanM[By, Bx];
+                    Double Surplus = Math.Max(0.0, Grid.Existing[By, Bx] - Target);
+                    Double Deficit = Math.Max(0.0, Target - Grid.Existing[By, Bx]);
+                    Surface.SurplusM[By, Bx] = Surplus;
+                    Surface.DeficitM[By, Bx] = Deficit;
+                    // None of the surplus is kept for the road stage. The main stages haul it to any fill.
+                    if (Surplus > LIFT_EPSILON_M)
                     {
-                        FillBank += Gap * FillPer;
-                        continue;
+                        SurplusBank += Surplus * CutPer;
                     }
 
-                    Double Above = -Gap;
-                    if (Above <= LIFT_EPSILON_M)
+                    if (Deficit > LIFT_EPSILON_M)
                     {
-                        continue;
+                        // Fill-to-bank: a metre of pan fill takes compaction times a metre of cut.
+                        DeficitBank += Deficit * FillPer;
                     }
-
-                    Trims.Add(new Candidate(Bx, By, Above, NearestFeatureM(Grid, Features, Bx, By)));
                 }
             }
 
-            Trims.Sort((Left, Right) =>
-            {
-                Int32 ByDistance = Left.DistanceM.CompareTo(Right.DistanceM);
-                if (ByDistance != 0)
-                {
-                    return ByDistance;
-                }
-
-                Int32 ByRow = Left.By.CompareTo(Right.By);
-                return (ByRow != 0) ? ByRow : Left.Bx.CompareTo(Right.Bx);
-            });
-            Double Keep = FillBank;
-            Double TrimTaken = 0.0;
-            foreach (Candidate Cell in Trims)
-            {
-                if (Keep <= 1e-6)
-                {
-                    break;
-                }
-
-                Double Bank = Cell.DepthM * CutPer;
-                Double TakeBank = Math.Min(Bank, Keep);
-                Surface.StageCutM[Cell.By, Cell.Bx] = TakeBank / CutPer;
-                Keep -= TakeBank;
-                TrimTaken += TakeBank;
-            }
-
-            Surface.PanImportBcy = Math.Max(0.0, FillBank - TrimTaken);
+            Surface.RoadSurplusBcy = SurplusBank;
+            Surface.RoadDeficitBcy = DeficitBank;
+            Surface.PanImportBcy = DeficitBank;
         }
 
         /// <summary>
@@ -2291,31 +2356,931 @@ namespace HaulBuilder
         }
 
         /// <summary>
-        /// Holds back the nearest field cut until it covers the pan borrow.
-        /// Pan cells are not in the pool.
+        /// Distance from a field cell to the nearest pan cell that still needs fill.
+        /// </summary>
+        /// <param name="Grid">Cell centres.</param>
+        /// <param name="Deficits">Pan cells below the pan target.</param>
+        /// <param name="Bx">Column of the field cell.</param>
+        /// <param name="By">Row of the field cell.</param>
+        /// <returns>Distance in metres. Infinite when there is no deficit.</returns>
+        private static Double NearestDeficitM
+            (
+            Grid Grid,
+            List<(Int32 Bx, Int32 By)> Deficits,
+            Int32 Bx,
+            Int32 By
+            )
+        {
+            Double X = Grid.CenterX[By, Bx];
+            Double Y = Grid.CenterY[By, Bx];
+            Double Best = Double.PositiveInfinity;
+            for (Int32 Index = 0; Index < Deficits.Count; Index += 1)
+            {
+                (Int32 Bx, Int32 By) Cell = Deficits[Index];
+                Double Dx = Grid.CenterX[Cell.By, Cell.Bx] - X;
+                Double Dy = Grid.CenterY[Cell.By, Cell.Bx] - Y;
+                Double Dist = (Dx * Dx) + (Dy * Dy);
+                if (Dist < Best)
+                {
+                    Best = Dist;
+                }
+            }
+
+            return Math.Sqrt(Best);
+        }
+
+        /// <summary>
+        /// The line reported with the road stage: reserve size, the pan deficit, what the road used,
+        /// what correcting left, and how many field cells missed the design.
+        /// </summary>
+        /// <param name="Surface">Surface whose reserve figures are printed.</param>
+        /// <returns>The report line.</returns>
+        internal static String FormatReserveLine
+            (
+            RoadPadSurface Surface
+            )
+        {
+            return String.Format(
+                CultureInfo.InvariantCulture,
+                "Road reserve: size {0:F3} BCY, road deficit {1:F3} BCY, reserve used {2:F3} BCY, unused after correcting {3:F3} BCY, field cells off design {4}.",
+                Surface.PanImportBcy,
+                Surface.RoadDeficitBcy,
+                Surface.ReserveUsedBcy,
+                Surface.UnusedReserveBcy,
+                Surface.FieldCellsOffDesign);
+        }
+
+        /// <summary>
+        /// The line reported before the road stage: surplus left, deficit left, and reserve left.
+        /// </summary>
+        /// <param name="Surface">Surface whose before-stage figures are printed.</param>
+        /// <returns>The report line.</returns>
+        internal static String FormatBalanceLine
+            (
+            RoadPadSurface Surface
+            )
+        {
+            return String.Format(
+                CultureInfo.InvariantCulture,
+                "Road balance: surplus remaining {0:F3} BCY, road deficit {1:F3} BCY, reserve available {2:F3} BCY.",
+                Surface.SurplusRemainingBcy,
+                Surface.DeficitRemainingBcy,
+                Surface.ReserveAvailableBcy);
+        }
+
+        /// <summary>
+        /// Applies the main-stage passes and measures what the road stage still has to do.
+        /// The grid's existing ground becomes the ground those passes leave. The caller restores the survey.
+        /// Leftover pan surplus is offered to the road stage. Reserved depth is what the main stages did not take.
+        /// </summary>
+        /// <param name="Grid">Existing ground. The passes are applied to it.</param>
+        /// <param name="Surface">Pan, reserve, and the before-stage figures.</param>
+        /// <param name="FieldPasses">Passes driven before the road stage. Road passes are not included.</param>
+        internal static void AccountBeforeRoadStage
+            (
+            Grid Grid,
+            RoadPadSurface Surface,
+            IReadOnlyList<Pass> FieldPasses
+            )
+        {
+            ApplyPasses(Grid.Existing, FieldPasses);
+            Double CutPer = Grid.AreaM2 * Constants.M3_TO_CY;
+            Double FillPer = CutPer * Grid.Compaction;
+            Double SurplusBank = 0.0;
+            Double DeficitBank = 0.0;
+            for (Int32 By = 0; By < Grid.Height; By += 1)
+            {
+                for (Int32 Bx = 0; Bx < Grid.Width; Bx += 1)
+                {
+                    if (!Grid.Valid[By, Bx] || (Surface.PanM[By, Bx] <= LIFT_EPSILON_M))
+                    {
+                        continue;
+                    }
+
+                    Double Target = Surface.FieldDesignM[By, Bx] + Surface.PanM[By, Bx];
+                    Double Above = Math.Max(0.0, Grid.Existing[By, Bx] - Target);
+                    Double Below = Math.Max(0.0, Target - Grid.Existing[By, Bx]);
+                    // The road stage may cut only the surplus the main stages left.
+                    Surface.StageCutM[By, Bx] = Above;
+                    if (Above > LIFT_EPSILON_M)
+                    {
+                        SurplusBank += Above * CutPer;
+                    }
+
+                    if (Below > LIFT_EPSILON_M)
+                    {
+                        DeficitBank += Below * FillPer;
+                    }
+                }
+            }
+
+            Double ReserveBank = 0.0;
+            for (Int32 By = 0; By < Grid.Height; By += 1)
+            {
+                for (Int32 Bx = 0; Bx < Grid.Width; Bx += 1)
+                {
+                    if (Surface.ReservedDepthM[By, Bx] <= LIFT_EPSILON_M)
+                    {
+                        continue;
+                    }
+
+                    // The reserved layer is the bottom of the cut. Soil still above the field design, up to that layer, is what remains.
+                    Double AboveDesign = Grid.Existing[By, Bx] - Surface.FieldDesignM[By, Bx];
+                    Double Left = Math.Min(Surface.ReservedDepthM[By, Bx], Math.Max(0.0, AboveDesign));
+                    Surface.ReservedDepthM[By, Bx] = Left;
+                    ReserveBank += Left * CutPer;
+                }
+            }
+
+            Surface.SurplusRemainingBcy = SurplusBank;
+            Surface.DeficitRemainingBcy = DeficitBank;
+            Surface.ReserveAvailableBcy = ReserveBank;
+        }
+
+        /// <summary>
+        /// Gives correcting the reserve the road stage did not use, and the pan gap the road stage left.
+        /// Correcting may trim a pan cell down to its pan target, and it may fill a remaining deficit up to that target.
+        /// </summary>
+        /// <param name="Grid">Cell size and the valid mask. Existing ground is not changed.</param>
+        /// <param name="Surface">Reserve, pan, and the road-stage passes. Receives the used and unused figures.</param>
+        /// <param name="RoadPasses">Road-stage passes. Blade cuts on the surface are included.</param>
+        /// <param name="CutLeft">Cut still to assign. Pan cut the road took is removed. Unused reserve is left for the correcting close.</param>
+        /// <param name="FillLeft">Fill still to assign. Pan fill stays empty until the correcting close.</param>
+        /// <param name="Ledger">Required depths. Pan cut the road took is released.</param>
+        internal static void HandReserveToCorrecting
+            (
+            Grid Grid,
+            RoadPadSurface Surface,
+            IReadOnlyList<Pass> RoadPasses,
+            Double[,] CutLeft,
+            Double[,] FillLeft,
+            HaulWorkLedger Ledger
+            )
+        {
+            Double[,] RoadCut = new Double[Grid.Height, Grid.Width];
+            Double[,] RoadFill = new Double[Grid.Height, Grid.Width];
+            AddDepths(RoadCut, Surface.BladeCuts);
+            AddDepths(RoadFill, Surface.BladeFills);
+            if (RoadPasses != null)
+            {
+                for (Int32 Index = 0; Index < RoadPasses.Count; Index += 1)
+                {
+                    AddDepths(RoadCut, RoadPasses[Index].CutCells);
+                    AddDepths(RoadFill, RoadPasses[Index].FillCells);
+                }
+            }
+
+            Double CutPer = Grid.AreaM2 * Constants.M3_TO_CY;
+            Double UsedBank = 0.0;
+            Double UnusedBank = 0.0;
+            for (Int32 By = 0; By < Grid.Height; By += 1)
+            {
+                for (Int32 Bx = 0; Bx < Grid.Width; Bx += 1)
+                {
+                    Surface.UnusedDepthM[By, Bx] = 0.0;
+                    Surface.PanGapM[By, Bx] = 0.0;
+                    if (Surface.PanM[By, Bx] > LIFT_EPSILON_M)
+                    {
+                        // The coverage must not fill the pan. The correcting close fills whatever the road left.
+                        FillLeft[By, Bx] = 0.0;
+                        Double Taken = Math.Min(CutLeft[By, Bx], RoadCut[By, Bx]);
+                        if (Taken > LIFT_EPSILON_M)
+                        {
+                            CutLeft[By, Bx] -= Taken;
+                            Ledger.ReleaseRequiredCut(By, Bx, Taken);
+                        }
+
+                        if (!Surface.Excluded[By, Bx])
+                        {
+                            Double Gap = Surface.DeficitM[By, Bx] - RoadFill[By, Bx];
+                            if (Gap > LIFT_EPSILON_M)
+                            {
+                                Surface.PanGapM[By, Bx] = Gap;
+                            }
+                        }
+
+                        continue;
+                    }
+
+                    Double Offered = Surface.ReservedDepthM[By, Bx];
+                    if (Offered <= LIFT_EPSILON_M)
+                    {
+                        continue;
+                    }
+
+                    Double Used = Math.Min(Offered, RoadCut[By, Bx]);
+                    Double Unused = Offered - Used;
+                    UsedBank += Used * CutPer;
+                    if (Unused <= LIFT_EPSILON_M)
+                    {
+                        continue;
+                    }
+
+                    // Correcting cuts this after the coverage, paired with the pan gap.
+                    Surface.UnusedDepthM[By, Bx] = Unused;
+                    UnusedBank += Unused * CutPer;
+                }
+            }
+
+            Surface.ReserveUsedBcy = UsedBank;
+            Surface.UnusedReserveBcy = UnusedBank;
+        }
+
+        /// <summary>
+        /// Cuts the reserve the road stage left and fills the pan gap it left.
+        /// Field cells still outside the finish tolerance are then levelled against each other.
+        /// The trips are correcting trips. A cell is cut or filled at most one lift deep.
+        /// </summary>
+        /// <param name="Grid">Cell centres and the yard factors.</param>
+        /// <param name="Surface">Unused reserve and the pan gap. The unused figure is updated.</param>
+        /// <param name="Passes">Correcting trips are appended.</param>
+        /// <param name="Ledger">Required depths for the soil these trips move.</param>
+        /// <param name="Options">Bowl and the depth limit.</param>
+        internal static void CloseUnusedReserve
+            (
+            Grid Grid,
+            RoadPadSurface Surface,
+            List<Pass> Passes,
+            HaulWorkLedger Ledger,
+            HaulBuilderOptions Options
+            )
+        {
+            if ((Grid == null) || (Surface == null) || (Passes == null) || (Ledger == null) || (Options == null))
+            {
+                return;
+            }
+
+            Double CutPer = Grid.AreaM2 * Constants.M3_TO_CY;
+            Double FillPer = CutPer * Grid.Compaction;
+            Double Bowl = Options.ScraperCapacityLcy / Options.SwellFactor;
+            Double MaxDepth = Options.MaxDepthMm / Constants.MILLIMETERS_PER_METER;
+            Int32 Guard = 0;
+            while (Guard < 10000)
+            {
+                Guard += 1;
+                List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Cuts =
+                    new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>();
+                List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Fills =
+                    new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>();
+                Double Room = Bowl;
+                for (Int32 By = 0; (By < Grid.Height) && (Room > 1e-4); By += 1)
+                {
+                    for (Int32 Bx = 0; (Bx < Grid.Width) && (Room > 1e-4); Bx += 1)
+                    {
+                        if (Surface.UnusedDepthM[By, Bx] <= LIFT_EPSILON_M)
+                        {
+                            continue;
+                        }
+
+                        Double Depth = Math.Min(Surface.UnusedDepthM[By, Bx], Math.Min(MaxDepth, Room / Math.Max(CutPer, 1e-9)));
+                        if (Depth <= LIFT_EPSILON_M)
+                        {
+                            continue;
+                        }
+
+                        Cuts.Add(((Bx, By), Depth));
+                        Surface.UnusedDepthM[By, Bx] -= Depth;
+                        Room -= Depth * CutPer;
+                    }
+                }
+
+                if (Cuts.Count == 0)
+                {
+                    break;
+                }
+
+                Double Need = (Bowl - Room);
+                for (Int32 By = 0; (By < Grid.Height) && (Need > 1e-4); By += 1)
+                {
+                    for (Int32 Bx = 0; (Bx < Grid.Width) && (Need > 1e-4); Bx += 1)
+                    {
+                        if ((Surface.PanGapM[By, Bx] <= LIFT_EPSILON_M) || Surface.Excluded[By, Bx])
+                        {
+                            continue;
+                        }
+
+                        Double Depth = Math.Min(Surface.PanGapM[By, Bx], Math.Min(MaxDepth, Need / Math.Max(FillPer, 1e-9)));
+                        if (Depth <= LIFT_EPSILON_M)
+                        {
+                            continue;
+                        }
+
+                        Fills.Add(((Bx, By), Depth));
+                        Surface.PanGapM[By, Bx] -= Depth;
+                        Need -= Depth * FillPer;
+                    }
+                }
+
+                Double Placed = Bowl - Room - Need;
+                if ((Fills.Count == 0) || (Placed <= 1e-4))
+                {
+                    // No pan gap left for this cut. Put the depth back and stop.
+                    foreach (((Int32 Bx, Int32 By) Cell, Double DepthM) Cut in Cuts)
+                    {
+                        Surface.UnusedDepthM[Cut.Cell.By, Cut.Cell.Bx] += Cut.DepthM;
+                    }
+
+                    foreach (((Int32 Bx, Int32 By) Cell, Double DepthM) Fill in Fills)
+                    {
+                        Surface.PanGapM[Fill.Cell.By, Fill.Cell.Bx] += Fill.DepthM;
+                    }
+
+                    break;
+                }
+
+                // The fill may be short of the cut. Put the extra cut back, from the last cells.
+                Double CutLeftBank = (Bowl - Room) - (Bowl - Room - Need);
+                while ((CutLeftBank > 1e-4) && (Cuts.Count > 0))
+                {
+                    Int32 Last = Cuts.Count - 1;
+                    ((Int32 Bx, Int32 By) Cell, Double DepthM) Cut = Cuts[Last];
+                    Double Bank = Cut.DepthM * CutPer;
+                    if (Bank <= (CutLeftBank + 1e-9))
+                    {
+                        Surface.UnusedDepthM[Cut.Cell.By, Cut.Cell.Bx] += Cut.DepthM;
+                        Cuts.RemoveAt(Last);
+                        CutLeftBank -= Bank;
+                    }
+                    else
+                    {
+                        Double Give = CutLeftBank / Math.Max(CutPer, 1e-9);
+                        Surface.UnusedDepthM[Cut.Cell.By, Cut.Cell.Bx] += Give;
+                        Cuts[Last] = (Cut.Cell, Cut.DepthM - Give);
+                        CutLeftBank = 0.0;
+                    }
+                }
+
+                if (Cuts.Count == 0)
+                {
+                    foreach (((Int32 Bx, Int32 By) Cell, Double DepthM) Fill in Fills)
+                    {
+                        Surface.PanGapM[Fill.Cell.By, Fill.Cell.Bx] += Fill.DepthM;
+                    }
+
+                    break;
+                }
+
+                Double Load = 0.0;
+                foreach (((Int32 Bx, Int32 By) Cell, Double DepthM) Cut in Cuts)
+                {
+                    Load += Cut.DepthM * CutPer;
+                    Ledger.AddRequiredCut(Cut.Cell.By, Cut.Cell.Bx, Cut.DepthM);
+                }
+
+                foreach (((Int32 Bx, Int32 By) Cell, Double DepthM) Fill in Fills)
+                {
+                    Ledger.AddRequiredFill(Fill.Cell.By, Fill.Cell.Bx, Fill.DepthM);
+                }
+
+                (Double X, Double Y) CutStart = (Grid.CenterX[Cuts[0].Cell.By, Cuts[0].Cell.Bx], Grid.CenterY[Cuts[0].Cell.By, Cuts[0].Cell.Bx]);
+                (Double X, Double Y) CutEnd = (Grid.CenterX[Cuts[Cuts.Count - 1].Cell.By, Cuts[Cuts.Count - 1].Cell.Bx], Grid.CenterY[Cuts[Cuts.Count - 1].Cell.By, Cuts[Cuts.Count - 1].Cell.Bx]);
+                (Double X, Double Y) FillStart = (Grid.CenterX[Fills[0].Cell.By, Fills[0].Cell.Bx], Grid.CenterY[Fills[0].Cell.By, Fills[0].Cell.Bx]);
+                (Double X, Double Y) FillEnd = (Grid.CenterX[Fills[Fills.Count - 1].Cell.By, Fills[Fills.Count - 1].Cell.Bx], Grid.CenterY[Fills[Fills.Count - 1].Cell.By, Fills[Fills.Count - 1].Cell.Bx]);
+                Double Haul = Distance(CutEnd.X, CutEnd.Y, FillStart.X, FillStart.Y);
+                Pass Trip = new Pass(Cuts, Fills, Load, Haul, CutStart, CutEnd, FillStart, FillEnd);
+                Trip.Stage = HaulStage.Correcting;
+                Trip.RibbonOrder = true;
+                Passes.Add(Trip);
+            }
+
+            Double Left = 0.0;
+            for (Int32 By = 0; By < Grid.Height; By += 1)
+            {
+                for (Int32 Bx = 0; Bx < Grid.Width; Bx += 1)
+                {
+                    if (Surface.UnusedDepthM[By, Bx] > LIFT_EPSILON_M)
+                    {
+                        Left += Surface.UnusedDepthM[By, Bx] * CutPer;
+                    }
+                }
+            }
+
+            Surface.UnusedReserveBcy = Left;
+            LevelFieldResidual(Grid, Surface, Passes, Ledger, Options);
+        }
+
+        /// <summary>
+        /// Moves soil from field cells that finished high to field cells that finished low.
+        /// The trips are correcting trips. A cell is not cut below its design or filled above it.
+        /// </summary>
+        /// <param name="Grid">Survey in <see cref="Grid.Existing"/>, cell centres, and the yard factors.</param>
+        /// <param name="Surface">Field design, the road passes, and the blade moves.</param>
+        /// <param name="Passes">Passes already planned. Correcting trips are appended.</param>
+        /// <param name="Ledger">Required depths for the soil these trips move.</param>
+        /// <param name="Options">Bowl, depth limit, and the finish tolerance.</param>
+        private static void LevelFieldResidual
+            (
+            Grid Grid,
+            RoadPadSurface Surface,
+            List<Pass> Passes,
+            HaulWorkLedger Ledger,
+            HaulBuilderOptions Options
+            )
+        {
+            Double ToleranceM = Options.ToleranceMm / Constants.MILLIMETERS_PER_METER;
+            Double[,] Elevation = (Double[,])Grid.Existing.Clone();
+            ApplyPasses(Elevation, Passes);
+            if (Surface.StagePasses != null)
+            {
+                ApplyPasses(Elevation, Surface.StagePasses);
+            }
+
+            ApplyCells(Elevation, Surface.BladeCuts, -1.0);
+            ApplyCells(Elevation, Surface.BladeFills, 1.0);
+            Double CutPer = Grid.AreaM2 * Constants.M3_TO_CY;
+            Double FillPer = CutPer * Grid.Compaction;
+            Double Bowl = Options.ScraperCapacityLcy / Options.SwellFactor;
+            Double MaxDepth = Options.MaxDepthMm / Constants.MILLIMETERS_PER_METER;
+            Int32 Guard = 0;
+            while (Guard < 1000)
+            {
+                Guard += 1;
+                Boolean OffDesign = false;
+                List<(Int32 Bx, Int32 By, Double ExcessM)> Donors = new List<(Int32 Bx, Int32 By, Double ExcessM)>();
+                List<(Int32 Bx, Int32 By, Double HoleM)> Holes = new List<(Int32 Bx, Int32 By, Double HoleM)>();
+                for (Int32 By = 0; By < Grid.Height; By += 1)
+                {
+                    for (Int32 Bx = 0; Bx < Grid.Width; Bx += 1)
+                    {
+                        if (!Grid.Valid[By, Bx] || Surface.Excluded[By, Bx] || (Surface.PanM[By, Bx] > LIFT_EPSILON_M))
+                        {
+                            continue;
+                        }
+
+                        Double Off = Elevation[By, Bx] - Surface.FieldDesignM[By, Bx];
+                        if (Math.Abs(Off) > (ToleranceM + FINISH_COMPARE_SLACK_M))
+                        {
+                            OffDesign = true;
+                        }
+
+                        if (Off > LIFT_EPSILON_M)
+                        {
+                            Donors.Add((Bx, By, Off));
+                        }
+                        else if (Off < -LIFT_EPSILON_M)
+                        {
+                            Holes.Add((Bx, By, -Off));
+                        }
+                    }
+                }
+
+                if (!OffDesign || (Donors.Count == 0) || (Holes.Count == 0))
+                {
+                    break;
+                }
+
+                Donors.Sort((Left, Right) => Right.ExcessM.CompareTo(Left.ExcessM));
+                Holes.Sort((Left, Right) => Right.HoleM.CompareTo(Left.HoleM));
+                List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Cuts =
+                    new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>();
+                List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Fills =
+                    new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>();
+                Double Room = Bowl;
+                for (Int32 Index = 0; (Index < Donors.Count) && (Room > 1e-4); Index += 1)
+                {
+                    (Int32 Bx, Int32 By, Double ExcessM) Donor = Donors[Index];
+                    Double Depth = Math.Min(Donor.ExcessM, Math.Min(MaxDepth, Room / Math.Max(CutPer, 1e-9)));
+                    if (Depth <= LIFT_EPSILON_M)
+                    {
+                        continue;
+                    }
+
+                    Cuts.Add(((Donor.Bx, Donor.By), Depth));
+                    Elevation[Donor.By, Donor.Bx] -= Depth;
+                    Room -= Depth * CutPer;
+                }
+
+                Double Need = Bowl - Room;
+                for (Int32 Index = 0; (Index < Holes.Count) && (Need > 1e-4); Index += 1)
+                {
+                    (Int32 Bx, Int32 By, Double HoleM) Hole = Holes[Index];
+                    Double Depth = Math.Min(Hole.HoleM, Math.Min(MaxDepth, Need / Math.Max(FillPer, 1e-9)));
+                    if (Depth <= LIFT_EPSILON_M)
+                    {
+                        continue;
+                    }
+
+                    Fills.Add(((Hole.Bx, Hole.By), Depth));
+                    Elevation[Hole.By, Hole.Bx] += Depth;
+                    Need -= Depth * FillPer;
+                }
+
+                Double Placed = (Bowl - Room) - Need;
+                if ((Fills.Count == 0) || (Placed <= 1e-4))
+                {
+                    foreach (((Int32 Bx, Int32 By) Cell, Double DepthM) Cut in Cuts)
+                    {
+                        Elevation[Cut.Cell.By, Cut.Cell.Bx] += Cut.DepthM;
+                    }
+
+                    foreach (((Int32 Bx, Int32 By) Cell, Double DepthM) Fill in Fills)
+                    {
+                        Elevation[Fill.Cell.By, Fill.Cell.Bx] -= Fill.DepthM;
+                    }
+
+                    break;
+                }
+
+                // The fill may be short of the cut. Put the extra cut back, from the last cells.
+                Double Spare = Need;
+                while ((Spare > 1e-4) && (Cuts.Count > 0))
+                {
+                    Int32 Last = Cuts.Count - 1;
+                    ((Int32 Bx, Int32 By) Cell, Double DepthM) Cut = Cuts[Last];
+                    Double Bank = Cut.DepthM * CutPer;
+                    if (Bank <= (Spare + 1e-9))
+                    {
+                        Elevation[Cut.Cell.By, Cut.Cell.Bx] += Cut.DepthM;
+                        Cuts.RemoveAt(Last);
+                        Spare -= Bank;
+                    }
+                    else
+                    {
+                        Double Give = Spare / Math.Max(CutPer, 1e-9);
+                        Elevation[Cut.Cell.By, Cut.Cell.Bx] += Give;
+                        Cuts[Last] = (Cut.Cell, Cut.DepthM - Give);
+                        Spare = 0.0;
+                    }
+                }
+
+                if (Cuts.Count == 0)
+                {
+                    foreach (((Int32 Bx, Int32 By) Cell, Double DepthM) Fill in Fills)
+                    {
+                        Elevation[Fill.Cell.By, Fill.Cell.Bx] -= Fill.DepthM;
+                    }
+
+                    break;
+                }
+
+                Double Load = 0.0;
+                foreach (((Int32 Bx, Int32 By) Cell, Double DepthM) Cut in Cuts)
+                {
+                    Load += Cut.DepthM * CutPer;
+                    Ledger.AddRequiredCut(Cut.Cell.By, Cut.Cell.Bx, Cut.DepthM);
+                }
+
+                foreach (((Int32 Bx, Int32 By) Cell, Double DepthM) Fill in Fills)
+                {
+                    Ledger.AddRequiredFill(Fill.Cell.By, Fill.Cell.Bx, Fill.DepthM);
+                }
+
+                (Double X, Double Y) CutStart = (Grid.CenterX[Cuts[0].Cell.By, Cuts[0].Cell.Bx], Grid.CenterY[Cuts[0].Cell.By, Cuts[0].Cell.Bx]);
+                (Double X, Double Y) CutEnd = (Grid.CenterX[Cuts[Cuts.Count - 1].Cell.By, Cuts[Cuts.Count - 1].Cell.Bx], Grid.CenterY[Cuts[Cuts.Count - 1].Cell.By, Cuts[Cuts.Count - 1].Cell.Bx]);
+                (Double X, Double Y) FillStart = (Grid.CenterX[Fills[0].Cell.By, Fills[0].Cell.Bx], Grid.CenterY[Fills[0].Cell.By, Fills[0].Cell.Bx]);
+                (Double X, Double Y) FillEnd = (Grid.CenterX[Fills[Fills.Count - 1].Cell.By, Fills[Fills.Count - 1].Cell.Bx], Grid.CenterY[Fills[Fills.Count - 1].Cell.By, Fills[Fills.Count - 1].Cell.Bx]);
+                Pass Trip = new Pass(Cuts, Fills, Load, Distance(CutEnd.X, CutEnd.Y, FillStart.X, FillStart.Y), CutStart, CutEnd, FillStart, FillEnd);
+                Trip.Stage = HaulStage.Correcting;
+                Trip.RibbonOrder = true;
+                Passes.Add(Trip);
+            }
+        }
+
+        /// <summary>
+        /// Fails when a field cell finished off the design or a pan cell missed its pan target.
+        /// Open ends and the well casing are not required to meet the pan.
+        /// </summary>
+        /// <param name="Survey">Existing ground before any pass.</param>
+        /// <param name="Grid">Grid size, the valid mask, and the cell area.</param>
+        /// <param name="Surface">Pan target, field design, open ends, casing, and the blade moves.</param>
+        /// <param name="Passes">Every pass, including the road stage and correcting.</param>
+        /// <param name="ToleranceMm">Finish tolerance in millimetres.</param>
+        /// <exception cref="InvalidOperationException">A checked cell finished outside the tolerance.</exception>
+        internal static void RequireFinish
+            (
+            Double[,] Survey,
+            Grid Grid,
+            RoadPadSurface Surface,
+            IReadOnlyList<Pass> Passes,
+            Double ToleranceMm
+            )
+        {
+            Double ToleranceM = ToleranceMm / Constants.MILLIMETERS_PER_METER;
+            Double[,] Elevation = (Double[,])Survey.Clone();
+            ApplyPasses(Elevation, Passes);
+            ApplyCells(Elevation, Surface.BladeCuts, -1.0);
+            ApplyCells(Elevation, Surface.BladeFills, 1.0);
+            Int32 HighCount = 0;
+            Double WorstHigh = 0.0;
+            Int32 WorstHighBx = 0;
+            Int32 WorstHighBy = 0;
+            for (Int32 By = 0; By < Grid.Height; By += 1)
+            {
+                for (Int32 Bx = 0; Bx < Grid.Width; Bx += 1)
+                {
+                    if (!Grid.Valid[By, Bx] || Surface.Excluded[By, Bx] || (Surface.PanM[By, Bx] > LIFT_EPSILON_M))
+                    {
+                        continue;
+                    }
+
+                    Double Off = Elevation[By, Bx] - Surface.FieldDesignM[By, Bx];
+                    if (Math.Abs(Off) <= (ToleranceM + FINISH_COMPARE_SLACK_M))
+                    {
+                        continue;
+                    }
+
+                    HighCount += 1;
+                    if (Math.Abs(Off) > Math.Abs(WorstHigh))
+                    {
+                        WorstHigh = Off;
+                        WorstHighBx = Bx;
+                        WorstHighBy = By;
+                    }
+                }
+            }
+
+            Surface.FieldCellsOffDesign = HighCount;
+            if (HighCount > 0)
+            {
+                throw new InvalidOperationException(String.Format(
+                    CultureInfo.InvariantCulture,
+                    "A field cell is more than the finish tolerance from the design. {0} cells, worst {1:F1} mm at ({2}, {3}).",
+                    HighCount,
+                    WorstHigh * Constants.MILLIMETERS_PER_METER,
+                    WorstHighBx,
+                    WorstHighBy));
+            }
+
+            PanTargetMiss? Miss = MeasurePanTarget(
+                Survey,
+                Grid,
+                Surface,
+                Passes,
+                new List<Pass>(),
+                ToleranceMm);
+            if (Miss != null)
+            {
+                throw new InvalidOperationException(Miss.FormatMessage());
+            }
+        }
+
+        /// <summary>
+        /// Fails when the reserve is not the pan deficit, or the road stage cut more than that deficit.
+        /// </summary>
+        /// <param name="Surface">Reserve size, deficit, and the cut the road stage took.</param>
+        /// <exception cref="InvalidOperationException">The road balance does not close.</exception>
+        internal static void RequireRoadBalance
+            (
+            RoadPadSurface Surface
+            )
+        {
+            if (Math.Abs(Surface.PanImportBcy - Surface.RoadDeficitBcy) > BALANCE_CUSHION_BCY)
+            {
+                throw new InvalidOperationException(String.Format(
+                    CultureInfo.InvariantCulture,
+                    "Reserve size {0:F3} BCY is not the road deficit {1:F3} BCY.",
+                    Surface.PanImportBcy,
+                    Surface.RoadDeficitBcy));
+            }
+
+            if (Surface.ReserveUsedBcy > (Surface.ReserveAvailableBcy + BALANCE_CUSHION_BCY))
+            {
+                throw new InvalidOperationException(String.Format(
+                    CultureInfo.InvariantCulture,
+                    "Reserve used {0:F3} BCY is more than the reserve available {1:F3} BCY.",
+                    Surface.ReserveUsedBcy,
+                    Surface.ReserveAvailableBcy));
+            }
+
+            Double RoadCut = Surface.RoadCellCutBcy + Surface.FieldCutBcy;
+            if (RoadCut > (Surface.DeficitRemainingBcy + BALANCE_CUSHION_BCY))
+            {
+                throw new InvalidOperationException(String.Format(
+                    CultureInfo.InvariantCulture,
+                    "Road-stage cut {0:F3} BCY is more than the road deficit remaining {1:F3} BCY.",
+                    RoadCut,
+                    Surface.DeficitRemainingBcy));
+            }
+        }
+
+        /// <summary>
+        /// Measures pan cells that finished outside the finish tolerance.
+        /// The haul plan continues. Open ends and the well casing are not required to meet it.
+        /// The survey is the ground before any pass.
+        /// </summary>
+        /// <param name="Survey">Existing ground before the main stages.</param>
+        /// <param name="Grid">Grid size and the valid mask.</param>
+        /// <param name="Surface">Pan target, open ends, casing, and the blade moves.</param>
+        /// <param name="FieldPasses">Main-stage passes.</param>
+        /// <param name="RoadPasses">Road-stage passes.</param>
+        /// <param name="ToleranceMm">Finish tolerance in millimetres.</param>
+        /// <returns>The miss, or null when every checked cell is inside the tolerance.</returns>
+        internal static PanTargetMiss? MeasurePanTarget
+            (
+            Double[,] Survey,
+            Grid Grid,
+            RoadPadSurface Surface,
+            IReadOnlyList<Pass> FieldPasses,
+            IReadOnlyList<Pass> RoadPasses,
+            Double ToleranceMm
+            )
+        {
+            Double ToleranceM = ToleranceMm / Constants.MILLIMETERS_PER_METER;
+            Double[,] Elevation = (Double[,])Survey.Clone();
+            ApplyPasses(Elevation, FieldPasses);
+            ApplyPasses(Elevation, RoadPasses);
+            ApplyCells(Elevation, Surface.BladeCuts, -1.0);
+            ApplyCells(Elevation, Surface.BladeFills, 1.0);
+            // Above is bank cut still on the pan. Below is bank fill still missing, with the same compaction as the road stage.
+            Double CutPer = Grid.AreaM2 * Constants.M3_TO_CY;
+            Double FillPer = CutPer * Grid.Compaction;
+            List<PanTargetMiss.Cell> Cells = new List<PanTargetMiss.Cell>();
+            Double AboveBcy = 0.0;
+            Double BelowBcy = 0.0;
+            Double Worst = 0.0;
+            Double WorstSigned = 0.0;
+            Int32 WorstBx = 0;
+            Int32 WorstBy = 0;
+            for (Int32 By = 0; By < Grid.Height; By += 1)
+            {
+                for (Int32 Bx = 0; Bx < Grid.Width; Bx += 1)
+                {
+                    if (!Grid.Valid[By, Bx] || (Surface.PanM[By, Bx] <= LIFT_EPSILON_M))
+                    {
+                        continue;
+                    }
+
+                    if (Surface.Excluded[By, Bx] || Surface.OpenEnd[By, Bx])
+                    {
+                        continue;
+                    }
+
+                    Double Target = Surface.FieldDesignM[By, Bx] + Surface.PanM[By, Bx];
+                    // Positive means the finished ground is still high.
+                    Double Signed = Elevation[By, Bx] - Target;
+                    Double Error = Math.Abs(Signed);
+                    if (Error <= (ToleranceM + FINISH_COMPARE_SLACK_M))
+                    {
+                        continue;
+                    }
+
+                    Cells.Add(new PanTargetMiss.Cell(Bx, By));
+                    if (Signed > 0.0)
+                    {
+                        AboveBcy += Signed * CutPer;
+                    }
+                    else
+                    {
+                        BelowBcy += (-Signed) * FillPer;
+                    }
+
+                    if (Error > Worst)
+                    {
+                        Worst = Error;
+                        WorstSigned = Signed;
+                        WorstBx = Bx;
+                        WorstBy = By;
+                    }
+                }
+            }
+
+            if (Cells.Count == 0)
+            {
+                return null;
+            }
+
+            return new PanTargetMiss(
+                WorstBx,
+                WorstBy,
+                WorstSigned * Constants.MILLIMETERS_PER_METER,
+                AboveBcy,
+                BelowBcy,
+                Cells);
+        }
+
+        /// <summary>
+        /// Copies the survey back onto the grid after the road stage has read the worked ground.
+        /// </summary>
+        /// <param name="Grid">Grid whose existing ground is replaced.</param>
+        /// <param name="Survey">Elevations taken before the main stages were applied.</param>
+        internal static void RestoreSurvey
+            (
+            Grid Grid,
+            Double[,] Survey
+            )
+        {
+            for (Int32 By = 0; By < Grid.Height; By += 1)
+            {
+                for (Int32 Bx = 0; Bx < Grid.Width; Bx += 1)
+                {
+                    Grid.Existing[By, Bx] = Survey[By, Bx];
+                }
+            }
+        }
+
+        /// <summary>
+        /// Applies cut and fill from passes. Cut lowers the ground. Fill raises it.
+        /// </summary>
+        /// <param name="Elevation">Ground to update.</param>
+        /// <param name="Passes">Passes to apply. Null is ignored.</param>
+        private static void ApplyPasses
+            (
+            Double[,] Elevation,
+            IReadOnlyList<Pass> Passes
+            )
+        {
+            if (Passes == null)
+            {
+                return;
+            }
+
+            for (Int32 Index = 0; Index < Passes.Count; Index += 1)
+            {
+                Pass Trip = Passes[Index];
+                ApplyCells(Elevation, Trip.CutCells, -1.0);
+                ApplyCells(Elevation, Trip.FillCells, 1.0);
+            }
+        }
+
+        /// <summary>
+        /// Adds depth onto a grid. Null cells are ignored.
+        /// </summary>
+        /// <param name="Depth">Depth grid to update.</param>
+        /// <param name="Cells">Cells and depths.</param>
+        private static void AddDepths
+            (
+            Double[,] Depth,
+            IReadOnlyList<((Int32 Bx, Int32 By) Cell, Double DepthM)> Cells
+            )
+        {
+            if (Cells == null)
+            {
+                return;
+            }
+
+            for (Int32 Index = 0; Index < Cells.Count; Index += 1)
+            {
+                ((Int32 Bx, Int32 By) Cell, Double DepthM) Entry = Cells[Index];
+                Depth[Entry.Cell.By, Entry.Cell.Bx] += Entry.DepthM;
+            }
+        }
+
+        /// <summary>
+        /// Adds a signed depth on each cell.
+        /// </summary>
+        /// <param name="Elevation">Ground to update.</param>
+        /// <param name="Cells">Cells and depths.</param>
+        /// <param name="Sign">-1 for cut, +1 for fill.</param>
+        private static void ApplyCells
+            (
+            Double[,] Elevation,
+            IReadOnlyList<((Int32 Bx, Int32 By) Cell, Double DepthM)> Cells,
+            Double Sign
+            )
+        {
+            if (Cells == null)
+            {
+                return;
+            }
+
+            for (Int32 Index = 0; Index < Cells.Count; Index += 1)
+            {
+                ((Int32 Bx, Int32 By) Cell, Double DepthM) Entry = Cells[Index];
+                Elevation[Entry.Cell.By, Entry.Cell.Bx] += Sign * Entry.DepthM;
+            }
+        }
+
+        /// <summary>
+        /// Holds the pan deficit back as depth on blade-width lanes.
+        /// A lane runs with the local cut, is at least four turning radii long, and an isolated cell is never reserved.
+        /// Each cell gives at most <see cref="HaulBuilderOptions.ReserveMaxDepthFt"/> and keeps enough cut to stay a flow source.
         /// </summary>
         /// <param name="Grid">Existing elevations.</param>
-        /// <param name="Surface">Field design that receives the reserved depth.</param>
-        /// <param name="Features">Roads and pads the cut is measured from.</param>
+        /// <param name="Surface">Field design that receives the reserved depth and the lanes.</param>
+        /// <param name="Options">The depth cap and the turning circle.</param>
         private static void ReserveCut
             (
             Grid Grid,
             RoadPadSurface Surface,
-            List<Feature> Features
+            HaulBuilderOptions Options
             )
         {
+            Surface.ReserveLanes.Clear();
             if (Surface.PanImportBcy <= 1e-6)
             {
                 return;
             }
 
-            List<Candidate> Cells = new List<Candidate>();
-            Double BankPerM = Grid.AreaM2 * Constants.M3_TO_CY;
+            List<(Int32 Bx, Int32 By)> Deficits = new List<(Int32 Bx, Int32 By)>();
             for (Int32 By = 0; By < Grid.Height; By += 1)
             {
                 for (Int32 Bx = 0; Bx < Grid.Width; Bx += 1)
                 {
-                    if (!Grid.Valid[By, Bx] || (Surface.PanM[By, Bx] > LIFT_EPSILON_M))
+                    if (Surface.DeficitM[By, Bx] > LIFT_EPSILON_M)
+                    {
+                        Deficits.Add((Bx, By));
+                    }
+                }
+            }
+
+            Double[,] DepthM = new Double[Grid.Height, Grid.Width];
+            Double[,] DistanceM = new Double[Grid.Height, Grid.Width];
+            List<(Int32 Bx, Int32 By)> Seeds = new List<(Int32 Bx, Int32 By)>();
+            for (Int32 By = 0; By < Grid.Height; By += 1)
+            {
+                for (Int32 Bx = 0; Bx < Grid.Width; Bx += 1)
+                {
+                    if (!Grid.Valid[By, Bx] || Surface.Excluded[By, Bx] || (Surface.PanM[By, Bx] > LIFT_EPSILON_M))
                     {
                         // The footprint is not borrow. Field cells outside it are.
                         continue;
@@ -2327,13 +3292,15 @@ namespace HaulBuilder
                         continue;
                     }
 
-                    Cells.Add(new Candidate(Bx, By, Depth, NearestFeatureM(Grid, Features, Bx, By)));
+                    DepthM[By, Bx] = Depth;
+                    DistanceM[By, Bx] = NearestDeficitM(Grid, Deficits, Bx, By);
+                    Seeds.Add((Bx, By));
                 }
             }
 
-            Cells.Sort((Left, Right) =>
+            Seeds.Sort((Left, Right) =>
             {
-                Int32 ByDistance = Left.DistanceM.CompareTo(Right.DistanceM);
+                Int32 ByDistance = DistanceM[Left.By, Left.Bx].CompareTo(DistanceM[Right.By, Right.Bx]);
                 if (ByDistance != 0)
                 {
                     return ByDistance;
@@ -2342,25 +3309,55 @@ namespace HaulBuilder
                 Int32 ByRow = Left.By.CompareTo(Right.By);
                 return (ByRow != 0) ? ByRow : Left.Bx.CompareTo(Right.Bx);
             });
-            Double Need = Surface.PanImportBcy;
-            foreach (Candidate Cell in Cells)
+            (Double[,] Dx, Double[,] Dy) Heading = CutHeadings(Grid, DepthM, Deficits);
+            Double BladeM = Options.BladeWidthMm / Constants.MILLIMETERS_PER_METER;
+            Double HalfM = Math.Max(BladeM, Grid.GridSizeM) * Constants.HALF_SCALE * 1.01;
+            Double MinLengthM = RESERVE_LANE_RADII * Options.MinimumTurningDiameterFt * Constants.FEET_TO_METERS * Constants.HALF_SCALE;
+            Boolean[,] Used = new Boolean[Grid.Height, Grid.Width];
+            // Cut-direction lanes are claimed first. The long axis is only for cells those lanes cannot cover.
+            for (Int32 Pass = 0; Pass < 2; Pass += 1)
             {
-                if (Need <= 1e-6)
+                foreach ((Int32 Bx, Int32 By) Seed in Seeds)
                 {
-                    break;
+                    if (Used[Seed.By, Seed.Bx])
+                    {
+                        continue;
+                    }
+
+                    // Snap onto the raster so a straight lane stays on cell centres.
+                    Double DirX = Heading.Dx[Seed.By, Seed.Bx];
+                    Double DirY = Heading.Dy[Seed.By, Seed.Bx];
+                    SnapLaneHeading(ref DirX, ref DirY);
+                    if (Pass == 0)
+                    {
+                        TryTakeLane(Grid, Surface, DepthM, DistanceM, Used, Seed.Bx, Seed.By, DirX, DirY, HalfM, MinLengthM);
+                    }
+                    else
+                    {
+                        TryTakeLane(Grid, Surface, DepthM, DistanceM, Used, Seed.Bx, Seed.By, -DirY, DirX, HalfM, MinLengthM);
+                    }
+                }
+            }
+
+            Surface.ReserveLanes.Sort((Left, Right) =>
+            {
+                Int32 ByDistance = Left.DistanceM.CompareTo(Right.DistanceM);
+                if (ByDistance != 0)
+                {
+                    return ByDistance;
                 }
 
-                Double Bank = Cell.DepthM * BankPerM;
-                if (Bank <= Need)
-                {
-                    Surface.ReservedDepthM[Cell.By, Cell.Bx] = Cell.DepthM;
-                    Need -= Bank;
-                }
-                else
-                {
-                    Surface.ReservedDepthM[Cell.By, Cell.Bx] = Need / BankPerM;
-                    Need = 0.0;
-                }
+                return Left.Cells[0].By.CompareTo(Right.Cells[0].By);
+            });
+            // A full-depth hold would drop the target onto the existing ground and erase the arrow.
+            // The kept sliver is taken only when the capped layer cannot cover the borrow.
+            Double CapM = Options.ReserveMaxDepthFt * Constants.FEET_TO_METERS;
+            Double BankPerM = Grid.AreaM2 * Constants.M3_TO_CY;
+            Double Need = Surface.PanImportBcy;
+            Need = ApplyLaneDepth(Surface, DepthM, BankPerM, CapM, Need, true);
+            if (Need > 1e-6)
+            {
+                Need = ApplyLaneDepth(Surface, DepthM, BankPerM, CapM, Need, false);
             }
 
             if (Need > 0.05)
@@ -2370,6 +3367,462 @@ namespace HaulBuilder
                     "Reserved cut is short by {0:F1} BCY.",
                     Need));
             }
+        }
+
+        /// <summary>
+        /// Downhill of the existing ground, smoothed so a lane has one heading.
+        /// Flat ground points at the nearest pan deficit.
+        /// </summary>
+        /// <param name="Grid">Existing elevations.</param>
+        /// <param name="DepthM">Cut depth. Zero off the borrow pool.</param>
+        /// <param name="Deficits">Pan cells below the pan target.</param>
+        /// <returns>Unit east and north headings. Zero where the cell is not cut.</returns>
+        private static (Double[,] Dx, Double[,] Dy) CutHeadings
+            (
+            Grid Grid,
+            Double[,] DepthM,
+            List<(Int32 Bx, Int32 By)> Deficits
+            )
+        {
+            Double[,] Dx = new Double[Grid.Height, Grid.Width];
+            Double[,] Dy = new Double[Grid.Height, Grid.Width];
+            for (Int32 By = 0; By < Grid.Height; By += 1)
+            {
+                for (Int32 Bx = 0; Bx < Grid.Width; Bx += 1)
+                {
+                    if (DepthM[By, Bx] <= LIFT_EPSILON_M)
+                    {
+                        continue;
+                    }
+
+                    Double East = SlopeAcross(Grid, Bx, By, 1, 0);
+                    Double North = SlopeAcross(Grid, Bx, By, 0, 1);
+                    Double Gx = -East;
+                    Double Gy = -North;
+                    Double Magnitude = Math.Sqrt((Gx * Gx) + (Gy * Gy));
+                    if (Magnitude < FLAT_SLOPE)
+                    {
+                        // No downhill. The haul toward the deficit is the cut direction.
+                        AimAtDeficit(Grid, Deficits, Bx, By, out Gx, out Gy);
+                        Magnitude = Math.Sqrt((Gx * Gx) + (Gy * Gy));
+                    }
+
+                    if (Magnitude > 1e-9)
+                    {
+                        Dx[By, Bx] = Gx / Magnitude;
+                        Dy[By, Bx] = Gy / Magnitude;
+                    }
+                }
+            }
+
+            Double[,] Sx = (Double[,])Dx.Clone();
+            Double[,] Sy = (Double[,])Dy.Clone();
+            for (Int32 By = 0; By < Grid.Height; By += 1)
+            {
+                for (Int32 Bx = 0; Bx < Grid.Width; Bx += 1)
+                {
+                    if (DepthM[By, Bx] <= LIFT_EPSILON_M)
+                    {
+                        continue;
+                    }
+
+                    Double SumX = Dx[By, Bx];
+                    Double SumY = Dy[By, Bx];
+                    for (Int32 StepY = -1; StepY <= 1; StepY += 1)
+                    {
+                        for (Int32 StepX = -1; StepX <= 1; StepX += 1)
+                        {
+                            Int32 Nx = Bx + StepX;
+                            Int32 Ny = By + StepY;
+                            if ((Nx < 0) || (Ny < 0) || (Nx >= Grid.Width) || (Ny >= Grid.Height))
+                            {
+                                continue;
+                            }
+
+                            if (DepthM[Ny, Nx] <= LIFT_EPSILON_M)
+                            {
+                                continue;
+                            }
+
+                            SumX += Dx[Ny, Nx];
+                            SumY += Dy[Ny, Nx];
+                        }
+                    }
+
+                    Double Magnitude = Math.Sqrt((SumX * SumX) + (SumY * SumY));
+                    if (Magnitude > 1e-9)
+                    {
+                        Sx[By, Bx] = SumX / Magnitude;
+                        Sy[By, Bx] = SumY / Magnitude;
+                    }
+                }
+            }
+
+            return (Sx, Sy);
+        }
+
+        /// <summary>
+        /// Snaps a heading to the nearest eighth of a circle so a lane follows cell centres.
+        /// </summary>
+        /// <param name="DirX">East component. Replaced with the snapped heading.</param>
+        /// <param name="DirY">North component. Replaced with the snapped heading.</param>
+        private static void SnapLaneHeading
+            (
+            ref Double DirX,
+            ref Double DirY
+            )
+        {
+            Double Magnitude = Math.Sqrt((DirX * DirX) + (DirY * DirY));
+            if (Magnitude < 1e-9)
+            {
+                return;
+            }
+
+            // Eight headings: the axis and the diagonal. A finer split leaves the cell centres off the strip.
+            Double Angle = Math.Atan2(DirY, DirX);
+            Double Snapped = Math.Round(Angle / (Math.PI / 4.0)) * (Math.PI / 4.0);
+            DirX = Math.Cos(Snapped);
+            DirY = Math.Sin(Snapped);
+        }
+
+        /// <summary>
+        /// Rise of the existing ground over run, in one grid step.
+        /// </summary>
+        /// <param name="Grid">Existing elevations.</param>
+        /// <param name="Bx">Column.</param>
+        /// <param name="By">Row.</param>
+        /// <param name="StepX">Column step, -1, 0, or 1.</param>
+        /// <param name="StepY">Row step, -1, 0, or 1.</param>
+        /// <returns>Slope in metres per metre. Zero when a neighbour is missing.</returns>
+        private static Double SlopeAcross
+            (
+            Grid Grid,
+            Int32 Bx,
+            Int32 By,
+            Int32 StepX,
+            Int32 StepY
+            )
+        {
+            Int32 AheadX = Bx + StepX;
+            Int32 AheadY = By + StepY;
+            Int32 BehindX = Bx - StepX;
+            Int32 BehindY = By - StepY;
+            Boolean Ahead = (AheadX >= 0) && (AheadY >= 0) && (AheadX < Grid.Width) && (AheadY < Grid.Height) && Grid.Valid[AheadY, AheadX];
+            Boolean Behind = (BehindX >= 0) && (BehindY >= 0) && (BehindX < Grid.Width) && (BehindY < Grid.Height) && Grid.Valid[BehindY, BehindX];
+            if (Ahead && Behind)
+            {
+                return (Grid.Existing[AheadY, AheadX] - Grid.Existing[BehindY, BehindX]) / (2.0 * Grid.GridSizeM);
+            }
+
+            if (Ahead)
+            {
+                return (Grid.Existing[AheadY, AheadX] - Grid.Existing[By, Bx]) / Grid.GridSizeM;
+            }
+
+            if (Behind)
+            {
+                return (Grid.Existing[By, Bx] - Grid.Existing[BehindY, BehindX]) / Grid.GridSizeM;
+            }
+
+            return 0.0;
+        }
+
+        /// <summary>
+        /// Unit vector from a cell toward the nearest pan deficit.
+        /// </summary>
+        /// <param name="Grid">Cell centres.</param>
+        /// <param name="Deficits">Pan cells below the pan target.</param>
+        /// <param name="Bx">Column.</param>
+        /// <param name="By">Row.</param>
+        /// <param name="DirX">East component. Zero when there is no deficit.</param>
+        /// <param name="DirY">North component. Zero when there is no deficit.</param>
+        private static void AimAtDeficit
+            (
+            Grid Grid,
+            List<(Int32 Bx, Int32 By)> Deficits,
+            Int32 Bx,
+            Int32 By,
+            out Double DirX,
+            out Double DirY
+            )
+        {
+            DirX = 1.0;
+            DirY = 0.0;
+            Double Best = Double.PositiveInfinity;
+            Double X = Grid.CenterX[By, Bx];
+            Double Y = Grid.CenterY[By, Bx];
+            for (Int32 Index = 0; Index < Deficits.Count; Index += 1)
+            {
+                (Int32 Bx, Int32 By) Cell = Deficits[Index];
+                Double Dx = Grid.CenterX[Cell.By, Cell.Bx] - X;
+                Double Dy = Grid.CenterY[Cell.By, Cell.Bx] - Y;
+                Double Dist = (Dx * Dx) + (Dy * Dy);
+                if (Dist < Best)
+                {
+                    Best = Dist;
+                    DirX = Dx;
+                    DirY = Dy;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Accepts one blade-width lane through a seed when the run is long enough.
+        /// </summary>
+        /// <param name="Grid">Cell centres.</param>
+        /// <param name="Surface">Receives the lane.</param>
+        /// <param name="DepthM">Cut depth. Zero off the borrow pool.</param>
+        /// <param name="DistanceM">Distance to the nearest pan deficit.</param>
+        /// <param name="Used">Cells already in a lane. The accepted run is marked.</param>
+        /// <param name="Bx">Seed column.</param>
+        /// <param name="By">Seed row.</param>
+        /// <param name="DirX">Lane direction east.</param>
+        /// <param name="DirY">Lane direction north.</param>
+        /// <param name="HalfM">Half the lane width, in metres.</param>
+        /// <param name="MinLengthM">Shortest lane, in metres.</param>
+        /// <returns>False when this heading has no lane of the required length.</returns>
+        private static Boolean TryTakeLane
+            (
+            Grid Grid,
+            RoadPadSurface Surface,
+            Double[,] DepthM,
+            Double[,] DistanceM,
+            Boolean[,] Used,
+            Int32 Bx,
+            Int32 By,
+            Double DirX,
+            Double DirY,
+            Double HalfM,
+            Double MinLengthM
+            )
+        {
+            Double Magnitude = Math.Sqrt((DirX * DirX) + (DirY * DirY));
+            if (Magnitude < 1e-9)
+            {
+                return false;
+            }
+
+            DirX /= Magnitude;
+            DirY /= Magnitude;
+            Double OriginX = Grid.CenterX[By, Bx];
+            Double OriginY = Grid.CenterY[By, Bx];
+            List<(Int32 Bx, Int32 By, Double Along)> Corridor = new List<(Int32 Bx, Int32 By, Double Along)>();
+            for (Int32 Row = 0; Row < Grid.Height; Row += 1)
+            {
+                for (Int32 Col = 0; Col < Grid.Width; Col += 1)
+                {
+                    if (Used[Row, Col] || (DepthM[Row, Col] <= LIFT_EPSILON_M))
+                    {
+                        continue;
+                    }
+
+                    Double RelX = Grid.CenterX[Row, Col] - OriginX;
+                    Double RelY = Grid.CenterY[Row, Col] - OriginY;
+                    Double Perp = (RelX * -DirY) + (RelY * DirX);
+                    if (Math.Abs(Perp) > HalfM)
+                    {
+                        continue;
+                    }
+
+                    Double Along = (RelX * DirX) + (RelY * DirY);
+                    Corridor.Add((Col, Row, Along));
+                }
+            }
+
+            Corridor.Sort((Left, Right) => Left.Along.CompareTo(Right.Along));
+            Int32 Start = 0;
+            while (Start < Corridor.Count)
+            {
+                Int32 End = Start;
+                while ((End + 1) < Corridor.Count)
+                {
+                    Double Gap = Corridor[End + 1].Along - Corridor[End].Along;
+                    if (Gap > (Grid.GridSizeM * 1.75))
+                    {
+                        break;
+                    }
+
+                    End += 1;
+                }
+
+                Boolean HoldsSeed = false;
+                for (Int32 Index = Start; Index <= End; Index += 1)
+                {
+                    if ((Corridor[Index].Bx == Bx) && (Corridor[Index].By == By))
+                    {
+                        HoldsSeed = true;
+                        break;
+                    }
+                }
+
+                Double LengthM = (Corridor[End].Along - Corridor[Start].Along) + Grid.GridSizeM;
+                if (HoldsSeed && (LengthM + 1e-6 >= MinLengthM))
+                {
+                    List<RoadPadSurface.ReserveCell> Cells = new List<RoadPadSurface.ReserveCell>();
+                    Double Nearest = Double.PositiveInfinity;
+                    for (Int32 Index = Start; Index <= End; Index += 1)
+                    {
+                        (Int32 CellX, Int32 CellY, Double Along) Cell = Corridor[Index];
+                        Used[Cell.CellY, Cell.CellX] = true;
+                        Double Distance = DistanceM[Cell.CellY, Cell.CellX];
+                        Nearest = Math.Min(Nearest, Distance);
+                        Cells.Add(new RoadPadSurface.ReserveCell(Cell.CellX, Cell.CellY, Distance));
+                    }
+
+                    if ((Cells.Count > 1) && (Cells[Cells.Count - 1].DistanceM < Cells[0].DistanceM))
+                    {
+                        // The deficit end is the start of the strip, so the nearest soil is cut first.
+                        Cells.Reverse();
+                    }
+
+                    Surface.ReserveLanes.Add(new RoadPadSurface.ReserveLane(DirX, DirY, LengthM, Nearest, Cells));
+                    return true;
+                }
+
+                Start = End + 1;
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// Puts one depth on every cell of the nearest lanes until the borrow is covered.
+        /// A lane is taken whole, so the reserved part stays a strip rather than a single cell.
+        /// </summary>
+        /// <param name="Surface">Lanes and the reserved depth.</param>
+        /// <param name="DepthM">Cut available before this reserve, in metres.</param>
+        /// <param name="BankPerM">Bank cubic yards of one metre of cut on one cell.</param>
+        /// <param name="CapM">Deepest reserve on one cell, in metres.</param>
+        /// <param name="Need">Bank cubic yards still to reserve.</param>
+        /// <param name="KeepSource">True to leave enough cut that the cell stays a flow source.</param>
+        /// <returns>Bank cubic yards still short.</returns>
+        private static Double ApplyLaneDepth
+            (
+            RoadPadSurface Surface,
+            Double[,] DepthM,
+            Double BankPerM,
+            Double CapM,
+            Double Need,
+            Boolean KeepSource
+            )
+        {
+            foreach (RoadPadSurface.ReserveLane Lane in Surface.ReserveLanes)
+            {
+                if (Need <= 1e-6)
+                {
+                    break;
+                }
+
+                Double Bank = 0.0;
+                foreach (RoadPadSurface.ReserveCell Cell in Lane.Cells)
+                {
+                    Double Room = LaneRoom(Surface, DepthM, Cell, CapM, KeepSource);
+                    if (Room > LIFT_EPSILON_M)
+                    {
+                        Bank += Room * BankPerM;
+                    }
+                }
+
+                if (Bank <= 1e-9)
+                {
+                    continue;
+                }
+
+                // The whole lane takes the same share, down to whatever this lane can still give.
+                Double Fraction = Math.Min(1.0, Need / Bank);
+                foreach (RoadPadSurface.ReserveCell Cell in Lane.Cells)
+                {
+                    Double Room = LaneRoom(Surface, DepthM, Cell, CapM, KeepSource);
+                    Double Take = Fraction * Room;
+                    if (Take <= LIFT_EPSILON_M)
+                    {
+                        continue;
+                    }
+
+                    Surface.ReservedDepthM[Cell.By, Cell.Bx] += Take;
+                    Need -= Take * BankPerM;
+                }
+            }
+
+            return Need;
+        }
+
+        /// <summary>
+        /// Depth one lane cell can still give under the cap.
+        /// </summary>
+        /// <param name="Surface">Depth already reserved.</param>
+        /// <param name="DepthM">Cut available before the reserve.</param>
+        /// <param name="Cell">Lane cell.</param>
+        /// <param name="CapM">Deepest reserve on one cell, in metres.</param>
+        /// <param name="KeepSource">True to leave a millimetre so the flow arrow stays.</param>
+        /// <returns>Metres still available. Zero when the cell is at the cap.</returns>
+        private static Double LaneRoom
+            (
+            RoadPadSurface Surface,
+            Double[,] DepthM,
+            RoadPadSurface.ReserveCell Cell,
+            Double CapM,
+            Boolean KeepSource
+            )
+        {
+            Double Already = Surface.ReservedDepthM[Cell.By, Cell.Bx];
+            Double Room = DepthM[Cell.By, Cell.Bx] - Already;
+            if (KeepSource)
+            {
+                Room -= FLOW_SOURCE_KEEP_M;
+            }
+
+            Room = Math.Min(Room, CapM - Already);
+            if (Room <= LIFT_EPSILON_M)
+            {
+                return 0.0;
+            }
+
+            return Room;
+        }
+
+        /// <summary>
+        /// Copies the reserved depth onto the lane cells the trip planner consumes.
+        /// Accounting after the main stages may have reduced that depth.
+        /// </summary>
+        /// <param name="Surface">Lanes and the reserved depth.</param>
+        private static void RefreshReserveLeft
+            (
+            RoadPadSurface Surface
+            )
+        {
+            foreach (RoadPadSurface.ReserveLane Lane in Surface.ReserveLanes)
+            {
+                foreach (RoadPadSurface.ReserveCell Cell in Lane.Cells)
+                {
+                    Cell.LeftM = Surface.ReservedDepthM[Cell.By, Cell.Bx];
+                }
+            }
+        }
+
+        /// <summary>
+        /// Reserved depth the road stage has not yet cut, in metres.
+        /// </summary>
+        /// <param name="Surface">Lane cells.</param>
+        /// <returns>The deepest cell still holding reserve. Zero when the reserve is gone.</returns>
+        private static Double ReserveLeft
+            (
+            RoadPadSurface Surface
+            )
+        {
+            Double Left = 0.0;
+            foreach (RoadPadSurface.ReserveLane Lane in Surface.ReserveLanes)
+            {
+                foreach (RoadPadSurface.ReserveCell Cell in Lane.Cells)
+                {
+                    if (Cell.LeftM > Left)
+                    {
+                        Left = Cell.LeftM;
+                    }
+                }
+            }
+
+            return Left;
         }
 
         /// <summary>
@@ -2435,17 +3888,20 @@ namespace HaulBuilder
         }
 
         /// <summary>
-        /// Builds the road-stage cut: pan cells above the pan, then reserved field cells.
+        /// Builds one road-stage cut pool. The reserve pool is field cells. The surplus pool is pan trim.
+        /// The reserve is planned first so the road does not spend the surplus and leave the reserve behind.
         /// </summary>
         /// <param name="Grid">Cell centres.</param>
         /// <param name="Surface">Reserved depth and road-stage trim.</param>
         /// <param name="Features">Distance is measured to the nearest one.</param>
+        /// <param name="ReservedLayer">True for the reserved field layer. False for leftover pan surplus.</param>
         /// <returns>Cut cells with remaining depth, nearest first.</returns>
         private static List<Stock> BuildStocks
             (
             Grid Grid,
             RoadPadSurface Surface,
-            List<Feature> Features
+            List<Feature> Features,
+            Boolean ReservedLayer
             )
         {
             List<Stock> Stocks = new List<Stock>();
@@ -2453,13 +3909,9 @@ namespace HaulBuilder
             {
                 for (Int32 Bx = 0; Bx < Grid.Width; Bx += 1)
                 {
-                    Double Depth = Surface.ReservedDepthM[By, Bx];
-                    if (Surface.StageCutM[By, Bx] > LIFT_EPSILON_M)
-                    {
-                        // Trim above the pan is a road-stage source. Reserved field cut is the other.
-                        Depth += Surface.StageCutM[By, Bx];
-                    }
-
+                    Double Depth = ReservedLayer
+                        ? Surface.ReservedDepthM[By, Bx]
+                        : Surface.StageCutM[By, Bx];
                     if (Depth <= LIFT_EPSILON_M)
                     {
                         continue;
@@ -3731,37 +5183,6 @@ namespace HaulBuilder
 
             /// <summary>Gets or sets the remaining fill depth in metres.</summary>
             public Double LeftM { get; set; }
-        }
-
-        /// <summary>A cut cell considered for the reserve.</summary>
-        private readonly struct Candidate
-        {
-            /// <summary>
-            /// Initializes one candidate.
-            /// </summary>
-            /// <param name="Bx">Column.</param>
-            /// <param name="By">Row.</param>
-            /// <param name="DepthM">Available cut depth in metres.</param>
-            /// <param name="DistanceM">Distance to the nearest road or pad.</param>
-            public Candidate(Int32 Bx, Int32 By, Double DepthM, Double DistanceM)
-            {
-                this.Bx = Bx;
-                this.By = By;
-                this.DepthM = DepthM;
-                this.DistanceM = DistanceM;
-            }
-
-            /// <summary>Gets the column.</summary>
-            public Int32 Bx { get; }
-
-            /// <summary>Gets the row.</summary>
-            public Int32 By { get; }
-
-            /// <summary>Gets the available cut depth in metres.</summary>
-            public Double DepthM { get; }
-
-            /// <summary>Gets the distance to the nearest road or pad.</summary>
-            public Double DistanceM { get; }
         }
     }
 }

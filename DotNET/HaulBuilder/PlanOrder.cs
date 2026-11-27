@@ -23,8 +23,8 @@ namespace HaulBuilder
 
         /// <summary>
         /// Fails when drive order skips a trip or a phase goes backwards.
-        /// Flow, clusters, and thin-cut are one phase. Correcting follows,
-        /// then sweep-up, then the road stage, then finishing.
+        /// Flow, clusters, and thin-cut are one phase. The road stage follows,
+        /// then correcting, then sweep-up, then finishing.
         /// </summary>
         /// <param name="Trips">Trips in planner order.</param>
         /// <param name="DriveOrder">Indexes into <paramref name="Trips"/> in the order they are driven.</param>
@@ -160,7 +160,7 @@ namespace HaulBuilder
         }
 
         /// <summary>
-        /// Phase name in drive order: flow, correcting, sweep-up, road, or finishing.
+        /// Phase name in drive order: flow, road, correcting, sweep-up, or finishing.
         /// </summary>
         /// <param name="Trip">Trip to name.</param>
         /// <returns>The phase.</returns>
@@ -306,7 +306,7 @@ namespace HaulBuilder
         /// Rank of a trip. A smaller rank is driven first.
         /// </summary>
         /// <param name="Trip">Trip to rank.</param>
-        /// <returns>0 flow, 1 correcting, 2 sweep-up, 3 road, 4 finishing.</returns>
+        /// <returns>0 flow, 1 road, 2 correcting, 3 sweep-up, 4 finishing.</returns>
         private static Int32 PhaseRank
             (
             TripGuidance.TripCourse Trip
@@ -319,17 +319,17 @@ namespace HaulBuilder
 
             if (Trip.SweepUp)
             {
-                return 2;
+                return 3;
             }
 
             if (Trip.Stage == HaulStage.Road)
             {
-                return 3;
+                return 1;
             }
 
             if (Trip.Stage == HaulStage.Correcting)
             {
-                return 1;
+                return 2;
             }
 
             return 0;
@@ -352,17 +352,17 @@ namespace HaulBuilder
 
             if (Rank == 3)
             {
-                return "road";
+                return "sweep-up";
             }
 
             if (Rank == 2)
             {
-                return "sweep-up";
+                return "correcting";
             }
 
             if (Rank == 1)
             {
-                return "correcting";
+                return "road";
             }
 
             return "flow";

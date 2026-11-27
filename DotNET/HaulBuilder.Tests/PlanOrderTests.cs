@@ -33,39 +33,41 @@ namespace HaulBuilder.Tests
         }
 
         /// <summary>
-        /// The road stage sits after sweep-up and before finishing.
+        /// The road stage sits after flow and before correcting.
         /// </summary>
         [Fact]
-        public void DriveOrder_PutsTheRoadStageAfterSweepUp()
+        public void DriveOrder_PutsTheRoadStageAfterFlow()
         {
             List<TripGuidance.TripCourse> Trips = new List<TripGuidance.TripCourse>
             {
                 Trip(1, HaulStage.Flow, false, false, true, 10.0),
-                Trip(2, HaulStage.Correcting, false, false, false, 2.0),
-                Trip(3, HaulStage.Correcting, true, false, false, 1.0),
-                Trip(4, HaulStage.Road, false, false, false, 3.0),
+                Trip(2, HaulStage.Road, false, false, false, 3.0),
+                Trip(3, HaulStage.Correcting, false, false, false, 2.0),
+                Trip(4, HaulStage.Correcting, true, false, false, 1.0),
                 Trip(5, HaulStage.Flow, false, true, false, 0.5),
             };
             PlanOrder.Require(Trips, new List<Int32> { 0, 1, 2, 3, 4 });
-            Assert.Equal("road", PlanOrder.PhaseName(Trips[3]));
-            Assert.Equal("road", PlanOrder.SourceName(Trips[3]));
+            Assert.Equal("road", PlanOrder.PhaseName(Trips[1]));
+            Assert.Equal("road", PlanOrder.SourceName(Trips[1]));
+            Assert.Equal("correcting", PlanOrder.PhaseName(Trips[2]));
+            Assert.Equal("sweep-up", PlanOrder.PhaseName(Trips[3]));
             Assert.Equal("finishing", PlanOrder.PhaseName(Trips[4]));
         }
 
         /// <summary>
-        /// A road trip before sweep-up fails the run.
+        /// A road trip after correcting fails the run.
         /// </summary>
         [Fact]
-        public void DriveOrder_RejectsARoadTripBeforeSweepUp()
+        public void DriveOrder_RejectsARoadTripAfterCorrecting()
         {
             List<TripGuidance.TripCourse> Trips = new List<TripGuidance.TripCourse>
             {
-                Trip(1, HaulStage.Road, false, false, false, 3.0),
-                Trip(2, HaulStage.Correcting, true, false, false, 1.0),
+                Trip(1, HaulStage.Correcting, false, false, false, 2.0),
+                Trip(2, HaulStage.Road, false, false, false, 3.0),
             };
             InvalidOperationException Caught = Assert.Throws<InvalidOperationException>(
                 () => PlanOrder.Require(Trips, new List<Int32> { 0, 1 }));
-            Assert.Contains("sweep-up after road", Caught.Message);
+            Assert.Contains("road after correcting", Caught.Message);
         }
 
         /// <summary>

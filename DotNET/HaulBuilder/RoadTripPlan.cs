@@ -87,7 +87,9 @@ namespace HaulBuilder
         /// <param name="MinLoadPct">Smallest fraction of the bowl that is still a pan trip.</param>
         /// <param name="BladeMaxM">Longest along-track blade shove, in metres.</param>
         /// <param name="BladeCuts">Cut cells handed to the blade.</param>
+        /// <param name="BladeFills">Fill cells handed to the blade.</param>
         /// <param name="BladeBcy">Bank cubic yards handed to the blade.</param>
+        /// <param name="CloseOut">True on the last pool. An earlier pool does not warn about fill it has not been asked to move.</param>
         /// <returns>The pan trips.</returns>
         private static List<Pass> EmitForward
             (
@@ -106,7 +108,9 @@ namespace HaulBuilder
             Double MinLoadPct,
             Double BladeMaxM,
             List<((Int32 Bx, Int32 By) Cell, Double DepthM)> BladeCuts,
-            ref Double BladeBcy
+            List<((Int32 Bx, Int32 By) Cell, Double DepthM)> BladeFills,
+            ref Double BladeBcy,
+            Boolean CloseOut
             )
         {
             List<Pass> Passes = new List<Pass>();
@@ -147,6 +151,7 @@ namespace HaulBuilder
                     ApplyDraft(Lanes, Stocks, Best);
                     BladeBcy += Best.LoadBcy;
                     BladeCuts.AddRange(Best.Cuts);
+                    BladeFills.AddRange(Best.Fills);
                     if (Dry >= 80)
                     {
                         break;
@@ -178,9 +183,392 @@ namespace HaulBuilder
                 }
             }
 
-            BladeLocalRemainder(Grid, Item, Lanes, Stocks, BladeCuts, ref BladeBcy, FillPerM, CutPerM, BladeMaxM);
-            WarnUnmoved(Surface, Lanes, FillPerM, MinLoadPct, BladeMaxM);
+            BladeLocalRemainder(Grid, Item, Lanes, Stocks, BladeCuts, BladeFills, ref BladeBcy, FillPerM, CutPerM, BladeMaxM);
+            if (CloseOut)
+            {
+                WarnUnmoved(Surface, Lanes, FillPerM, MinLoadPct, BladeMaxM);
+            }
             return Passes;
+        }
+
+        /// <summary>
+        /// Cuts one reserve lane as a ribbon, any heading, and spreads that load on the bank.
+        /// Road-lane rules apply only to the spread. A load under the pan-trip minimum goes to the blade.
+        /// </summary>
+        /// <param name="Grid">Cell centres.</param>
+        /// <param name="Item">Road or pad the spread is measured along.</param>
+        /// <param name="Lanes">Fill lanes. Remaining depth is consumed.</param>
+        /// <param name="Keys">Signed lane index of each fill lane.</param>
+        /// <param name="Surface">Reserve lanes. Remaining depth is consumed.</param>
+        /// <param name="BowlBcy">Scraper capacity in BCY.</param>
+        /// <param name="MaxDepthM">Maximum depth per lift, in metres.</param>
+        /// <param name="FillPerM">Bank BCY of one metre of fill on one cell.</param>
+        /// <param name="CutPerM">Bank BCY of one metre of cut on one cell.</param>
+        /// <param name="LaneM">Lane width in metres.</param>
+        /// <param name="RadiusM">Turning radius in metres.</param>
+        /// <param name="MinLoadPct">Smallest fraction of the bowl that is still a pan trip. A lighter remainder goes to the blade.</param>
+        /// <param name="BladeCuts">Cut cells handed to the blade.</param>
+        /// <param name="BladeFills">Fill cells handed to the blade.</param>
+        /// <param name="BladeBcy">Bank cubic yards handed to the blade.</param>
+        /// <returns>The pan trips. Empty when the reserve or the gap is already gone.</returns>
+        private static List<Pass> EmitReserveRibbons
+            (
+            Grid Grid,
+            Feature Item,
+            List<List<LaneCell>> Lanes,
+            List<Int32> Keys,
+            RoadPadSurface Surface,
+            Double BowlBcy,
+            Double MaxDepthM,
+            Double FillPerM,
+            Double CutPerM,
+            Double LaneM,
+            Double RadiusM,
+            Double MinLoadPct,
+            List<((Int32 Bx, Int32 By) Cell, Double DepthM)> BladeCuts,
+            List<((Int32 Bx, Int32 By) Cell, Double DepthM)> BladeFills,
+            ref Double BladeBcy
+            )
+        {
+            List<Pass> Passes = new List<Pass>();
+            if ((Keys.Count == 0) || (Surface.ReserveLanes.Count == 0))
+            {
+                return Passes;
+            }
+
+            Int32 Guard = 0;
+            while (HasFill(Lanes) && (Guard < 10000))
+            {
+                Guard += 1;
+                RoadPadSurface.ReserveLane Lane = NearestReserveLane(Grid, Item, Surface);
+                if (Lane == null)
+                {
+                    break;
+                }
+
+                List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Cuts = PlanRibbon(Grid, Item, Lane, BowlBcy, MaxDepthM, CutPerM);
+                if (Cuts.Count == 0)
+                {
+                    break;
+                }
+
+                foreach (((Int32 Bx, Int32 By) Cell, Double DepthM) Cut in Cuts)
+                {
+                    GiveReserve(Lane, Cut.Cell.Bx, Cut.Cell.By, -Cut.DepthM);
+                }
+
+                Double Need = CutBank(Cuts, CutPerM);
+                Double[] Original = SaveFill(Lanes);
+                List<((Int32 Bx, Int32 By) Cell, Double DepthM)> ForwardFills =
+                    new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>();
+                Double Forward = WalkFills(
+                    Lanes, Keys, Keys[0], -1.0e12, 1, Need, MaxDepthM, FillPerM, LaneM, RadiusM, ForwardFills);
+                Double[] AfterForward = SaveFill(Lanes);
+                RestoreFill(Lanes, Original);
+                List<((Int32 Bx, Int32 By) Cell, Double DepthM)> BackFills =
+                    new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>();
+                Double Back = WalkFills(
+                    Lanes, Keys, Keys[0], 1.0e12, -1, Need, MaxDepthM, FillPerM, LaneM, RadiusM, BackFills);
+                List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Fills;
+                Double Placed;
+                if (Forward >= (Back - 1e-6))
+                {
+                    RestoreFill(Lanes, AfterForward);
+                    Fills = ForwardFills;
+                    Placed = Forward;
+                }
+                else
+                {
+                    Fills = BackFills;
+                    Placed = Back;
+                }
+
+                if (Placed <= 1e-4)
+                {
+                    // The bank could not take this ribbon. Put the soil back and leave it for correcting.
+                    foreach (((Int32 Bx, Int32 By) Cell, Double DepthM) Cut in Cuts)
+                    {
+                        GiveReserve(Lane, Cut.Cell.Bx, Cut.Cell.By, Cut.DepthM);
+                    }
+
+                    RestoreFill(Lanes, Original);
+                    break;
+                }
+
+                TrimRibbon(Lane, Cuts, Placed, CutPerM);
+                if ((Fills.Count == 0) || (Cuts.Count == 0))
+                {
+                    break;
+                }
+
+                // A light draft is a blade shove, same as the lane walk. It is not a pan trip.
+                if (Placed + 1e-6 < (MinLoadPct * BowlBcy))
+                {
+                    BladeBcy += Placed;
+                    BladeCuts.AddRange(Cuts);
+                    BladeFills.AddRange(Fills);
+                    continue;
+                }
+
+                Pass Trip = MakePass(Grid, Item, Cuts, Fills, Placed, 1);
+                Trip.CutHeadingDeg = HeadingDegrees(Lane.DirX, Lane.DirY);
+                Passes.Add(Trip);
+            }
+
+            return Passes;
+        }
+
+        /// <summary>
+        /// The reserve lane nearest this road or pad that still has depth.
+        /// </summary>
+        /// <param name="Grid">Cell centres.</param>
+        /// <param name="Item">Road or pad.</param>
+        /// <param name="Surface">Reserve lanes.</param>
+        /// <returns>The lane, or null when the reserve is gone.</returns>
+        private static RoadPadSurface.ReserveLane NearestReserveLane
+            (
+            Grid Grid,
+            Feature Item,
+            RoadPadSurface Surface
+            )
+        {
+            RoadPadSurface.ReserveLane Best = null;
+            Double BestDistance = Double.PositiveInfinity;
+            foreach (RoadPadSurface.ReserveLane Lane in Surface.ReserveLanes)
+            {
+                foreach (RoadPadSurface.ReserveCell Cell in Lane.Cells)
+                {
+                    if (Cell.LeftM <= LIFT_EPSILON_M)
+                    {
+                        continue;
+                    }
+
+                    Double DistanceM = FeatureDistance(Grid, Item, Cell.Bx, Cell.By);
+                    if (DistanceM < BestDistance)
+                    {
+                        Best = Lane;
+                        BestDistance = DistanceM;
+                    }
+                }
+            }
+
+            return Best;
+        }
+
+        /// <summary>
+        /// One bowl of a reserve lane, driven toward the road. The lane depth is not changed.
+        /// </summary>
+        /// <param name="Grid">Cell centres.</param>
+        /// <param name="Item">Road or pad the ribbon drives toward.</param>
+        /// <param name="Lane">Reserve lane.</param>
+        /// <param name="BowlBcy">Scraper capacity in BCY.</param>
+        /// <param name="MaxDepthM">Maximum depth per lift, in metres.</param>
+        /// <param name="CutPerM">Bank BCY of one metre of cut on one cell.</param>
+        /// <returns>Cut cells in drive order. Empty when the lane has nothing left.</returns>
+        private static List<((Int32 Bx, Int32 By) Cell, Double DepthM)> PlanRibbon
+            (
+            Grid Grid,
+            Feature Item,
+            RoadPadSurface.ReserveLane Lane,
+            Double BowlBcy,
+            Double MaxDepthM,
+            Double CutPerM
+            )
+        {
+            List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Cuts =
+                new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>();
+            Int32 Anchor = -1;
+            Double Nearest = Double.PositiveInfinity;
+            for (Int32 Index = 0; Index < Lane.Cells.Count; Index += 1)
+            {
+                RoadPadSurface.ReserveCell Cell = Lane.Cells[Index];
+                if (Cell.LeftM <= LIFT_EPSILON_M)
+                {
+                    continue;
+                }
+
+                Double DistanceM = FeatureDistance(Grid, Item, Cell.Bx, Cell.By);
+                if (DistanceM < Nearest)
+                {
+                    Nearest = DistanceM;
+                    Anchor = Index;
+                }
+            }
+
+            if (Anchor < 0)
+            {
+                return Cuts;
+            }
+
+            Int32 Low = Anchor;
+            while ((Low > 0) && (Lane.Cells[Low - 1].LeftM > LIFT_EPSILON_M))
+            {
+                Low -= 1;
+            }
+
+            Int32 High = Anchor;
+            while (((High + 1) < Lane.Cells.Count) && (Lane.Cells[High + 1].LeftM > LIFT_EPSILON_M))
+            {
+                High += 1;
+            }
+
+            // Cut the far end first and finish beside the bank.
+            Double LowDistance = FeatureDistance(Grid, Item, Lane.Cells[Low].Bx, Lane.Cells[Low].By);
+            Double HighDistance = FeatureDistance(Grid, Item, Lane.Cells[High].Bx, Lane.Cells[High].By);
+            Int32 Step = (LowDistance >= HighDistance) ? 1 : -1;
+            Int32 IndexAt = (Step > 0) ? Low : High;
+            Int32 Stop = (Step > 0) ? High : Low;
+            Double Room = BowlBcy;
+            while (true)
+            {
+                RoadPadSurface.ReserveCell Cell = Lane.Cells[IndexAt];
+                Double Depth = Math.Min(Cell.LeftM, Math.Min(MaxDepthM, Room / Math.Max(CutPerM, 1e-9)));
+                if (Depth > LIFT_EPSILON_M)
+                {
+                    Cuts.Add(((Cell.Bx, Cell.By), Depth));
+                    Room -= Depth * CutPerM;
+                }
+
+                if ((IndexAt == Stop) || (Room <= 1e-4))
+                {
+                    break;
+                }
+
+                IndexAt += Step;
+            }
+
+            return Cuts;
+        }
+
+        /// <summary>
+        /// Distance from a cell to a road or pad.
+        /// </summary>
+        /// <param name="Grid">Cell centres.</param>
+        /// <param name="Item">Road or pad.</param>
+        /// <param name="Bx">Column.</param>
+        /// <param name="By">Row.</param>
+        /// <returns>Distance in metres.</returns>
+        private static Double FeatureDistance
+            (
+            Grid Grid,
+            Feature Item,
+            Int32 Bx,
+            Int32 By
+            )
+        {
+            Double X = Grid.CenterX[By, Bx];
+            Double Y = Grid.CenterY[By, Bx];
+            if (Item.IsPad)
+            {
+                return Distance(X, Y, Item.X, Item.Y);
+            }
+
+            return Item.Closest(X, Y).Distance;
+        }
+
+        /// <summary>
+        /// Adds depth back onto one reserve cell. A negative depth takes it.
+        /// </summary>
+        /// <param name="Lane">Lane that owns the cell.</param>
+        /// <param name="Bx">Column.</param>
+        /// <param name="By">Row.</param>
+        /// <param name="DepthM">Metres to add.</param>
+        private static void GiveReserve
+            (
+            RoadPadSurface.ReserveLane Lane,
+            Int32 Bx,
+            Int32 By,
+            Double DepthM
+            )
+        {
+            foreach (RoadPadSurface.ReserveCell Cell in Lane.Cells)
+            {
+                if ((Cell.Bx == Bx) && (Cell.By == By))
+                {
+                    Cell.LeftM = Math.Max(0.0, Cell.LeftM + DepthM);
+                    return;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Bank volume of a cut list.
+        /// </summary>
+        /// <param name="Cuts">Cut cells.</param>
+        /// <param name="CutPerM">Bank BCY of one metre of cut on one cell.</param>
+        /// <returns>Bank cubic yards.</returns>
+        private static Double CutBank
+            (
+            List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Cuts,
+            Double CutPerM
+            )
+        {
+            Double Bank = 0.0;
+            for (Int32 Index = 0; Index < Cuts.Count; Index += 1)
+            {
+                Bank += Cuts[Index].DepthM * CutPerM;
+            }
+
+            return Bank;
+        }
+
+        /// <summary>
+        /// Drops cut the bank could not take, and puts that depth back on the lane.
+        /// The dropped soil is the end farthest from the spread.
+        /// </summary>
+        /// <param name="Lane">Lane the ribbon came from.</param>
+        /// <param name="Cuts">Cut cells in drive order. Trimmed in place.</param>
+        /// <param name="PlacedBcy">Fill bank the spread accepted.</param>
+        /// <param name="CutPerM">Bank BCY of one metre of cut on one cell.</param>
+        private static void TrimRibbon
+            (
+            RoadPadSurface.ReserveLane Lane,
+            List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Cuts,
+            Double PlacedBcy,
+            Double CutPerM
+            )
+        {
+            Double Bank = CutBank(Cuts, CutPerM);
+            while ((Bank > (PlacedBcy + 1e-4)) && (Cuts.Count > 0))
+            {
+                ((Int32 Bx, Int32 By) Cell, Double DepthM) First = Cuts[0];
+                Double Slice = First.DepthM * CutPerM;
+                Double Extra = Bank - PlacedBcy;
+                if (Slice <= (Extra + 1e-9))
+                {
+                    GiveReserve(Lane, First.Cell.Bx, First.Cell.By, First.DepthM);
+                    Cuts.RemoveAt(0);
+                    Bank -= Slice;
+                }
+                else
+                {
+                    Double Give = Extra / Math.Max(CutPerM, 1e-9);
+                    GiveReserve(Lane, First.Cell.Bx, First.Cell.By, Give);
+                    Cuts[0] = (First.Cell, First.DepthM - Give);
+                    Bank = PlacedBcy;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Compass heading of a unit vector, in degrees.
+        /// </summary>
+        /// <param name="DirX">East component.</param>
+        /// <param name="DirY">North component.</param>
+        /// <returns>Degrees clockwise from north.</returns>
+        private static Double HeadingDegrees
+            (
+            Double DirX,
+            Double DirY
+            )
+        {
+            Double Degrees = Math.Atan2(DirX, DirY) * (180.0 / Math.PI);
+            if (Degrees < 0.0)
+            {
+                Degrees += 360.0;
+            }
+
+            return Degrees;
         }
 
         /// <summary>
@@ -1405,6 +1793,7 @@ namespace HaulBuilder
         /// <param name="Lanes">Fill lanes still holding depth.</param>
         /// <param name="Stocks">Cut still available.</param>
         /// <param name="BladeCuts">Cut cells handed to the blade.</param>
+        /// <param name="BladeFills">Fill cells handed to the blade.</param>
         /// <param name="BladeBcy">Bank cubic yards handed to the blade.</param>
         /// <param name="FillPerM">Bank BCY of one metre of fill on one cell.</param>
         /// <param name="CutPerM">Bank BCY of one metre of cut on one cell.</param>
@@ -1416,6 +1805,7 @@ namespace HaulBuilder
             List<List<LaneCell>> Lanes,
             List<Stock> Stocks,
             List<((Int32 Bx, Int32 By) Cell, Double DepthM)> BladeCuts,
+            List<((Int32 Bx, Int32 By) Cell, Double DepthM)> BladeFills,
             ref Double BladeBcy,
             Double FillPerM,
             Double CutPerM,
@@ -1469,6 +1859,7 @@ namespace HaulBuilder
                         Cut.LeftM -= CutDepth;
                         BladeBcy += FillDepth * FillPerM;
                         BladeCuts.Add(((Cut.Bx, Cut.By), CutDepth));
+                        BladeFills.Add(((Fill.Bx, Fill.By), FillDepth));
                         Moved = true;
                     }
                 }

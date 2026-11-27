@@ -159,8 +159,26 @@ namespace HaulBuilder
                     Grid, Opt.ToleranceMm);
                 if (Roads != null)
                 {
-                    // Field stages do not fill the pan or cut the trim the road stage keeps.
+                    // Pan surplus stays ordinary cut. The coverage does not fill the pan; the correcting close does.
                     Ledger = Ledger.ReleaseRoadStage(Roads.PanM, Roads.StageCutM);
+                }
+
+                FlowRibbonSearch.BeforeCorrectingStage? PlaceRoad = null;
+                FlowRibbonSearch.BeforeCorrectingStage? CloseReserve = null;
+                if (Roads != null)
+                {
+                    RoadPadSurface RoadSurface = Roads;
+                    PlaceRoad = (Passes, CutLeft, FillLeft, RoadLedger) =>
+                        PlaceRoadBeforeCorrecting(
+                            Grid,
+                            RoadSurface,
+                            Opt,
+                            Passes,
+                            CutLeft,
+                            FillLeft,
+                            RoadLedger);
+                    CloseReserve = (Passes, CutLeft, FillLeft, RoadLedger) =>
+                        RoadPadBuild.CloseUnusedReserve(Grid, RoadSurface, Passes, RoadLedger, Opt);
                 }
 
                 HaulOptimizationResult Optimized =
@@ -184,7 +202,9 @@ namespace HaulBuilder
                             Opt.UnloadedTravelSpeedMph,
                             Opt.AccelerationTimeS,
                             Opt.DecelerationTimeS,
-                            Opt.FieldEfficiency));
+                            Opt.FieldEfficiency),
+                        BeforeCorrecting: PlaceRoad,
+                        AfterCorrecting: CloseReserve);
                 List<Pass> OptimizedPasses = Optimized.PassResult.Passes;
                 HaulPairDistanceRefiner.Result? PairRefinement = null;
                 // A ribbon already hauls along the flow. Swapping its fill for a
@@ -665,8 +685,8 @@ namespace HaulBuilder
 
             if (Roads != null)
             {
-                // Field guidance has already run. FinishRoads appends the road and pad
-                // trips and copies their courses onto the guidance the caller reads.
+                // Field guidance has already run. FinishRoads inserts the road and pad
+                // trips ahead of correcting and copies their courses onto the guidance.
                 FinishRoads(Result, Grid, Flow, Roads, Opt, PassResult, Route);
             }
 
@@ -2790,7 +2810,56 @@ namespace HaulBuilder
         }
 
         /// <summary>
-        /// Appends the road stage, publishes the final design, and writes the road report.
+        /// Places the road stage on the ground flow left, then returns leftover reserve to correcting.
+        /// The grid's existing ground is restored before the method returns.
+        /// </summary>
+        /// <param name="Grid">Existing ground. The flow passes are applied, then the survey is restored.</param>
+        /// <param name="Surface">Pan, reserve, and the road-stage passes.</param>
+        /// <param name="Opt">Bowl, depth limit, and speeds.</param>
+        /// <param name="Passes">Flow, cluster, and thin-cut trips. Correcting has not run.</param>
+        /// <param name="CutLeft">Cut still to assign. Receives unused reserve and loses pan cut the road took.</param>
+        /// <param name="FillLeft">Fill still to assign. Pan cells are cleared.</param>
+        /// <param name="Ledger">Required depths, updated to match the cut correcting may still take.</param>
+        private static void PlaceRoadBeforeCorrecting
+            (
+            Grid Grid,
+            RoadPadSurface Surface,
+            HaulBuilderOptions Opt,
+            List<Pass> Passes,
+            Double[,] CutLeft,
+            Double[,] FillLeft,
+            HaulWorkLedger Ledger
+            )
+        {
+            if (Surface.StagePasses != null)
+            {
+                // The search can enter correcting on more than one path. The road stage runs once.
+                return;
+            }
+
+            Double[,] Survey = (Double[,])Grid.Existing.Clone();
+            try
+            {
+                RoadPadBuild.AccountBeforeRoadStage(Grid, Surface, Passes);
+                List<Pass> RoadPasses = RoadPadBuild.BuildPasses(Grid, Surface, Opt);
+                RoadPadBuild.HandReserveToCorrecting(
+                    Grid,
+                    Surface,
+                    RoadPasses,
+                    CutLeft,
+                    FillLeft,
+                    Ledger);
+                Surface.StagePasses = RoadPasses;
+            }
+            finally
+            {
+                RoadPadBuild.RestoreSurvey(Grid, Survey);
+            }
+        }
+
+        /// <summary>
+        /// Publishes the road stage, checks the finished ground, and writes the road report.
+        /// The passes were built after flow and before correcting.
         /// </summary>
         /// <param name="Result">Run that receives the passes and the report.</param>
         /// <param name="Grid">Grid whose target becomes the final design.</param>
@@ -2810,15 +2879,45 @@ namespace HaulBuilder
             Route PlannedRoute
             )
         {
-            List<Pass> RoadPasses = RoadPadBuild.BuildPasses(Grid, Surface, Opt);
+            Double[,] Survey = (Double[,])Grid.Existing.Clone();
+            List<Pass> RoadPasses;
+            if (Surface.StagePasses != null)
+            {
+                // Flow already ran the road stage. These figures are the ground that stage saw.
+                RoadPasses = Surface.StagePasses;
+            }
+            else
+            {
+                try
+                {
+                    RoadPadBuild.AccountBeforeRoadStage(Grid, Surface, PlannedPasses.Passes);
+                    RoadPasses = RoadPadBuild.BuildPasses(Grid, Surface, Opt);
+                    Surface.ReserveUsedBcy = Surface.FieldCutBcy;
+                    Surface.UnusedReserveBcy = Math.Max(0.0, Surface.ReserveAvailableBcy - Surface.FieldCutBcy);
+                    Surface.StagePasses = RoadPasses;
+                }
+                finally
+                {
+                    RoadPadBuild.RestoreSurvey(Grid, Survey);
+                }
+            }
+
+            Result.Messages.Add(RoadPadBuild.FormatBalanceLine(Surface));
             Surface.FieldHoursPerBcy = RoadPadBuild.FieldHoursPerBcy(Grid, PlannedPasses.Passes, Opt);
-            AppendRoadPasses(PlannedPasses, PlannedRoute, RoadPasses);
+            InsertRoadPasses(Result, PlannedPasses, PlannedRoute, RoadPasses);
             if (!ReferenceEquals(Result.PassResult, PlannedPasses)
                 || !ReferenceEquals(Result.Route, PlannedRoute))
             {
                 // Guidance may have replaced the published route with a cleanup route.
-                AppendRoadPasses(Result.PassResult, Result.Route, RoadPasses);
+                InsertRoadPasses(Result, Result.PassResult, Result.Route, RoadPasses);
             }
+
+            List<Pass> Finished = (Result.PassResult != null)
+                ? Result.PassResult.Passes
+                : PlannedPasses.Passes;
+            RoadPadBuild.RequireRoadBalance(Surface);
+            RoadPadBuild.RequireFinish(Survey, Grid, Surface, Finished, Opt.ToleranceMm);
+            Result.Messages.Add(RoadPadBuild.FormatReserveLine(Surface));
 
             // Field guidance and its clock were closed before these trips existed.
             PublishRoadGuidance(Result, Grid, Surface, Opt, RoadPasses);
@@ -2884,14 +2983,16 @@ namespace HaulBuilder
         }
 
         /// <summary>
-        /// Adds road passes at the end of a pass list and its route.
+        /// Inserts road passes after flow and before correcting.
         /// A pass already on the list is left where it is.
         /// </summary>
+        /// <param name="Result">Run whose correcting index moves when trips are inserted ahead of it.</param>
         /// <param name="Passes">Pass list to extend. Null skips the call.</param>
         /// <param name="Route">Route to extend. Null extends only the pass list.</param>
         /// <param name="RoadPasses">Road-stage passes, in lane order.</param>
-        private static void AppendRoadPasses
+        private static void InsertRoadPasses
             (
+            HaulBuilderResult Result,
             PassResult? Passes,
             Route? Route,
             List<Pass> RoadPasses
@@ -2902,7 +3003,8 @@ namespace HaulBuilder
                 return;
             }
 
-            Boolean Shared = (Route != null) && ReferenceEquals(Route.OrderedPasses, Passes.Passes);
+            Int32 InsertAt = IndexBeforeLaterPhase(Passes.Passes);
+            Int32 Added = 0;
             foreach (Pass RoadPass in RoadPasses)
             {
                 if (Passes.Passes.Contains(RoadPass))
@@ -2910,19 +3012,67 @@ namespace HaulBuilder
                     continue;
                 }
 
-                Int32 Index = Passes.Passes.Count;
-                Passes.Passes.Add(RoadPass);
-                if (Route == null)
-                {
-                    continue;
-                }
+                Passes.Passes.Insert(InsertAt + Added, RoadPass);
+                Added += 1;
+            }
 
-                Route.Order.Add(Index);
-                if (!Shared)
+            if ((Added > 0)
+                && (Result.HaulOptimization != null)
+                && ReferenceEquals(Passes.Passes, Result.HaulOptimization.PassResult.Passes)
+                && (Result.HaulOptimization.CorrectingStartsAtRoute > InsertAt))
+            {
+                // The index is 1-based and was recorded before these trips existed.
+                Result.HaulOptimization.CorrectingStartsAtRoute += Added;
+            }
+
+            if (Route == null)
+            {
+                return;
+            }
+
+            if (!ReferenceEquals(Route.OrderedPasses, Passes.Passes))
+            {
+                Int32 RouteAt = IndexBeforeLaterPhase(Route.OrderedPasses);
+                Int32 RouteAdded = 0;
+                foreach (Pass RoadPass in RoadPasses)
                 {
-                    Route.OrderedPasses.Add(RoadPass);
+                    if (Route.OrderedPasses.Contains(RoadPass))
+                    {
+                        continue;
+                    }
+
+                    Route.OrderedPasses.Insert(RouteAt + RouteAdded, RoadPass);
+                    RouteAdded += 1;
                 }
             }
+
+            Route.Order.Clear();
+            for (Int32 Index = 0; Index < Route.OrderedPasses.Count; Index += 1)
+            {
+                Route.Order.Add(Passes.Passes.IndexOf(Route.OrderedPasses[Index]));
+            }
+        }
+
+        /// <summary>
+        /// Index of the first correcting or finishing trip. The road stage belongs in front of it.
+        /// </summary>
+        /// <param name="Passes">Trips in planner order.</param>
+        /// <returns>The index. The count when every trip is still a flow phase.</returns>
+        private static Int32 IndexBeforeLaterPhase
+            (
+            IReadOnlyList<Pass> Passes
+            )
+        {
+            for (Int32 Index = 0; Index < Passes.Count; Index += 1)
+            {
+                Pass Current = Passes[Index];
+                if ((Current.Stage == HaulStage.Correcting) || Current.Finishing)
+                {
+                    return Index;
+                }
+            }
+
+            return Passes.Count;
         }
 
         /// <summary>
@@ -3005,6 +3155,7 @@ namespace HaulBuilder
                 BladeShapingHoursPerPad = Options.BladeShapingHoursPerPad,
                 RoadMinTripLoadPct = Options.RoadMinTripLoadPct,
                 RoadBladeMoveMaxFt = Options.RoadBladeMoveMaxFt,
+                ReserveMaxDepthFt = Options.ReserveMaxDepthFt,
             };
             CopyOptimization(Options.Optimization, Copy.Optimization);
             CopyGuidance(Options.Guidance, Copy.Guidance);

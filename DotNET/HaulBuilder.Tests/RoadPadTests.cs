@@ -458,6 +458,37 @@ namespace HaulBuilder.Tests
             }
 
             Assert.InRange(Math.Abs(Reserved - Surface.PanImportBcy), 0.0, 0.1);
+            Double MinLaneM = 4.0 * Options.MinimumTurningDiameterFt * Constants.FEET_TO_METERS * Constants.HALF_SCALE;
+            Assert.NotEmpty(Surface.ReserveLanes);
+            Boolean[,] InLane = new Boolean[Built.Grid.Height, Built.Grid.Width];
+            foreach (RoadPadSurface.ReserveLane Lane in Surface.ReserveLanes)
+            {
+                Boolean Any = false;
+                foreach (RoadPadSurface.ReserveCell Cell in Lane.Cells)
+                {
+                    InLane[Cell.By, Cell.Bx] = true;
+                    if (Surface.ReservedDepthM[Cell.By, Cell.Bx] > 1e-6)
+                    {
+                        Any = true;
+                    }
+                }
+
+                if (Any)
+                {
+                    Assert.True(Lane.LengthM + 1e-3 >= MinLaneM);
+                }
+            }
+
+            for (Int32 By = 0; By < Built.Grid.Height; By += 1)
+            {
+                for (Int32 Bx = 0; Bx < Built.Grid.Width; Bx += 1)
+                {
+                    if (Surface.ReservedDepthM[By, Bx] > 1e-6)
+                    {
+                        Assert.True(InLane[By, Bx]);
+                    }
+                }
+            }
             Assert.Equal(0, RoadPadBuild.CountCutBelowAndFilled(Built.Grid, Surface, Passes));
             for (Int32 By = 0; By < Built.Grid.Height; By += 1)
             {
@@ -479,6 +510,73 @@ namespace HaulBuilder.Tests
                     Assert.False(Surface.Excluded[Fill.Cell.By, Fill.Cell.Bx]);
                     Assert.True(Surface.OwnerIndex[Fill.Cell.By, Fill.Cell.Bx] >= 0);
                 }
+            }
+        }
+
+        /// <summary>
+        /// Two roads cross a slope, so each has a high end and a low end.
+        /// No field cell finishes above the design, every pan cell finishes on its pan target,
+        /// and the road reserve balances the pan deficit.
+        /// </summary>
+        [Fact]
+        public void CrossedRoadsOnASlopeFinishOnThePan()
+        {
+            (String Path, Double MinX, Double MinY, Double MaxX, Double MaxY) Field = WriteCrossSlope();
+            try
+            {
+                Double Span = Math.Min(Field.MaxX - Field.MinX, Field.MaxY - Field.MinY);
+                // The roads stay near the middle so the 0.2 ft reserve has field cut around them.
+                Double Inset = Span * 0.30;
+                Double MidX = (Field.MinX + Field.MaxX) * Constants.HALF_SCALE;
+                Double MidY = (Field.MinY + Field.MaxY) * Constants.HALF_SCALE;
+                HaulBuilderOptions Options = new HaulBuilderOptions
+                {
+                    AgdPath = Field.Path,
+                    SkipGuidance = true,
+                    IncludeGuidanceCsv = false,
+                    IncludeGuidancePng = false,
+                    GridSizeFt = 10.0,
+                };
+                Options.Optimization.EnableRouteConsolidation = false;
+                Options.Optimization.PairRefinementRounds = 0;
+                Options.Optimization.RouteReorderWindow = 0;
+                Options.Roads.Add(new RoadCentreline(new List<(Double X, Double Y)>
+                {
+                    (MidX, Field.MinY + Inset),
+                    (MidX, Field.MaxY - Inset),
+                }));
+                Options.Roads.Add(new RoadCentreline(new List<(Double X, Double Y)>
+                {
+                    (Field.MinX + Inset, MidY),
+                    (Field.MaxX - Inset, MidY),
+                }));
+
+                HaulBuilderResult Result = new HaulBuilderEngine().Run(Options);
+
+                Assert.NotNull(Result.RoadPads);
+                Assert.NotNull(Result.Grid);
+                Assert.NotNull(Result.PassResult);
+                Assert.True(Result.RoadPads.RoadSurplusBcy > 0.5);
+                Assert.True(Result.RoadPads.RoadDeficitBcy > 0.5);
+                Assert.Contains(
+                    Result.Messages,
+                    Message => Message.StartsWith("Road balance:", StringComparison.Ordinal));
+                Assert.Contains(
+                    Result.Messages,
+                    Message => Message.StartsWith("Road reserve:", StringComparison.Ordinal));
+                RoadPadBuild.RequireRoadBalance(Result.RoadPads);
+                Assert.True(Result.RoadPads.UnusedReserveBcy <= 0.05);
+                Assert.Equal(0, Result.RoadPads.FieldCellsOffDesign);
+                RoadPadBuild.RequireFinish(
+                    Result.Grid.Existing,
+                    Result.Grid,
+                    Result.RoadPads,
+                    Result.PassResult.Passes,
+                    Options.ToleranceMm);
+            }
+            finally
+            {
+                File.Delete(Field.Path);
             }
         }
 
@@ -1341,6 +1439,68 @@ namespace HaulBuilder.Tests
             Copy.RoadHeightFt = Source.RoadHeightFt;
             Copy.CutFillRatio = Source.CutFillRatio;
             return Copy;
+        }
+
+        /// <summary>
+        /// A sloping patch. Existing ground rises to the north-east. The proposed grade is flat.
+        /// The patch is wide enough that a 0.2 ft reserve can cover the two roads.
+        /// </summary>
+        /// <returns>The AGD path and the UTM extent of the samples.</returns>
+        private static (String Path, Double MinX, Double MinY, Double MaxX, Double MaxY) WriteCrossSlope()
+        {
+            // About 125 m on a side. A smaller patch cannot hold the borrow at 0.2 ft per cell.
+            const Int32 Count = 26;
+            const Double Step = 0.000045;
+            const Double Lat0 = 40.0;
+            const Double Lon0 = -93.0;
+            List<(Double Lat, Double Lon, Double East, Double North)> Samples =
+                new List<(Double Lat, Double Lon, Double East, Double North)>();
+            Double MinX = Double.PositiveInfinity;
+            Double MinY = Double.PositiveInfinity;
+            Double MaxX = Double.NegativeInfinity;
+            Double MaxY = Double.NegativeInfinity;
+            for (Int32 Row = 0; Row < Count; Row += 1)
+            {
+                for (Int32 Col = 0; Col < Count; Col += 1)
+                {
+                    Double Lat = Lat0 + (Row * Step);
+                    Double Lon = Lon0 + (Col * Step);
+                    UtmCoord Point = Agd.UtmFromLatlon(Lat, Lon);
+                    Samples.Add((Lat, Lon, Point.Easting, Point.Northing));
+                    MinX = Math.Min(MinX, Point.Easting);
+                    MinY = Math.Min(MinY, Point.Northing);
+                    MaxX = Math.Max(MaxX, Point.Easting);
+                    MaxY = Math.Max(MaxY, Point.Northing);
+                }
+            }
+
+            Double MidX = (MinX + MaxX) * Constants.HALF_SCALE;
+            Double MidY = (MinY + MaxY) * Constants.HALF_SCALE;
+            String Path = System.IO.Path.Combine(
+                System.IO.Path.GetTempPath(),
+                "haulbuilder_cross_slope_" + Guid.NewGuid().ToString("N") + ".agd");
+            List<String> Lines = new List<String>
+            {
+                "Latitude (deg), Longitude (deg), Elevation Existing(m), Elevation Proposed(m), CutFill(m), Code, Comments",
+            };
+            for (Int32 Index = 0; Index < Samples.Count; Index += 1)
+            {
+                (Double Lat, Double Lon, Double East, Double North) Sample = Samples[Index];
+                // About 1.5 m from the low corner to the high corner, so one road end is cut and the other is fill.
+                Double Exist = 100.0 + (0.025 * ((Sample.East - MidX) + (Sample.North - MidY)));
+                Double Proposed = 100.0;
+                Lines.Add(String.Format(
+                    CultureInfo.InvariantCulture,
+                    "{0:F8}, {1:F8}, {2:F3}, {3:F3}, {4:F3}, 3GRD, ",
+                    Sample.Lat,
+                    Sample.Lon,
+                    Exist,
+                    Proposed,
+                    Proposed - Exist));
+            }
+
+            File.WriteAllText(Path, String.Join("\n", Lines) + "\n");
+            return (Path, MinX, MinY, MaxX, MaxY);
         }
 
         /// <summary>

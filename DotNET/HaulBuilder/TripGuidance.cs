@@ -5670,8 +5670,8 @@ namespace HaulBuilder
 
         /// <summary>
         /// Orders trips to shorten empty returns, inside each phase. Flow,
-        /// clusters, and thin-cut stay before correcting, sweep-up stays after
-        /// correcting, and finishing stays last. Two trips that share a cut or
+        /// clusters, and thin-cut stay before the road stage. Correcting follows
+        /// the road, sweep-up follows correcting, and finishing stays last. Two trips that share a cut or
         /// fill cell keep the planner's relative order. The length is the
         /// Dubins length with no field mask. The driven return still uses the
         /// mask.
@@ -5710,7 +5710,7 @@ namespace HaulBuilder
             }
 
             // Flow, clusters, and thin-cut share one phase and may interleave.
-            // Correcting follows them, then sweep-up, then the road stage, then finishing.
+            // The road stage follows, then correcting, then sweep-up, then finishing.
             HaulStage[] Stages = new HaulStage[]
             {
                 HaulStage.Flow,
@@ -5722,22 +5722,31 @@ namespace HaulBuilder
             Boolean[] Used = new Boolean[Count];
             Int32 Slot = 0;
             DubinsConnector.Pose? Incoming = null;
-            // Band 0 is the planned stages. Band 1 is sweep-up. Band 2 is the road stage. Band 3 is finishing.
-            for (Int32 Band = 0; Band < 4; Band += 1)
+            // Band 0 is flow. Band 1 is the road stage. Band 2 is correcting.
+            // Band 3 is sweep-up. Band 4 is finishing.
+            for (Int32 Band = 0; Band < 5; Band += 1)
             {
             foreach (HaulStage Stage in Stages)
             {
-                if ((Band == 0) && (Stage == HaulStage.Road))
+                if ((Band == 0)
+                    && (Stage != HaulStage.Flow)
+                    && (Stage != HaulStage.Clusters)
+                    && (Stage != HaulStage.ThinCut))
                 {
                     continue;
                 }
 
-                if ((Band == 1) && (Stage != HaulStage.Correcting))
+                if ((Band == 1) && (Stage != HaulStage.Road))
                 {
                     continue;
                 }
 
-                if ((Band == 2) && (Stage != HaulStage.Road))
+                if ((Band == 2) && (Stage != HaulStage.Correcting))
+                {
+                    continue;
+                }
+
+                if ((Band == 3) && (Stage != HaulStage.Correcting))
                 {
                     continue;
                 }
@@ -5750,16 +5759,16 @@ namespace HaulBuilder
                         continue;
                     }
 
-                    if (Band == 3)
+                    if (Band == 4)
                     {
                         if (!Courses[Index].Finishing)
                         {
                             continue;
                         }
                     }
-                    else if (Courses[Index].Finishing || (Courses[Index].SweepUp != (Band == 1)))
+                    else if (Courses[Index].Finishing || (Courses[Index].SweepUp != (Band == 3)))
                     {
-                        // Finishing waits until the road stage is done.
+                        // Finishing waits until sweep-up is done.
                         // Sweep-up stays after the correcting pass that deferred it.
                         // Road trips are neither sweep-up nor finishing.
                         continue;

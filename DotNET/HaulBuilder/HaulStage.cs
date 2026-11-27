@@ -18,7 +18,7 @@ namespace HaulBuilder
         /// <summary>Correcting coverage built this trip.</summary>
         Correcting = 3,
 
-        /// <summary>The road and well-pad stage built this trip, after sweep-up.</summary>
+        /// <summary>The road and well-pad stage built this trip, after flow and before correcting.</summary>
         Road = 4,
     }
 }

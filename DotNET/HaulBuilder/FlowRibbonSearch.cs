@@ -159,6 +159,21 @@ namespace HaulBuilder
         private const Double IMBALANCE_TOLERANCE_BCY = 1e-3;
 
         /// <summary>
+        /// Places the road stage after flow and before correcting.
+        /// </summary>
+        /// <param name="Passes">Trips driven so far. Flow, clusters, and thin-cut.</param>
+        /// <param name="CutLeft">Cut depth still to assign. The road stage may add leftover reserve.</param>
+        /// <param name="FillLeft">Fill depth still to assign. The correcting close fills a pan gap the road left.</param>
+        /// <param name="Ledger">Required depths. Updated when the road stage takes or returns soil.</param>
+        public delegate void BeforeCorrectingStage
+            (
+            List<Pass> Passes,
+            Double[,] CutLeft,
+            Double[,] FillLeft,
+            HaulWorkLedger Ledger
+            );
+
+        /// <summary>
         /// Allocates the ledger as flow ribbons.
         /// </summary>
         /// <param name="Grid">Field grid.</param>
@@ -195,6 +210,16 @@ namespace HaulBuilder
         /// <param name="CostBaselineTrips">
         /// Flow trips that fix the median. Zero uses the production count of 500.
         /// </param>
+        /// <param name="BeforeCorrecting">
+        /// Runs after flow, clusters, and thin-cut, and before correcting.
+        /// The road stage uses it to place its trips and return leftover reserve to the cut still to do.
+        /// Null skips the call.
+        /// </param>
+        /// <param name="AfterCorrecting">
+        /// Runs after correcting has covered the field.
+        /// The road stage uses it to cut leftover reserve and fill a remaining pan gap.
+        /// Null skips the call.
+        /// </param>
         /// <returns>The ribbon loads and the ledger check.</returns>
         static public HaulOptimizationResult Optimize
             (
@@ -212,7 +237,9 @@ namespace HaulBuilder
             Double ClusterModeLoadFraction = 0.0,
             Int32 StopAfterClusterTrips = 0,
             TimeParams? Clock = null,
-            Int32 CostBaselineTrips = 0
+            Int32 CostBaselineTrips = 0,
+            BeforeCorrectingStage? BeforeCorrecting = null,
+            BeforeCorrectingStage? AfterCorrecting = null
             )
         {
             if (Grid == null) throw new ArgumentNullException(nameof(Grid));
@@ -415,9 +442,10 @@ namespace HaulBuilder
                     State = ThinCut.Handoff(ThinStop);
                     if (State == HaulSearchState.Correcting)
                     {
-                        // Correcting is the last stage. A short field still gets the coverage.
+                        // The road stage runs after flow and before correcting, then correcting covers what remains.
                         CorrectingStartsAtRoute = Passes.Count + 1;
                         Int32 Mark = Passes.Count;
+                        RunBeforeCorrecting(BeforeCorrecting, Passes, CutLeft, FillLeft, Ledger);
                         Correcting.Apply(
                             Grid,
                             Flow,
@@ -427,9 +455,13 @@ namespace HaulBuilder
                             MaximumLoadBcy,
                             BladeWidthM,
                             Passes);
+                        RunBeforeCorrecting(AfterCorrecting, Passes, CutLeft, FillLeft, Ledger);
                         for (Int32 Index = Mark; Index < Passes.Count; Index += 1)
                         {
-                            Passes[Index].Stage = HaulStage.Correcting;
+                            if (Passes[Index].Stage != HaulStage.Road)
+                            {
+                                Passes[Index].Stage = HaulStage.Correcting;
+                            }
                         }
                     }
                 }
@@ -442,6 +474,7 @@ namespace HaulBuilder
                 }
                 (Double[,] ArrowX, Double[,] ArrowY) Arrows = SmoothedArrows(Flow, Grid);
                 Int32 Mark = Passes.Count;
+                RunBeforeCorrecting(BeforeCorrecting, Passes, CutLeft, FillLeft, Ledger);
                 Correcting.Apply(
                     Grid,
                     Flow,
@@ -451,9 +484,13 @@ namespace HaulBuilder
                     MaximumLoadBcy,
                     BladeWidthM,
                     Passes);
+                RunBeforeCorrecting(AfterCorrecting, Passes, CutLeft, FillLeft, Ledger);
                 for (Int32 Index = Mark; Index < Passes.Count; Index += 1)
                 {
-                    Passes[Index].Stage = HaulStage.Correcting;
+                    if (Passes[Index].Stage != HaulStage.Road)
+                    {
+                        Passes[Index].Stage = HaulStage.Correcting;
+                    }
                 }
             }
             IReadOnlyList<HaulDeferredWork> Deferred = Ledger.BuildDeferredWork(
@@ -526,6 +563,31 @@ namespace HaulBuilder
                 Result.StoppedOnCeiling = Cost.StoppedOnCeiling;
             }
             return Result;
+        }
+
+        /// <summary>
+        /// Runs the road-stage hook once the flow phases have stopped and before correcting covers the field.
+        /// </summary>
+        /// <param name="BeforeCorrecting">Hook. Null skips the call.</param>
+        /// <param name="Passes">Trips driven so far.</param>
+        /// <param name="CutLeft">Cut depth still to assign.</param>
+        /// <param name="FillLeft">Fill depth still to assign.</param>
+        /// <param name="Ledger">Required depths.</param>
+        private static void RunBeforeCorrecting
+            (
+            BeforeCorrectingStage? BeforeCorrecting,
+            List<Pass> Passes,
+            Double[,] CutLeft,
+            Double[,] FillLeft,
+            HaulWorkLedger Ledger
+            )
+        {
+            if (BeforeCorrecting == null)
+            {
+                return;
+            }
+
+            BeforeCorrecting(Passes, CutLeft, FillLeft, Ledger);
         }
 
         /// <summary>

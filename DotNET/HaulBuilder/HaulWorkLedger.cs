@@ -56,10 +56,10 @@ namespace HaulBuilder
         public Double FillBcyPerDepthM { get; }
 
         /// <summary>Gets total required cut BCY.</summary>
-        public Double TotalCutBcy { get; }
+        public Double TotalCutBcy { get; private set; }
 
         /// <summary>Gets total required fill BCY.</summary>
-        public Double TotalFillBcy { get; }
+        public Double TotalFillBcy { get; private set; }
 
         /// <summary>Builds the canonical ledger from the unchanged grid.</summary>
         static public HaulWorkLedger Build
@@ -93,8 +93,8 @@ namespace HaulBuilder
         }
 
         /// <summary>
-        /// Removes pan fill, and the pan trim the road stage will cut, from a field ledger.
-        /// Field stages then cannot build the pan or take the same trim.
+        /// Removes pan fill from a field ledger, and any pan trim still reserved for the road stage.
+        /// Surplus above the pan stays ordinary cut. The pan is not a fill target.
         /// </summary>
         /// <param name="PanM">Pan height. Cells at or below zero are left unchanged.</param>
         /// <param name="KeptCutM">Trim depth the road stage keeps, in metres.</param>
@@ -126,7 +126,8 @@ namespace HaulBuilder
                         continue;
                     }
 
-                    // The road stage places the pan. Leftover trim above the kept depth stays here.
+                    // The main stages cut surplus down to the pan and never fill the cell.
+                    // Kept depth is zero at planning time. Leftover surplus is measured after those passes.
                     Fill[By, Bx] = 0.0;
                     Cut[By, Bx] = Math.Max(0.0, Cut[By, Bx] - KeptCutM[By, Bx]);
                 }
@@ -186,6 +187,77 @@ namespace HaulBuilder
                 Fill[Entry.Cell.By, Entry.Cell.Bx] += Entry.DepthM;
             }
             return new HaulWorkLedger(Grid, ToleranceM, Cut, Fill);
+        }
+
+        /// <summary>
+        /// Adds cut depth the road stage left in the reserve, so correcting can take it.
+        /// </summary>
+        /// <param name="By">Row.</param>
+        /// <param name="Bx">Column.</param>
+        /// <param name="DepthM">Depth to add, in metres. Zero and negative are ignored.</param>
+        internal void AddRequiredCut
+            (
+            Int32 By,
+            Int32 Bx,
+            Double DepthM
+            )
+        {
+            if (DepthM <= 0.0)
+            {
+                return;
+            }
+
+            RequiredCutDepthM[By, Bx] += DepthM;
+            TotalCutBcy += DepthM * CutBcyPerDepthM;
+        }
+
+        /// <summary>
+        /// Adds fill depth that pairs with cut the road stage returned to correcting.
+        /// </summary>
+        /// <param name="By">Row.</param>
+        /// <param name="Bx">Column.</param>
+        /// <param name="DepthM">Depth to add, in metres. Zero and negative are ignored.</param>
+        internal void AddRequiredFill
+            (
+            Int32 By,
+            Int32 Bx,
+            Double DepthM
+            )
+        {
+            if (DepthM <= 0.0)
+            {
+                return;
+            }
+
+            RequiredFillDepthM[By, Bx] += DepthM;
+            TotalFillBcy += DepthM * FillBcyPerDepthM;
+        }
+
+        /// <summary>
+        /// Removes cut the road stage already took, so correcting does not take it again.
+        /// </summary>
+        /// <param name="By">Row.</param>
+        /// <param name="Bx">Column.</param>
+        /// <param name="DepthM">Depth to remove, in metres. Limited to the depth still required.</param>
+        internal void ReleaseRequiredCut
+            (
+            Int32 By,
+            Int32 Bx,
+            Double DepthM
+            )
+        {
+            if (DepthM <= 0.0)
+            {
+                return;
+            }
+
+            Double Take = Math.Min(DepthM, RequiredCutDepthM[By, Bx]);
+            RequiredCutDepthM[By, Bx] -= Take;
+            TotalCutBcy -= Take * CutBcyPerDepthM;
+            if (TotalCutBcy < 0.0)
+            {
+                TotalCutBcy = 0.0;
+            }
         }
 
         /// <summary>

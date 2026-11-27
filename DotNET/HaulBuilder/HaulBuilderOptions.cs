@@ -65,6 +65,7 @@ namespace HaulBuilder
             BladeShapingHoursPerPad = 0.0;
             RoadMinTripLoadPct = 0.15;
             RoadBladeMoveMaxFt = 100.0;
+            ReserveMaxDepthFt = 0.2;
             Roads = new List<RoadCentreline>();
             WellPads = new List<WellPad>();
             RandomSeed = Constants.DEFAULT_SEED;
@@ -340,6 +341,12 @@ namespace HaulBuilder
         /// Gets or sets how far the blade may push soil along the bank, in feet, when a road trip is too light for the pan.
         /// </summary>
         public Double RoadBladeMoveMaxFt { get; set; }
+
+        /// <summary>
+        /// Gets or sets the deepest field cut held back for the road stage, in feet.
+        /// Each borrowed cell keeps the rest of its cut, so it stays a flow-field source.
+        /// </summary>
+        public Double ReserveMaxDepthFt { get; set; }
 
         /// <summary>Gets the access-road centrelines. Each road may override the road defaults.</summary>
         public List<RoadCentreline> Roads { get; }

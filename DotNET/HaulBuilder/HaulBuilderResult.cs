@@ -161,6 +161,13 @@ namespace HaulBuilder
         public RoadPadSurface? RoadPads { get; set; }
 
         /// <summary>
+        /// Gets or sets road and pad cells that finished outside the finish tolerance.
+        /// Null when every checked pan cell is inside the tolerance, or the run built no roads or pads.
+        /// The haul plan is still complete.
+        /// </summary>
+        public PanTargetMiss? PanTargetMiss { get; set; }
+
+        /// <summary>
         /// Gets zone sequencing summary rows.
         /// </summary>
         public List<ZoneStep> ZoneSteps { get; }

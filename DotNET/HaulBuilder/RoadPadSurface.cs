@@ -29,7 +29,15 @@ namespace HaulBuilder
             FieldDesignM = new Double[Height, Width];
             FinalDesignM = new Double[Height, Width];
             ReservedDepthM = new Double[Height, Width];
+            UnusedDepthM = new Double[Height, Width];
+            PanGapM = new Double[Height, Width];
+            ReserveLanes = new List<ReserveLane>();
+            SurplusM = new Double[Height, Width];
+            DeficitM = new Double[Height, Width];
+            OpenEnd = new Boolean[Height, Width];
             Excluded = new Boolean[Height, Width];
+            BladeCuts = new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>();
+            BladeFills = new List<((Int32 Bx, Int32 By) Cell, Double DepthM)>();
             OwnerIsPad = new Boolean[Height, Width];
             OwnerIndex = new Int32[Height, Width];
             Warnings = new List<String>();
@@ -66,13 +74,72 @@ namespace HaulBuilder
         public Double[,] PanCoverage { get; }
 
         /// <summary>
-        /// Gets trim the road stage cuts from a pan cell, in metres.
-        /// The rest of any trim stays with the field stages.
+        /// Gets leftover pan surplus the road stage may still cut, in metres.
+        /// The main stages take the surplus first, so this stays zero until those passes are accounted.
         /// </summary>
         internal Double[,] StageCutM { get; }
 
-        /// <summary>Gets the bank fill the road stage must still borrow from field cells.</summary>
+        /// <summary>
+        /// Gets the bank fill the road stage must borrow.
+        /// It is the pan deficit times fill-to-bank, not the finished crown volume.
+        /// </summary>
         public Double PanImportBcy { get; internal set; }
+
+        /// <summary>
+        /// Gets how far each pan cell sits above its pan target, in metres, before haul planning.
+        /// Zero off the pan and where the ground is not high.
+        /// </summary>
+        internal Double[,] SurplusM { get; }
+
+        /// <summary>
+        /// Gets how far each pan cell sits below its pan target, in metres, before haul planning.
+        /// Zero off the pan and where the ground is not low.
+        /// </summary>
+        internal Double[,] DeficitM { get; }
+
+        /// <summary>
+        /// Gets cells at an open end. The finish check does not require them to meet the pan.
+        /// </summary>
+        internal Boolean[,] OpenEnd { get; }
+
+        /// <summary>Gets pan surplus before haul planning, in bank cubic yards.</summary>
+        public Double RoadSurplusBcy { get; internal set; }
+
+        /// <summary>Gets pan deficit before haul planning, in bank cubic yards.</summary>
+        public Double RoadDeficitBcy { get; internal set; }
+
+        /// <summary>Gets pan surplus the main stages left, in bank cubic yards.</summary>
+        public Double SurplusRemainingBcy { get; internal set; }
+
+        /// <summary>Gets pan deficit still to fill when the road stage starts, in bank cubic yards.</summary>
+        public Double DeficitRemainingBcy { get; internal set; }
+
+        /// <summary>Gets reserved field cut still in the ground when the road stage starts, in bank cubic yards.</summary>
+        public Double ReserveAvailableBcy { get; internal set; }
+
+        /// <summary>Gets reserved field cut the road stage took, in bank cubic yards.</summary>
+        public Double ReserveUsedBcy { get; internal set; }
+
+        /// <summary>
+        /// Gets reserved field cut still in the ground after correcting, in bank cubic yards.
+        /// Correcting cuts whatever the road stage left. This should be zero.
+        /// </summary>
+        public Double UnusedReserveBcy { get; internal set; }
+
+        /// <summary>Gets how many field cells finished more than the tolerance from the design.</summary>
+        public Int32 FieldCellsOffDesign { get; internal set; }
+
+        /// <summary>
+        /// Gets the road-stage passes built after flow and before correcting.
+        /// Null until that stage runs.
+        /// </summary>
+        internal List<Pass>? StagePasses { get; set; }
+
+        /// <summary>Gets cut the blade takes for the road stage. Filled when the passes are built.</summary>
+        internal List<((Int32 Bx, Int32 By) Cell, Double DepthM)> BladeCuts { get; }
+
+        /// <summary>Gets fill the blade places for the road stage. Filled when the passes are built.</summary>
+        internal List<((Int32 Bx, Int32 By) Cell, Double DepthM)> BladeFills { get; }
 
         /// <summary>Gets road-stage cut taken from pan cells, in BCY.</summary>
         public Double RoadCellCutBcy { get; internal set; }
@@ -91,6 +158,24 @@ namespace HaulBuilder
 
         /// <summary>Gets cut depth held back from the field stages, in metres.</summary>
         public Double[,] ReservedDepthM { get; }
+
+        /// <summary>
+        /// Gets reserved depth the road stage did not cut, in metres.
+        /// Correcting cuts this and fills the pan gap.
+        /// </summary>
+        internal Double[,] UnusedDepthM { get; }
+
+        /// <summary>
+        /// Gets the pan gap the road stage left, in metres.
+        /// Correcting fills it from the unused reserve.
+        /// </summary>
+        internal Double[,] PanGapM { get; }
+
+        /// <summary>
+        /// Gets the blade-width strips the reserve was taken from.
+        /// Empty when the pan needs no borrow.
+        /// </summary>
+        internal List<ReserveLane> ReserveLanes { get; }
 
         /// <summary>Gets cells inside a well-casing exclusion. The target is still set.</summary>
         public Boolean[,] Excluded { get; }
@@ -211,6 +296,16 @@ namespace HaulBuilder
                 CultureInfo.InvariantCulture,
                 "Cut from the field {0:F3} BCY",
                 FieldCutBcy));
+            Text.AppendLine(String.Format(
+                CultureInfo.InvariantCulture,
+                "Road surplus {0:F3} BCY",
+                RoadSurplusBcy));
+            Text.AppendLine(String.Format(
+                CultureInfo.InvariantCulture,
+                "Road deficit {0:F3} BCY",
+                RoadDeficitBcy));
+            Text.AppendLine(RoadPadBuild.FormatBalanceLine(this));
+            Text.AppendLine(RoadPadBuild.FormatReserveLine(this));
             String Stage = FormatStage();
             if (Stage.Length > 0)
             {
@@ -410,6 +505,86 @@ namespace HaulBuilder
 
             /// <summary>Gets the excluded part of <see cref="BankBcy"/>, in BCY.</summary>
             public Double ExcludedBcy { get; internal set; }
+        }
+
+        /// <summary>
+        /// One blade-width strip of field cut held for the road.
+        /// The strip is at least four turning radii long and runs with the local cut.
+        /// </summary>
+        internal sealed class ReserveLane
+        {
+            /// <summary>
+            /// Initializes one strip.
+            /// </summary>
+            /// <param name="DirX">Cut direction east.</param>
+            /// <param name="DirY">Cut direction north.</param>
+            /// <param name="LengthM">Strip length in metres, including one cell.</param>
+            /// <param name="DistanceM">Distance from the strip to the nearest pan deficit, in metres.</param>
+            /// <param name="Cells">Cells, nearest the deficit first.</param>
+            public ReserveLane
+                (
+                Double DirX,
+                Double DirY,
+                Double LengthM,
+                Double DistanceM,
+                List<ReserveCell> Cells
+                )
+            {
+                this.DirX = DirX;
+                this.DirY = DirY;
+                this.LengthM = LengthM;
+                this.DistanceM = DistanceM;
+                this.Cells = Cells;
+            }
+
+            /// <summary>Gets the cut direction east.</summary>
+            public Double DirX { get; }
+
+            /// <summary>Gets the cut direction north.</summary>
+            public Double DirY { get; }
+
+            /// <summary>Gets the strip length in metres, including one cell.</summary>
+            public Double LengthM { get; }
+
+            /// <summary>Gets the distance from the strip to the nearest pan deficit, in metres.</summary>
+            public Double DistanceM { get; }
+
+            /// <summary>Gets the cells, nearest the deficit first.</summary>
+            public List<ReserveCell> Cells { get; }
+        }
+
+        /// <summary>One cell of a reserve strip. The depth still to cut changes as the road stage takes it.</summary>
+        internal sealed class ReserveCell
+        {
+            /// <summary>
+            /// Initializes one cell.
+            /// </summary>
+            /// <param name="Bx">Column.</param>
+            /// <param name="By">Row.</param>
+            /// <param name="DistanceM">Distance to the nearest pan deficit, in metres.</param>
+            public ReserveCell
+                (
+                Int32 Bx,
+                Int32 By,
+                Double DistanceM
+                )
+            {
+                this.Bx = Bx;
+                this.By = By;
+                this.DistanceM = DistanceM;
+            }
+
+            /// <summary>Gets the column.</summary>
+            public Int32 Bx { get; }
+
+            /// <summary>Gets the row.</summary>
+            public Int32 By { get; }
+
+            /// <summary>Gets the distance to the nearest pan deficit, in metres.</summary>
+            public Double DistanceM { get; }
+
+            /// <summary>Gets or sets the reserved depth still to cut, in metres.</summary>
+            public Double LeftM { get; set; }
         }
     }
 }

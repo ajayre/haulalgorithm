@@ -1,132 +1,105 @@
-# Land Leveling Haul Algorithm
+# Haul Algorithm
 
-A complete implementation of the **LAND-LEVELING-SPEC-2** pipeline for agricultural land
-leveling — taking an AGD survey file and producing a minimum-haul
-cut/fill plan, sequenced scraper passes, operator guidance, and time estimates.
+Plans land leveling for one tractor and scraper. An AGD survey supplies existing ground and the proposed grade. The planner returns an ordered set of cut–haul–fill trips, a forward-only centerline the machine can drive, and a time estimate.
 
-Available in two implementations:
+The production library is [`DotNET/HaulBuilder`](DotNET/HaulBuilder). Call `HaulBuilderEngine.Run`. Results stay in memory. The caller decides whether to write them out.
 
-| Implementation | Entry point | Status |
-|---|---|---|
-| [**Python**](Python/) (`landlevel`) | `python -m landlevel.cli` | Reference implementation |
-| [**C# / .NET**](DotNET/) (`HaulBuilder`) | `HaulBuilderEngine.Run(options)` | Production port, API-first |
+[`DotNET/README.md`](DotNET/README.md) lists every option and result field.
 
----
+## The job
 
-## What it does
+Each grid cell is cut where existing ground is above the design and filled where it is below. One trip loads the bowl, hauls, and empties it. A later grade pass runs back over each fill. The search prefers trips that move a yard of soil in fewer seconds. Volume is kept in bank cubic yards (BCY). Swell applies only when the loose bowl capacity is converted to a bank load.
 
-The pipeline reads a georeferenced field survey (existing elevation + proposed target grade)
-and produces a complete earthmoving plan:
+| Quantity | Default |
+|---|---|
+| Cell size | 8.5 ft |
+| Finish tolerance | 10 mm |
+| Bowl | 20 LCY loose, swell 1.3, about 15.4 BCY bank |
+| Fill compaction | 1.2 bank cut per bank fill |
+| Deepest cut or fill in one visit | 61 mm |
+| Blade width | 2590.8 mm |
+| Turning diameter | 45 ft |
+| Tractor and scraper length | 43 ft |
+| Cut / haul / fill / return | 4 / 10 / 5 / 13 mph |
+| Field efficiency | 0.8, applied to scheduled hours |
 
-1. **Builds a grid** — divides the field into ≈ blade-width cells (default 8.5 ft) and
-   computes the cut/fill volume at every cell.
-2. **Checks / adjusts mass balance** — ensures total cut equals total fill, accounting for
-   swell and compaction factors.
-3. **Computes a transport flow field** — solves a Poisson equation over the grid so the
-   field flows from cut ridges toward fill basins, establishing the natural haul direction.
-4. **Traces streamlines** — derives curved, with-the-grain haul lanes from the flow field.
-5. **Generates scraper passes** — plans each load (≈ 15.4 BCY) as a contiguous cut patch
-   matched to a contiguous fill patch, using a shortest-haul-first KD-tree anchoring
-   strategy with a 61 mm per-pass depth cap. Supports **flow-aligned curved lanes** (default)
-   or straight lanes along a fixed heading. **Multi-drop** keeps loads full by hopping to
-   nearby pockets without excessive U-turn moves.
-6. **Sequences and routes passes** — orders passes with a direction-aware cost that
-   combines deadhead distance with the turn arc needed to swing into the next cut, then
-   optionally refines the order with a windowed relocation search.
-7. **Estimates time** — constant speeds for loading and
-   dumping, trapezoidal haul/return speed profiles, and an 80% field-efficiency factor
-   for non-productive time.
-8. **Produces blade-scale guidance** — emits turn-by-turn operator waypoints with depth,
-   heading, and instructions, smoothed into drivable GPS curves. Counts turning arcs, a
-   grade/compact return pass over every fill, and multi-drop hops for a realistic drivable
-   time estimate.
-9. **Handles exclusion zones** — drops bins inside no-go polygons (wells, structures) and
-   routes blade-up travel around them via a visibility graph + Dijkstra shortest path.
-10. **Schedules center-pivot irrigation** — finds arm bearings via dynamic programming
-    that minimize arm moves against haul detours, then routes haul legs around the parked
-    arm in the guidance track.
+## What one run does
 
----
+`HaulBuilderEngine.Run` always takes the same path:
 
-## Capabilities
+1. **Read the AGD file** and project the points to UTM. Rows that are missing, zero, or too short are skipped and reported.
+2. **Build the grid.** Each valid cell gets a cut supply and a fill demand. When road or well-pad centrelines are supplied, the extra fill they need is reserved before anything else is planned.
+3. **Drop exclusion polygons** (wells, structures) from the field. Blade-up travel later routes around them with clearance for the machine body. Travel that cannot clear an obstruction is marked as a manual move.
+4. **Check mass balance.** A cut/fill gap above 2% is a warning. With exclusions active, imbalance is recorded and the warning threshold is not applied.
+5. **Solve a Poisson flow.** Cut is a source and fill is a sink. The gradient is the haul arrow at each cell: soil moves from ridges toward basins.
+6. **Build the trips** with the search below. The ledger checks that assigned depths stay inside the required cut and fill, inside the bowl, and inside the depth cap.
+7. **Order the trips.** Full one-strip interior loads go first, then other interior loads, then the field edge, then short scraps. Inside each band the order scores the empty hop plus the turn arc.
+8. **Optional extras**, when the caller turns them on: ponding-aware reordering, a center-pivot arm schedule, zone summaries, and cut/fill pair maps.
+9. **Build guidance.** Coverage lanes, Dubins connectors, a grade return, and cleanup trips for scraps the main track could not drive.
+10. **Time the centerline** and, if asked, render maps, CSVs, and a leveling animation. All of those come back as bytes or text on the result.
 
-| Feature | Python | C# |
-|---|---|---|
-| Flow-aligned curved haul lanes (Poisson) | ✓ | ✓ |
-| Straight lanes along fixed heading (`--no-flow-aligned`) | ✓ | ✓ |
-| Multi-drop pass loading | ✓ | ✓ |
-| Compact load fragmenting (refunds far cells) | ✓ | ✓ |
-| Direction-aware sequencing (turn-into-cut cost) | ✓ | ✓ |
-| Windowed relocation order refinement | ✓ | ✓ |
-| Knot re-profiling → boustrophedon sweeps | ✓ | ✓ |
-| Route smoothing (drivable GPS curves) | ✓ | ✓ |
-| Blade-scale turn-by-turn guidance CSV | ✓ | ✓ |
-| Realistic guidance time (turn arcs, grade pass) | ✓ | ✓ |
-| OptiHaul-matched time report | ✓ | ✓ |
-| Exclusion zones (visibility graph + Dijkstra) | ✓ | ✓ |
-| Center-pivot irrigation scheduling (DP) | ✓ | ✓ |
-| Cut/fill PNG with haul-direction arrows | ✓ | ✓ |
-| Zone work-order sequencing | ✓ | ✓ |
-| Per-pass cut/fill pair CSV + heat-map PNG | ✓ | ✓ |
-| Leveling animation (GIF, cutfill / topology) | ✓ | ✓ |
-| Pivot leveling animation with arm moves | ✓ | ✓ |
-| Mass-balance check / auto-adjust | ✓ | ✓ |
-| CLI entry point | ✓ | — |
-| In-memory API (no filesystem I/O) | — | ✓ |
-| Native nanoflann KD-tree | — | ✓ |
+`SkipHaulPlan` stops after the flow and the cut/fill map. `SkipGuidance` stops after the trip list and uses the speed model for the hours.
 
----
+## How a trip is chosen
 
-## Performance
+Production defaults compare three ways of taking the next load and keep the one with the lowest seconds per bank cubic yard. A tie goes to the flow ribbon, then cluster hauling, then thin-cut. After 500 flow trips, the median of those costs is fixed. A later trip more expensive than three times that median is left unscheduled. When nothing under that ceiling remains, correcting starts.
 
-Representative timings on a **38-acre field** (177×173 grid, ~46 400 BCY moved), single
-desktop core, Release build, CLI / `HaulBuilderOptions` defaults:
+### Flow ribbon
 
-```bash
-python DotNET/Bench/bench_theshop2.py
-dotnet run -c Release --project DotNET/Bench/Bench.csproj -- DotNET/TheShop2_2ft.agd
-```
+The ribbon starts where remaining cut meets remaining fill and walks backward along the smoothed Poisson arrows.
 
-| Stage | Python | C# |
-|---|---|---|
-| Parse + grid | 2.5 s | 0.03 s |
-| Flow field (Poisson) | 1.0 s | 0.31 s |
-| Strip tracing | 0.9 s | 0.04 s |
-| Pass generation | 55.2 s | 17.2 s |
-| Routing + knots | 11.7 s | 0.73 s |
-| **Total** | **~72 s** | **~19 s** |
+- The cut follows the arrow uphill toward the ridge. The fill follows it on into the basin.
+- The blade is one cell wide. A cell counts only when the blade covers at least a quarter of it, so a diagonal nick is not taken.
+- A step has to stay with the arrow (about 32°) and with the step just taken (about 45°). Wider than that, the strip stops being a strip.
+- Cells already at grade are driven across. The dirt stays in the bowl until the next cell that is still low.
+- One load may add another strip within 12 cells when that fills the bowl. The ribbon stays within about three cells of width.
+- The search tries a full strip first, then a short strip, then a fold that turns back on itself. A fold waits until no straight strip remains, so the last dirt on a line is not abandoned.
+- If the arrow itself cannot fill a bowl, the blade may leave the arrow, and may cross a small leftover ridge to finish the bowl in the basin the arrow reaches. The haul is only the gap to the first low cell.
 
-C# runs the full plan+route pipeline in roughly **one quarter** of the Python wall time
-(~3.8× faster). Pass generation — the heaviest stage — is about **3.2× faster** in C#
-thanks to the native nanoflann KD-tree; every other stage is also significantly faster.
+### Cluster hauling
 
-On the same input, both implementations agree on the overall earthmoving plan:
+Residual cut and fill are grouped into clusters, paired, and driven. A cluster grows from deep cells (150 mm) through cells above 50 mm. A piece larger than two bowls is split along its long axis. The field is clustered again after ten trips. Cells are cut and filled to the target.
 
-| Metric | Python | C# |
-|---|---|---|
-| Passes | 3 049 | 3 047 |
-| Moved BCY | 46 448 | 46 449 |
-| Haul distance | 200 103 m | 199 568 m |
-| Hours | 212.2 | 212.1 |
+### Thin-cut
 
----
+What the clusters leave is tiled. A cut tile is soil above 10 mm. A fill tile is a hole below −30 mm, taken all the way to the target. Pairing and the ten-trip replan are the same as cluster hauling.
 
-## Quick start
+### Correcting
 
-### Python
+Correcting is the last stage. Passes run the length of the field along the mean flow, a blade width apart, as a serpentine, then a headland lap along the boundary. The blade is at the design. High cells load the bowl and low cells take a spread of at most 100 mm. Another coverage runs only when the last one cut the haul error by at least one percent and the surface is still outside the planing gate.
 
-```bash
-pip install -r Python/requirements.txt
-python -m landlevel.cli --agd DotNET/TheShop2_2ft.agd --out plan.png
-```
+### Roads and pads
 
-See [Python/README.md](Python/README.md) for the full CLI reference.
+When centrelines are supplied, those trips are inserted after the haul search and before correcting. Every lane on a road faces the same way. A lane change is a forward S-bend. Unused reserved fill is closed out after correcting.
 
-### C# / .NET
+A cluster window of zero keeps the flow ribbon for the whole field. The cost comparison, cluster hauling, thin-cut, and correcting stay off.
 
-```bash
-cd DotNET
-dotnet build HaulBuilder.sln -c Release
+## Driving it
+
+`TripGuidance` joins the blade-down lanes with forward Dubins paths (LSL, RSR, LSR, RSL, RLR, LRL). The machine does not reverse except for the grade pass, which runs back over the fill. Correcting does not grade: the land plane follows the coverage. Lane direction is chosen by time. A road trip keeps one facing.
+
+A connector within 2% of the shortest, or half a turning radius when that is wider, prefers the path with the least length outside the field. A short joint may be a straight steer instead of a loop. Two connectors with no lane between them become one path. After every trip is fixed, trips inside one stage are reordered to shorten the empty returns. Two trips that share a cell keep their relative order.
+
+A blade-down run shorter than half the machine length (21.5 ft at the default 43 ft) is left off the main track. Those scraps are rebuilt into cleanup trips at the end of the job, with the length gate turned off. What still will not pair is reported as manual cleanup, separate from cut that has no matching fill.
+
+An optional center pivot is a parked arm. Bearings are scheduled across the trip order, and haul legs that would cross the arm are routed around it.
+
+## What comes back
+
+`HaulBuilderResult` holds the grid, the flow, the trips, the drive order, the guidance waypoints, and the hours.
+
+- `Metrics.DeterministicHours` is the centerline at the configured speeds. `ScheduledHours` divides that by field efficiency.
+- `DeferredWorkSummary` separates material surplus from balanced work left for hand cleanup.
+- `State` and `ClusterModeStartsAtRoute`, `ThinCutStartsAtRoute`, and `CorrectingStartsAtRoute` record where the search changed stage. Those indexes are in the order trips were found.
+- `PngBytesByName`, `CsvTextByName`, and the animation byte arrays are empty unless the matching option is set. There is no output-path argument.
+
+## Build and run
+
+.NET 8. The HaulBuilder project builds the native KD-tree (`haul_kdtree`) before it compiles. On Windows that is `DotNET/Native/build_native.ps1`.
+
+```powershell
+dotnet build DotNET/HaulBuilder/HaulBuilder.csproj -c Release
+dotnet test DotNET/HaulBuilder.Tests/HaulBuilder.Tests.csproj -c Release
 ```
 
 ```csharp
@@ -134,60 +107,30 @@ using HaulBuilder;
 
 var options = new HaulBuilderOptions
 {
-    AgdPath = "TheShop2_2ft.agd",
-    LaneAxisHeadingDeg = 0.0, // undirected north-south work axis
+    AgdPath = @"C:\fields\example.agd",
 };
+
 HaulBuilderResult result = new HaulBuilderEngine().Run(options);
 
-// Rendered artifacts are returned in memory; the host application decides
-// whether and where to persist result.PngBytesByName / CsvTextByName.
+Console.WriteLine($"Routes: {result.Route?.OrderedPasses.Count ?? 0}");
+Console.WriteLine($"Deterministic hours: {result.Metrics?.DeterministicHours:F3}");
+Console.WriteLine($"Scheduled hours: {result.Metrics?.ScheduledHours:F3}");
+Console.WriteLine($"Manual cleanup: {result.DeferredWorkSummary?.ManualCleanupBcy:F3} BCY");
 ```
 
-See [DotNET/README.md](DotNET/README.md) for the full API reference.
+`Run` accepts an `IProgress<GuidanceBuildProgress>` and a `CancellationToken`. Progress callbacks arrive on worker threads. Cancellation during guidance throws `OperationCanceledException`.
 
----
+A sample field is `DotNET/TheShop2_2ft.agd`. `DotNET/Bench` and `DotNET/HaulRunProof` are measurement harnesses. They are not part of the library API.
 
-## Repository layout
+## Layout
 
 ```
-Python/             Reference implementation (landlevel package + CLI)
-DotNET/             C# port (HaulBuilder class library + tests + bench)
-Documents/          Specification and design documents
-Patent Search/      Prior-art search materials
+DotNET/HaulBuilder/           production library
+DotNET/HaulBuilder.Tests/     tests
+DotNET/HaulBuilder.Visual/    sheet and map rendering
+DotNET/Bench/                 timing harness
+DotNET/HaulRunProof/          field-run proofs
+DotNET/PondingProof/          ponding comparison maps
+DotNET/Native/                KD-tree used by the planner
+Python/                       earlier pipeline for the same problem
 ```
-
----
-
-## Algorithm overview
-
-The core algorithm is a **shortest-haul-first contiguous patch matcher** operating on an
-optimal-transport flow field:
-
-1. A **Poisson flow field** (`F = −∇φ`) transports soil from cut ridges to fill basins,
-   following the natural slope of the design surface.
-2. **Streamlines** are traced along the flow field to define curved, with-the-grain haul
-   lanes.
-3. Each **pass** is seeded at the unfinished cut cell whose nearest fill is closest (KD-tree
-   query), then region-grown upstream along its streamline to fill a full scraper load
-   (≈ 15.4 BCY, capped at 61 mm depth per cell). The corresponding fill is grown
-   downstream into the matching basin.
-4. **Multi-drop** extends partial loads by hopping blade-up to the nearest unfinished
-   pocket within a configurable radius, capping load fullness to keep lanes from bloating
-   into U-turns.
-5. After all passes are generated, a **direction-aware sequencer** orders them by a combined
-   cost of deadhead distance + turn-arc time, optionally refined by a windowed relocation
-   local search.
-6. The **blade-scale guidance** stage converts the ordered pass list into a drivable
-   turn-by-turn operator track, smoothing grid-stepped coordinates into curves whose
-   corner radius respects the tractor+scraper turning circle (45 ft diameter), and
-   reprofiles any undriveable "knot" sweeps into boustrophedon back-and-forth lanes.
-
-Volume is conserved exactly throughout: no soil is created or destroyed, and the finished
-surface is identical regardless of whether flow-aligned or straight-lane mode is used, or
-whether knots are reprofiled.
-
----
-
-## Specification
-
-The full algorithm specification is in [`Documents/LAND-LEVELING-SPEC-2.md`](Documents/LAND-LEVELING-SPEC-2.md).
