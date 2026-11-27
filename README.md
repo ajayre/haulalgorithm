@@ -89,6 +89,7 @@ An optional center pivot is a parked arm. Bearings are scheduled across the trip
 `HaulBuilderResult` holds the grid, the flow, the trips, the drive order, the guidance waypoints, and the hours.
 
 - `Metrics.DeterministicHours` is the centerline at the configured speeds. `ScheduledHours` divides that by field efficiency.
+- `DieselEstimate` is the diesel gallons and cost when `options.Diesel` has a full-load fuel rate, drawbar horsepower, and a price per gallon. Otherwise it is null.
 - `DeferredWorkSummary` separates material surplus from balanced work left for hand cleanup.
 - `State` and `ClusterModeStartsAtRoute`, `ThinCutStartsAtRoute`, and `CorrectingStartsAtRoute` record where the search changed stage. Those indexes are in the order trips were found.
 - `PngBytesByName`, `CsvTextByName`, and the animation byte arrays are empty unless the matching option is set. There is no output-path argument.

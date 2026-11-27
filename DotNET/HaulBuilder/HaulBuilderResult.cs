@@ -198,6 +198,12 @@ namespace HaulBuilder
         public GuidanceTiming.Result? DetailedGuidanceTime { get; set; }
 
         /// <summary>
+        /// Gets or sets the diesel cost of this plan.
+        /// Null when the run did not supply a fuel rate, drawbar horsepower, and price.
+        /// </summary>
+        public DieselCost.Result? DieselEstimate { get; set; }
+
+        /// <summary>
         /// Gets or sets base time-model result.
         /// </summary>
         public TimeResult? TimeResult { get; set; }

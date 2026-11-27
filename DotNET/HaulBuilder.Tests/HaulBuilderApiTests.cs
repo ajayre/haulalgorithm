@@ -33,6 +33,7 @@ namespace HaulBuilder.Tests
                 nameof(HaulBuilderOptions.CutFillRatio),
                 nameof(HaulBuilderOptions.CutSpeedMph),
                 nameof(HaulBuilderOptions.DecelerationTimeS),
+                nameof(HaulBuilderOptions.Diesel),
                 nameof(HaulBuilderOptions.EnableMinimumWorkLength),
                 nameof(HaulBuilderOptions.EnablePivot),
                 nameof(HaulBuilderOptions.EquipmentLengthFt),
@@ -75,6 +76,7 @@ namespace HaulBuilder.Tests
                 nameof(HaulBuilderOptions.RouteGuidanceImageCount),
                 nameof(HaulBuilderOptions.RandomRouteTripletCount),
                 nameof(HaulBuilderOptions.RandomSeed),
+                nameof(HaulBuilderOptions.ReserveMaxDepthFt),
                 nameof(HaulBuilderOptions.RoadBladeMoveMaxFt),
                 nameof(HaulBuilderOptions.RoadCrossSlopePct),
                 nameof(HaulBuilderOptions.RoadHeightFt),
@@ -322,6 +324,7 @@ namespace HaulBuilder.Tests
             Assert.NotSame(Source.Optimization, Copy.Optimization);
             Assert.NotSame(Source.Guidance, Copy.Guidance);
             Assert.NotSame(Source.Ponding, Copy.Ponding);
+            Assert.NotSame(Source.Diesel, Copy.Diesel);
             Assert.NotSame(Source.ExcludePolygonSpecs, Copy.ExcludePolygonSpecs);
             Assert.NotSame(Source.Ponding.OutletSpecs, Copy.Ponding.OutletSpecs);
             Assert.NotSame(Source.Ponding.OutletPolygonSpecs, Copy.Ponding.OutletPolygonSpecs);

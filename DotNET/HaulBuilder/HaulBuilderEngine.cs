@@ -1877,6 +1877,234 @@ namespace HaulBuilder
                 GoldenAchievementPercent,
                 ScheduledMoveRate,
                 Result.Metrics.MoveVolumeBcyPerAcre));
+            AttachDieselEstimate(Result, Grid, PassResult, Options);
+        }
+
+        /// <summary>
+        /// Prices diesel from the driving hours already on the result.
+        /// The field-efficiency gap is left out: the engine is off when the tractor is not driving.
+        /// </summary>
+        /// <param name="Result">Run that receives the estimate.</param>
+        /// <param name="Grid">Elevations for the optional haul grade. Null leaves the grade at zero.</param>
+        /// <param name="PassResult">Cycles used for mean bowl load and grade.</param>
+        /// <param name="Options">Tractor inputs. No estimate is attached when they are unset.</param>
+        private static void AttachDieselEstimate
+            (
+            HaulBuilderResult Result,
+            Grid? Grid,
+            PassResult PassResult,
+            HaulBuilderOptions Options
+            )
+        {
+            if ((Options.Diesel == null) || !DieselCost.RequestsEstimate(Options.Diesel))
+            {
+                return;
+            }
+
+            // Guidance hours include the grade pass. The speed model does not.
+            DieselCost.PhaseHours Hours = Result.DetailedGuidanceTime != null
+                ? DieselCost.HoursFromGuidance(Result.DetailedGuidanceTime.PhaseSeconds)
+                : DieselCost.HoursFromTimeModel(Result.TimeResult);
+            DieselOptions Diesel = Options.Diesel;
+            List<DieselCost.Cycle> Cycles = new List<DieselCost.Cycle>();
+            DieselCost.Cycle? Average = BuildAverageDieselCycle(
+                Diesel, Result.TimeResult, PassResult, Grid);
+            if (Average != null)
+            {
+                Cycles.Add(Average);
+            }
+
+            DieselCost.Result Priced = DieselCost.Estimate(new DieselCost.Request
+            {
+                MaxFuelGalPerHour = Diesel.MaxFuelGalPerHour.GetValueOrDefault(),
+                MaxDrawbarHp = Diesel.MaxDrawbarHp.GetValueOrDefault(),
+                PricePerGallon = Diesel.PricePerGallon.GetValueOrDefault(),
+                LoadingHours = Hours.LoadingHours,
+                HaulingHours = Hours.HaulingHours,
+                DumpingHours = Hours.DumpingHours,
+                GradingHours = Hours.GradingHours,
+                ReturningHours = Hours.ReturningHours,
+                IdleHours = Diesel.IdleHours,
+                EmptyRigWeightLb = Diesel.EmptyRigWeightLb,
+                LoadFactorLoad = Diesel.LoadFactorLoad,
+                LoadFactorHaul = Diesel.LoadFactorHaul,
+                LoadFactorDump = Diesel.LoadFactorDump,
+                LoadFactorGrade = Diesel.LoadFactorGrade,
+                LoadFactorReturn = Diesel.LoadFactorReturn,
+                SoilCondition = Diesel.SoilCondition,
+                RollingResistanceOverride = Diesel.RollingResistance,
+                SoilDensityLbPerBcy = Diesel.SoilDensityLbPerBcy,
+                ReducedThrottleLoad = Diesel.ReducedThrottleLoad,
+                ReducedThrottleHaul = Diesel.ReducedThrottleHaul,
+                ReducedThrottleDump = Diesel.ReducedThrottleDump,
+                ReducedThrottleGrade = Diesel.ReducedThrottleGrade,
+                ReducedThrottleReturn = Diesel.ReducedThrottleReturn,
+                Cycles = Cycles,
+            });
+            Result.DieselEstimate = Priced;
+            if (Priced.Blocked)
+            {
+                for (Int32 Index = 0; Index < Priced.Warnings.Count; Index += 1)
+                {
+                    Result.Messages.Add("Diesel: " + Priced.Warnings[Index]);
+                }
+
+                return;
+            }
+
+            Result.Messages.Add(String.Format(
+                CultureInfo.InvariantCulture,
+                "Diesel: {0:F1} gal, {1:F1} gal/h ({2:F0}% of max), ${3:F2}.",
+                Priced.TotalGallons,
+                Priced.AverageFuelGalPerHour,
+                Priced.AverageLoadPercent,
+                Priced.TotalCost));
+            Result.Messages.Add(
+                "Diesel assumptions: " + String.Join("; ", Priced.Assumptions));
+            for (Int32 Index = 0; Index < Priced.Warnings.Count; Index += 1)
+            {
+                Result.Messages.Add("Diesel: " + Priced.Warnings[Index]);
+            }
+        }
+
+        /// <summary>
+        /// Builds one average cycle when the caller gave an empty rig weight
+        /// and the speed model has a haul or a return.
+        /// </summary>
+        /// <param name="Diesel">Weight and density inputs.</param>
+        /// <param name="Time">Aggregate haul and return distance and time.</param>
+        /// <param name="PassResult">Bowl loads and cell lists.</param>
+        /// <param name="Grid">Existing ground, used for the haul grade.</param>
+        /// <returns>The average cycle, or null when pull cannot be calculated.</returns>
+        private static DieselCost.Cycle? BuildAverageDieselCycle
+            (
+            DieselOptions Diesel,
+            TimeResult? Time,
+            PassResult PassResult,
+            Grid? Grid
+            )
+        {
+            if (!Diesel.EmptyRigWeightLb.HasValue || (Time == null))
+            {
+                return null;
+            }
+
+            Double VolumeSum = 0.0;
+            Int32 VolumeCount = 0;
+            for (Int32 Index = 0; Index < PassResult.Passes.Count; Index += 1)
+            {
+                Double LoadBcy = PassResult.Passes[Index].LoadBcy;
+                if (!Double.IsFinite(LoadBcy) || (LoadBcy < 0.0))
+                {
+                    continue;
+                }
+
+                VolumeSum += LoadBcy;
+                VolumeCount += 1;
+            }
+
+            if (VolumeCount == 0)
+            {
+                return null;
+            }
+
+            Double? Grade = Grid == null ? null : MeanHaulGrade(Grid, PassResult);
+            return DieselCost.AverageCycle(
+                Time.HaulingDistM / Constants.FEET_TO_METERS,
+                Time.HaulingTimeS / Constants.SECONDS_PER_HOUR,
+                Time.ReturningDistM / Constants.FEET_TO_METERS,
+                Time.ReturningTimeS / Constants.SECONDS_PER_HOUR,
+                VolumeSum / VolumeCount,
+                Grade);
+        }
+
+        /// <summary>
+        /// Distance-weighted rise over run from cut cells to fill cells.
+        /// </summary>
+        /// <param name="Grid">Existing ground elevations in metres.</param>
+        /// <param name="PassResult">Cycles with a haul length and cell lists.</param>
+        /// <returns>The grade, or null when no cycle has both ends.</returns>
+        private static Double? MeanHaulGrade
+            (
+            Grid Grid,
+            PassResult PassResult
+            )
+        {
+            Double Weighted = 0.0;
+            Double Weight = 0.0;
+            for (Int32 Index = 0; Index < PassResult.Passes.Count; Index += 1)
+            {
+                Pass Pass = PassResult.Passes[Index];
+                if (Pass.HaulDistanceM <= 0.0)
+                {
+                    continue;
+                }
+
+                if (!TryMeanElevationM(Grid, Pass.CutCells, out Double CutM)
+                    || !TryMeanElevationM(Grid, Pass.FillCells, out Double FillM))
+                {
+                    continue;
+                }
+
+                // Positive grade is uphill while loaded. Metres cancel in the ratio.
+                Double Grade = (FillM - CutM) / Pass.HaulDistanceM;
+                Weighted += Grade * Pass.HaulDistanceM;
+                Weight += Pass.HaulDistanceM;
+            }
+
+            if (Weight <= 0.0)
+            {
+                return null;
+            }
+
+            return Weighted / Weight;
+        }
+
+        /// <summary>
+        /// Mean existing elevation of a cell list.
+        /// </summary>
+        /// <param name="Grid">Existing ground.</param>
+        /// <param name="Cells">Cells owned by one end of a cycle.</param>
+        /// <param name="MeanM">Mean elevation in metres.</param>
+        /// <returns>False when no cell has a finite elevation.</returns>
+        private static Boolean TryMeanElevationM
+            (
+            Grid Grid,
+            List<((Int32 Bx, Int32 By) Cell, Double DepthM)> Cells,
+            out Double MeanM
+            )
+        {
+            Double Sum = 0.0;
+            Int32 Count = 0;
+            for (Int32 Index = 0; Index < Cells.Count; Index += 1)
+            {
+                (Int32 Bx, Int32 By) Cell = Cells[Index].Cell;
+                if ((Cell.By < 0)
+                    || (Cell.Bx < 0)
+                    || (Cell.By >= Grid.Height)
+                    || (Cell.Bx >= Grid.Width))
+                {
+                    continue;
+                }
+
+                Double ElevationM = Grid.Existing[Cell.By, Cell.Bx];
+                if (!Double.IsFinite(ElevationM))
+                {
+                    continue;
+                }
+
+                Sum += ElevationM;
+                Count += 1;
+            }
+
+            if (Count == 0)
+            {
+                MeanM = 0.0;
+                return false;
+            }
+
+            MeanM = Sum / Count;
+            return true;
         }
 
         /// <summary>
@@ -3160,6 +3388,7 @@ namespace HaulBuilder
             CopyOptimization(Options.Optimization, Copy.Optimization);
             CopyGuidance(Options.Guidance, Copy.Guidance);
             CopyPonding(Options.Ponding, Copy.Ponding);
+            CopyDiesel(Options.Diesel, Copy.Diesel);
             Copy.ExcludePolygonSpecs.AddRange(Options.ExcludePolygonSpecs);
             foreach (RoadCentreline Road in Options.Roads)
             {
@@ -3172,6 +3401,42 @@ namespace HaulBuilder
             }
 
             return Copy;
+        }
+
+        /// <summary>
+        /// Copies tractor and diesel-price inputs onto the clone.
+        /// </summary>
+        /// <param name="Source">Inputs on the caller's options.</param>
+        /// <param name="Destination">Inputs on the cloned options.</param>
+        private static void CopyDiesel
+            (
+            DieselOptions Source,
+            DieselOptions Destination
+            )
+        {
+            if (Source == null)
+            {
+                throw new ArgumentNullException(nameof(Source));
+            }
+
+            Destination.MaxFuelGalPerHour = Source.MaxFuelGalPerHour;
+            Destination.MaxDrawbarHp = Source.MaxDrawbarHp;
+            Destination.PricePerGallon = Source.PricePerGallon;
+            Destination.EmptyRigWeightLb = Source.EmptyRigWeightLb;
+            Destination.LoadFactorLoad = Source.LoadFactorLoad;
+            Destination.LoadFactorHaul = Source.LoadFactorHaul;
+            Destination.LoadFactorDump = Source.LoadFactorDump;
+            Destination.LoadFactorGrade = Source.LoadFactorGrade;
+            Destination.LoadFactorReturn = Source.LoadFactorReturn;
+            Destination.SoilCondition = Source.SoilCondition;
+            Destination.RollingResistance = Source.RollingResistance;
+            Destination.SoilDensityLbPerBcy = Source.SoilDensityLbPerBcy;
+            Destination.ReducedThrottleLoad = Source.ReducedThrottleLoad;
+            Destination.ReducedThrottleHaul = Source.ReducedThrottleHaul;
+            Destination.ReducedThrottleDump = Source.ReducedThrottleDump;
+            Destination.ReducedThrottleGrade = Source.ReducedThrottleGrade;
+            Destination.ReducedThrottleReturn = Source.ReducedThrottleReturn;
+            Destination.IdleHours = Source.IdleHours;
         }
 
         private static void CopyPonding(
@@ -3415,6 +3680,7 @@ namespace HaulBuilder
             ValidateOptimizationOptions(Options);
             ValidateGuidanceOptions(Options.Guidance);
             ValidatePondingOptions(Options.Ponding);
+            DieselCost.Validate(Options.Diesel);
             RoadPadBuild.Validate(Options);
         }
 

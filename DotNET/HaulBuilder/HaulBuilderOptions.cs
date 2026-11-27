@@ -49,6 +49,7 @@ namespace HaulBuilder
             Optimization = new HaulOptimizationOptions();
             Guidance = new GuidanceOptions();
             Ponding = new PondingOptions();
+            Diesel = new DieselOptions();
             ExcludePolygonSpecs = new List<String>();
             RoadNrcsMinRoadbedFt = 14.0;
             RoadMinLanes = 2;
@@ -288,6 +289,12 @@ namespace HaulBuilder
 
         /// <summary>Gets ponding-aware audit and sequencing options.</summary>
         public PondingOptions Ponding { get; }
+
+        /// <summary>
+        /// Gets tractor and diesel-price inputs. Leave them unset to skip the
+        /// fuel estimate. Load-factor defaults are not on this object.
+        /// </summary>
+        public DieselOptions Diesel { get; }
 
         /// <summary>Gets exclusion polygons as <c>lat,lon;lat,lon;...</c>.</summary>
         public List<String> ExcludePolygonSpecs { get; }
