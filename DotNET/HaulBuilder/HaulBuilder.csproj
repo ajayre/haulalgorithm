@@ -32,6 +32,12 @@
     <Compile Remove="FinishingLoop.cs" />
   </ItemGroup>
 
+
+
+  <ItemGroup>
+    <None Remove="sixlabors.lic" />
+  </ItemGroup>
+
   <ItemGroup>
 
     <PackageReference Include="CSparse" Version="4.3.0" />
