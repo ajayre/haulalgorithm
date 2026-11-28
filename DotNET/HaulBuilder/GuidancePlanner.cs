@@ -214,6 +214,8 @@ static public class GuidancePlanner
         }
         GeometrySettings? PreviousGeometry = CurrentGeometry.Value;
         CancellationToken PreviousCancellation = CurrentCancellation.Value;
+        // A guidance rebuild outside Engine.Run still has to see the same permission.
+        IDisposable LeaveScope = GuidanceOptions.PushAllowLeaveField(Options.Guidance.AllowLeaveField);
         List<LifecyclePlanner.PassPlan> Passes;
         CurrentGeometry.Value = new GeometrySettings(
             Options.MinimumTurningDiameterFt * Constants.HALF_SCALE * Constants.FEET_TO_METERS,
@@ -267,6 +269,7 @@ static public class GuidancePlanner
         }
         finally
         {
+            LeaveScope.Dispose();
             CurrentGeometry.Value = PreviousGeometry;
             CurrentCancellation.Value = PreviousCancellation;
         }

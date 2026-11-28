@@ -37,7 +37,8 @@ namespace HaulBuilder
             Boolean AllowManual,
             Int64 MaximumManual,
             Int64 EdgeAllowance,
-            Boolean AllowDetour
+            Boolean AllowDetour,
+            Boolean AllowLeave
             );
         private static readonly Object ConnectCacheLock = new Object();
         private static readonly Dictionary<Grid,
@@ -165,7 +166,8 @@ namespace HaulBuilder
                 AllowManualAssist,
                 BitConverter.DoubleToInt64Bits(MaxManualAssistM),
                 BitConverter.DoubleToInt64Bits(EdgeAllowanceM),
-                AllowForwardDetour);
+                AllowForwardDetour,
+                GuidanceOptions.LeaveFieldAllowed);
             lock (ConnectCacheLock)
             {
                 if (RetainedConnectCache.TryGetValue(
@@ -362,12 +364,14 @@ namespace HaulBuilder
                 : Double.PositiveInfinity;
             ConnectorPlanner.Result Automatic = ConnectorPlanner.Connect(
                 Start, End, MinimumRadiusM, SampleSpacingM, Field);
+            // A permitted leave keeps the short curve. The in-field snake is the fallback.
+            Boolean Leave = GuidanceOptions.LeaveFieldAllowed;
             Boolean GentleAllowed = (Gentle.Count > 0)
-                && DensePolylineAllowed(Gentle, Field, null);
+                && (Leave || DensePolylineAllowed(Gentle, Field, null));
             Boolean AutomaticAllowed = Automatic.Success
-                && DensePolylineAllowed(Automatic.Points, Field, null);
+                && (Leave || DensePolylineAllowed(Automatic.Points, Field, null));
             Boolean ShortJogAllowed = (ShortJog.Count > 0)
-                && DensePolylineAllowed(ShortJog, Field, null);
+                && (Leave || DensePolylineAllowed(ShortJog, Field, null));
             Double BestExactLengthM = Math.Min(
                 GentleAllowed ? GentleLengthM : Double.PositiveInfinity,
                 AutomaticAllowed ? Automatic.LengthM : Double.PositiveInfinity);
@@ -378,7 +382,8 @@ namespace HaulBuilder
                     ShortJogLengthM,
                     new List<Leg> { new Leg(false, ShortJog) },
                     0.0,
-                    "AUTO_SHORT_ALIGNMENT_JOG", String.Empty);
+                    "AUTO_SHORT_ALIGNMENT_JOG", String.Empty,
+                    PathLeavesField(ShortJog, Field));
             }
             if (GentleAllowed
                 && (!AutomaticAllowed || (GentleLengthM + Constants.NUMERIC_COMPARISON_TOLERANCE < Automatic.LengthM)))
@@ -387,7 +392,8 @@ namespace HaulBuilder
                     GentleLengthM,
                     new List<Leg> { new Leg(false, Gentle) },
                     0.0,
-                    "AUTO_BEND", String.Empty);
+                    "AUTO_BEND", String.Empty,
+                    PathLeavesField(Gentle, Field));
             }
             if (AutomaticAllowed)
             {
@@ -395,7 +401,8 @@ namespace HaulBuilder
                     Automatic.LengthM,
                     new List<Leg> { new Leg(false, Automatic.Points) },
                     0.0,
-                    "AUTO_CURVE", String.Empty);
+                    "AUTO_CURVE", String.Empty,
+                    PathLeavesField(Automatic.Points, Field));
             }
 
             if (AllowForwardDetour)
@@ -1052,7 +1059,8 @@ namespace HaulBuilder
                     (Double X, Double Y) Point = (
                         (B0 * P0.X) + (B1 * P1.X) + (B2 * P2.X) + (B3 * P3.X),
                         (B0 * P0.Y) + (B1 * P1.Y) + (B2 * P2.Y) + (B3 * P3.Y));
-                    if (!Field.ContainsWorldXy(Point.X, Point.Y)
+                    // Leaving is a valid bend only for a run that opted in.
+                    if ((!GuidanceOptions.LeaveFieldAllowed && !Field.ContainsWorldXy(Point.X, Point.Y))
                         || !CurvatureValid(
                             T, P0, P1, P2, P3, MinimumRadiusM))
                     {
@@ -1607,6 +1615,24 @@ namespace HaulBuilder
             return (Cell.Bx >= 0) && (Cell.By >= 0)
                 && (Cell.Bx < Field.Width) && (Cell.By < Field.Height)
                 && Field.Valid[Cell.By, Cell.Bx];
+        }
+
+        /// <summary>True when any sample is outside the raw field.</summary>
+        private static Boolean PathLeavesField
+            (
+            List<(Double X, Double Y)> Points,
+            Grid Field
+            )
+        {
+            foreach ((Double X, Double Y) Point in Points)
+            {
+                if (!Field.ContainsWorldXy(Point.X, Point.Y))
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         /// <summary>Checks every point against the raw field mask.</summary>

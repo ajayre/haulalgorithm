@@ -90,5 +90,75 @@ namespace HaulBuilder
         /// remains the grade-return speed of the production guidance planner.
         /// </summary>
         public Double GradeLaneSpeedMph { get; set; } = Constants.DEFAULT_FILL_SPEED_MPH;
+
+        /// <summary>
+        /// Gets or sets whether equipment may leave the field.
+        /// False keeps an in-field path whenever one exists, and pulls a run
+        /// inward until its turn fits. True keeps the shorter path, including
+        /// one that leaves, and does not shorten a run to stay inside.
+        /// </summary>
+        public Boolean AllowLeaveField { get; set; }
+
+        /// <summary>Ambient permission for the haul run now executing on this thread.</summary>
+        private static readonly AsyncLocal<Boolean?> AmbientAllowLeaveField =
+            new AsyncLocal<Boolean?>();
+
+        /// <summary>
+        /// True when the active run allows equipment to leave the field.
+        /// A run that never set the scope stays inside.
+        /// </summary>
+        internal static Boolean LeaveFieldAllowed => AmbientAllowLeaveField.Value == true;
+
+        /// <summary>
+        /// Allows or forbids leaving the field until the returned scope is disposed.
+        /// Nested calls restore the previous permission.
+        /// </summary>
+        /// <param name="Allow">True when this run may leave the field.</param>
+        /// <returns>Scope that restores the previous permission.</returns>
+        internal static IDisposable PushAllowLeaveField
+            (
+            Boolean Allow
+            )
+        {
+            Boolean? Previous = AmbientAllowLeaveField.Value;
+            AmbientAllowLeaveField.Value = Allow;
+            return new AllowLeaveFieldScope(Previous);
+        }
+
+        /// <summary>Restores the previous leave-field permission.</summary>
+        private sealed class AllowLeaveFieldScope : IDisposable
+        {
+            /// <summary>Permission to restore.</summary>
+            private readonly Boolean? Previous;
+
+            /// <summary>True after the first dispose.</summary>
+            private Boolean Disposed;
+
+            /// <summary>
+            /// Initializes one restore scope.
+            /// </summary>
+            /// <param name="Previous">Permission that was active before this scope.</param>
+            public AllowLeaveFieldScope
+                (
+                Boolean? Previous
+                )
+            {
+                this.Previous = Previous;
+            }
+
+            /// <summary>Restores the prior leave-field permission.</summary>
+            public void Dispose
+                (
+                )
+            {
+                if (Disposed)
+                {
+                    return;
+                }
+
+                AmbientAllowLeaveField.Value = Previous;
+                Disposed = true;
+            }
+        }
     }
 }

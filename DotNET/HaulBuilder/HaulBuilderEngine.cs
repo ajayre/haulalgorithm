@@ -49,7 +49,9 @@ namespace HaulBuilder
                 // Ambient minimum length aligns compact preflight with guidance.
                 using (CoveragePlanner.PushMinimumWorkLength(
                     Opt.ResolveMinimumWorkLengthM()))
+                using (GuidanceOptions.PushAllowLeaveField(Opt.Guidance.AllowLeaveField))
                 {
+                    // The same permission covers route retreat and the Dubins connectors.
                     return RunCore(
                         Opt,
                         Result,
@@ -3553,6 +3555,7 @@ namespace HaulBuilder
             Destination.NearEmptyBowlFraction = Source.NearEmptyBowlFraction;
             Destination.ArcSpeedMph = Source.ArcSpeedMph;
             Destination.GradeLaneSpeedMph = Source.GradeLaneSpeedMph;
+            Destination.AllowLeaveField = Source.AllowLeaveField;
         }
 
         /// <summary>

@@ -1892,6 +1892,8 @@ namespace HaulBuilder
             Grid Field
             )
         {
+            // A turn that leaves the field is legal, so the run is not pulled inward.
+            if (GuidanceOptions.LeaveFieldAllowed) return true;
             Double HeadingRad = Pose.HeadingDeg * Math.PI / Constants.DEGREES_PER_HALF_TURN;
             Double UnitX = Math.Sin(HeadingRad);
             Double UnitY = Math.Cos(HeadingRad);
@@ -2104,7 +2106,10 @@ namespace HaulBuilder
             Grid Field
             )
         {
-            if ((PreferredM <= 0.0) || !Field.ContainsWorldXy(Origin.X, Origin.Y)) return 0.0;
+            if (PreferredM <= 0.0) return 0.0;
+            // The lineup may cross the boundary when this run is allowed to leave.
+            if (GuidanceOptions.LeaveFieldAllowed) return PreferredM;
+            if (!Field.ContainsWorldXy(Origin.X, Origin.Y)) return 0.0;
             Double StepM = Math.Min(SampleSpacingM, Field.GridSizeM * Constants.HALF_SCALE);
             Double GoodM = 0.0;
             while (GoodM + COST_TOLERANCE < PreferredM)

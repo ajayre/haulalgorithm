@@ -78,6 +78,30 @@ namespace HaulBuilder.Tests
         }
 
         /// <summary>
+        /// Verifies the same narrow field keeps the short turn when leaving is allowed.
+        /// </summary>
+        [Fact]
+        public void Connect_KeepsTheShortTurnWhenLeavingIsAllowed
+            (
+            )
+        {
+            Grid Grid = MakeGrid(20, 5);
+            ConnectorPlanner.Pose Start =
+                new ConnectorPlanner.Pose(2.5, 2.5, 90.0);
+            ConnectorPlanner.Pose End =
+                new ConnectorPlanner.Pose(17.5, 2.5, 270.0);
+
+            using (GuidanceOptions.PushAllowLeaveField(true))
+            {
+                ConnectorPlanner.Result Result = ConnectorPlanner.Connect(
+                    Start, End, 5.0, SAMPLE_SPACING_M, Grid);
+
+                Assert.True(Result.Success, Result.FailureReason);
+                Assert.Contains(Result.Points, Point => !Grid.ContainsWorldXy(Point.X, Point.Y));
+            }
+        }
+
+        /// <summary>
         /// Verifies sampling density does not create oversized gaps on a straight connector.
         /// </summary>
         [Fact]

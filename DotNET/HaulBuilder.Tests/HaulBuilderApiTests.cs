@@ -125,6 +125,7 @@ namespace HaulBuilder.Tests
             Assert.Equal(0.01, Rules.NearEmptyBowlFraction);
             Assert.Equal(TripGuidance.TURN_SPEED_MPH, Rules.ArcSpeedMph);
             Assert.Equal(Constants.DEFAULT_FILL_SPEED_MPH, Rules.GradeLaneSpeedMph);
+            Assert.False(Rules.AllowLeaveField);
         }
 
         /// <summary>

@@ -132,6 +132,8 @@ namespace HaulBuilder
 
         /// <summary>
         /// Selects the shortest sampled Dubins connector wholly inside the raw field.
+        /// When <see cref="GuidanceOptions.LeaveFieldAllowed"/> is set, the shortest
+        /// word is kept even if it leaves the field.
         /// </summary>
         /// <param name="Start">Start pose.</param>
         /// <param name="End">End pose.</param>
@@ -152,12 +154,15 @@ namespace HaulBuilder
             if (SampleSpacingM <= 0.0) throw new ArgumentOutOfRangeException(nameof(SampleSpacingM));
             if (Field == null) throw new ArgumentNullException(nameof(Field));
 
-            if (!Field.ContainsWorldXy(Start.X, Start.Y) || !Field.ContainsWorldXy(End.X, End.Y))
+            // A lineup may start outside only when this run is allowed to leave.
+            if (!GuidanceOptions.LeaveFieldAllowed
+                && (!Field.ContainsWorldXy(Start.X, Start.Y) || !Field.ContainsWorldXy(End.X, End.Y)))
             {
                 return new Result(false, String.Empty, new List<(Double X, Double Y)>(), 0.0,
                     "Connector endpoint is outside the raw field.");
             }
 
+            Boolean Leave = GuidanceOptions.LeaveFieldAllowed;
             List<Candidate> Candidates = BuildCandidates(Start, End, MinimumRadiusM)
                 .OrderBy(Candidate => Candidate.LengthM)
                 .ThenBy(Candidate => Candidate.Word, StringComparer.Ordinal)
@@ -170,7 +175,8 @@ namespace HaulBuilder
                     MinimumRadiusM,
                     Candidate,
                     SampleSpacingM);
-                if (Points.All(Point => Field.ContainsWorldXy(Point.X, Point.Y)))
+                // The list is shortest-first, so the first accepted word is the one to drive.
+                if (Leave || Points.All(Point => Field.ContainsWorldXy(Point.X, Point.Y)))
                 {
                     return new Result(
                         true,

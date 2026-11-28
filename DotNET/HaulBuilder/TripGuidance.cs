@@ -23,7 +23,9 @@ namespace HaulBuilder
     /// owns the turn. A connector is chosen from the six Dubins words and the
     /// short-joint trims. Within two percent of the shortest, or half a radius
     /// when that is more, the path with the least length outside the field wins.
-    /// A clearly shorter outside path is kept. Two connectors with no lane between them become
+    /// When a path stays in the field it wins, unless
+    /// <see cref="GuidanceOptions.AllowLeaveField"/> is set. With that option,
+    /// a clearly shorter outside path is kept. Two connectors with no lane between them become
     /// one Dubins path. A short correcting trip may merge into a later
     /// correcting trip whose route passes within two radii. An end fragment
     /// of a correcting line that is shorter than one radius, and more than
@@ -4416,8 +4418,10 @@ namespace HaulBuilder
         /// <summary>
         /// Picks the connector for one pair of poses. The six Dubins words are
         /// the candidates. Within the tie of the shortest, the least length
-        /// outside the field wins, then the shortest. A clearly shorter path
-        /// stays chosen, including one that leaves the field.
+        /// outside the field wins, then the shortest. With
+        /// <see cref="GuidanceOptions.AllowLeaveField"/> off, a path that stays
+        /// in the field wins over any path that leaves. With it on, a clearly
+        /// shorter path stays chosen, including one that leaves the field.
         /// </summary>
         /// <param name="Start">Pose the connector leaves.</param>
         /// <param name="End">Pose the connector arrives at.</param>
@@ -4439,13 +4443,19 @@ namespace HaulBuilder
             }
 
             Int32 Chosen = PreferField(Words, RadiusM, Inside);
+            if (Chosen < 0)
+            {
+                Chosen = 0;
+            }
+
             return MarkOutside(Words[Chosen], RadiusM, Inside);
         }
 
         /// <summary>
         /// Index of the candidate that stays in the field when it is nearly the
         /// shortest. Equal outside length keeps the shorter path. An equal
-        /// length keeps the earlier candidate.
+        /// length keeps the earlier candidate. With leaving forbidden, the
+        /// shortest path that stays inside wins whenever one exists.
         /// </summary>
         /// <param name="Candidates">Paths between the same kind of join. At least one.</param>
         /// <param name="RadiusM">Turning radius.</param>
@@ -4458,6 +4468,32 @@ namespace HaulBuilder
             Func<Double, Double, Boolean>? Inside
             )
         {
+            if (!CurrentRules.AllowLeaveField)
+            {
+                Int32 InsideBest = -1;
+                for (Int32 Index = 0; Index < Candidates.Count; Index += 1)
+                {
+                    if (OutsideLengthM(Candidates[Index], RadiusM, Inside) > LENGTH_TIE_M)
+                    {
+                        continue;
+                    }
+
+                    // Equal length keeps the earlier word.
+                    if ((InsideBest < 0)
+                        || ((Candidates[Index].LengthM + LENGTH_TIE_M) < Candidates[InsideBest].LengthM))
+                    {
+                        InsideBest = Index;
+                    }
+                }
+
+                if (InsideBest >= 0)
+                {
+                    return InsideBest;
+                }
+
+                // No word stays in the field. The shorter leaving path is still drawn.
+            }
+
             Double Shortest = Double.PositiveInfinity;
             for (Int32 Index = 0; Index < Candidates.Count; Index += 1)
             {
@@ -4634,9 +4670,11 @@ namespace HaulBuilder
                 Bends.Add(Word);
             }
 
-            DubinsConnector.Path Path = (Bends.Count == 0)
+            Int32 Bend = (Bends.Count == 0) ? -1 : PreferField(Bends, RadiusM, Inside);
+            // No in-field S-bend falls through to the ordinary connector.
+            DubinsConnector.Path Path = (Bend < 0)
                 ? SelectConnector(Start, End, RadiusM, Inside)
-                : MarkOutside(Bends[PreferField(Bends, RadiusM, Inside)], RadiusM, Inside);
+                : MarkOutside(Bends[Bend], RadiusM, Inside);
             CourseSegment? Built = SegmentFromPath(Start, End, Action, Path, Clock, RadiusM);
             if (Built == null)
             {
@@ -8408,6 +8446,12 @@ namespace HaulBuilder
                 }
 
                 Int32 Chosen = PreferField(Pool, RadiusM, Inside);
+                if (Chosen < 0)
+                {
+                    // Every trim leaves the field. The lanes stay, and the connector decides.
+                    continue;
+                }
+
                 All[Index] = PoolLeft[Chosen];
                 All[Index + 1] = PoolRight[Chosen];
             }

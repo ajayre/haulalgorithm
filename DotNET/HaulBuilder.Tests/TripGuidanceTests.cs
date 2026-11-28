@@ -1305,28 +1305,48 @@ namespace HaulBuilder.Tests
         }
 
         /// <summary>
-        /// A line change takes the open path when it is faster. The straight join
-        /// crosses a post. The in-field path goes around it.
+        /// A line change stays inside by default. The straight join crosses a
+        /// post. The in-field path goes around it, even though it is longer.
+        /// </summary>
+        [Fact]
+        public void LineChange_StaysInsideByDefault()
+        {
+            Double Radius = DubinsConnector.DefaultRadiusM;
+            Func<Double, Double, Boolean> Inside = LineChangeField;
+            TripGuidance.WorkLane Cut = Lane((10.0, 10.0), (22.0, 10.0), 0.05);
+            TripGuidance.WorkLane Fill = Lane((40.0, 10.0), (55.0, 10.0), 0.05);
+            DubinsConnector.Path Open = DubinsConnector.Connect(Cut.End, Fill.Start, Radius, null);
+            DubinsConnector.Path Closed = DubinsConnector.Connect(Cut.End, Fill.Start, Radius, Inside);
+            Assert.True(Open.LengthM + 1.0 < Closed.LengthM);
+            TripGuidance.TripCourse Course = TripGuidance.BuildCourse(
+                new List<TripGuidance.WorkLane> { Cut },
+                new List<TripGuidance.WorkLane> { Fill },
+                null,
+                Inside,
+                Clock(),
+                Radius,
+                1.0,
+                1,
+                HaulStage.Correcting,
+                null,
+                null,
+                0.0,
+                false);
+            List<TripGuidance.CourseSegment> Cuts = LanesOf(Course, TripGuidance.GuidanceAction.Cut);
+            TripGuidance.CourseSegment Join = SegmentAfter(Course, Cuts[0]);
+            Assert.False(Join.Outside);
+            Assert.InRange(Join.LengthM, Closed.LengthM - 0.05, Closed.LengthM + 0.05);
+        }
+
+        /// <summary>
+        /// With leaving allowed, a line change takes the open path when it is
+        /// faster. The straight join crosses a post. The in-field path goes around it.
         /// </summary>
         [Fact]
         public void LineChange_TakesTheFasterOutsidePath()
         {
             Double Radius = DubinsConnector.DefaultRadiusM;
-            Func<Double, Double, Boolean> Inside = delegate (Double X, Double Y)
-            {
-                if ((X < 0.0) || (X > 100.0) || (Y < 0.0) || (Y > 100.0))
-                {
-                    return false;
-                }
-
-                // A post on the straight join. A loop clears it and stays in the field.
-                if ((X > 29.0) && (X < 31.0) && (Y > 9.7) && (Y < 10.3))
-                {
-                    return false;
-                }
-
-                return true;
-            };
+            Func<Double, Double, Boolean> Inside = LineChangeField;
             TripGuidance.WorkLane Cut = Lane((10.0, 10.0), (22.0, 10.0), 0.05);
             TripGuidance.WorkLane Fill = Lane((40.0, 10.0), (55.0, 10.0), 0.05);
             DubinsConnector.Path Open = DubinsConnector.Connect(Cut.End, Fill.Start, Radius, null);
@@ -1353,7 +1373,10 @@ namespace HaulBuilder.Tests
                 null,
                 null,
                 0.0,
-                false);
+                false,
+                0.0,
+                0.0,
+                new GuidanceOptions { AllowLeaveField = true });
             List<TripGuidance.CourseSegment> Cuts = LanesOf(Course, TripGuidance.GuidanceAction.Cut);
             TripGuidance.CourseSegment Join = SegmentAfter(Course, Cuts[0]);
             Assert.True(Join.Outside);
@@ -2171,6 +2194,32 @@ namespace HaulBuilder.Tests
                 new List<(Double X, Double Y)> { Start, End },
                 Cells,
                 0.0);
+        }
+
+        /// <summary>
+        /// A 100 m square with a post on the straight line-change.
+        /// </summary>
+        /// <param name="X">Easting, metres.</param>
+        /// <param name="Y">Northing, metres.</param>
+        /// <returns>True when the point is in the field.</returns>
+        private static Boolean LineChangeField
+            (
+            Double X,
+            Double Y
+            )
+        {
+            if ((X < 0.0) || (X > 100.0) || (Y < 0.0) || (Y > 100.0))
+            {
+                return false;
+            }
+
+            // A post on the straight join. A loop clears it and stays in the field.
+            if ((X > 29.0) && (X < 31.0) && (Y > 9.7) && (Y < 10.3))
+            {
+                return false;
+            }
+
+            return true;
         }
 
         /// <summary>
